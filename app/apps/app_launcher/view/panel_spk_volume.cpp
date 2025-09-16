@@ -18,12 +18,12 @@ using namespace smooth_ui_toolkit::lvgl_cpp;
 
 static const std::string _tag = "panel-spk-vol";
 
-static constexpr int16_t _label_pos_x    = 605;
-static constexpr int16_t _label_pos_y    = 240;
-static constexpr int16_t _btn_up_pos_x   = 499;
-static constexpr int16_t _btn_up_pos_y   = 312;
-static constexpr int16_t _btn_down_pos_x = 593;
-static constexpr int16_t _btn_down_pos_y = 312;
+static constexpr int16_t _label_pos_x    = 606;
+static constexpr int16_t _label_pos_y    = 247;
+static constexpr int16_t _btn_up_pos_x   = 505;
+static constexpr int16_t _btn_up_pos_y   = 314;
+static constexpr int16_t _btn_down_pos_x = 599;
+static constexpr int16_t _btn_down_pos_y = 314;
 
 static constexpr int16_t _midi_up   = 64 + 24;
 static constexpr int16_t _midi_down = 60 + 24;

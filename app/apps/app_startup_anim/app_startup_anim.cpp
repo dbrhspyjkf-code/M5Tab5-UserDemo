@@ -13,7 +13,7 @@ using namespace mooncake;
 using namespace smooth_ui_toolkit;
 using namespace smooth_ui_toolkit::lvgl_cpp;
 
-#define FIRMWARE_VERSION "V0.2"
+#define FIRMWARE_VERSION "V0.2.1"
 
 AppStartupAnim::AppStartupAnim()
 {
