@@ -221,6 +221,11 @@ uint8_t HalEsp32::getDisplayBrightness()
     return _current_lcd_brightness;
 }
 
+std::string HalEsp32::getDisplayPanelIc()
+{
+    return std::string(bsp_display_get_panel_ic());
+}
+
 void HalEsp32::lvglLock()
 {
     lvgl_port_lock(0);

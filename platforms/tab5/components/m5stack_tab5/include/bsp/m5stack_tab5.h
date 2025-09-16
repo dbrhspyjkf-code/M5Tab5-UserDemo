@@ -346,6 +346,13 @@ lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg);
 lv_indev_t *bsp_display_get_input_dev(void);
 
 /**
+ * @brief Get display panel IC name
+ *
+ * @return String with display panel IC name (e.g., "ILI9881C", "ST7123")
+ */
+const char *bsp_display_get_panel_ic(void);
+
+/**
  * @brief Take LVGL mutex
  *
  * @param timeout_ms Timeout in [ms]. 0 will block indefinitely.

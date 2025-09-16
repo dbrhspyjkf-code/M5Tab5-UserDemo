@@ -1003,32 +1003,42 @@ typedef enum {
     BSP_DISPLAY_TYPE_ST7123
 } bsp_display_type_t;
 
+static bsp_display_type_t display_type = BSP_DISPLAY_TYPE_UNKNOWN;
+
 static bsp_display_type_t bsp_detect_display_type(void)
 {
+    if (display_type != BSP_DISPLAY_TYPE_UNKNOWN) {
+        return display_type;
+    }
+
     esp_err_t ret;
 
     // 确保I2C已初始化
     if (bsp_i2c_init() != ESP_OK) {
         ESP_LOGE(TAG, "I2C init failed for display detection");
-        return BSP_DISPLAY_TYPE_UNKNOWN;
+        display_type = BSP_DISPLAY_TYPE_UNKNOWN;
+        return display_type;
     }
 
     // 检测ST7123触摸屏
     ret = i2c_master_probe(i2c_handle, 0x55, 50);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "Detected ST7123 touch controller, using ST7123 display");
-        return BSP_DISPLAY_TYPE_ST7123;
+        display_type = BSP_DISPLAY_TYPE_ST7123;
+        return display_type;
     }
 
     // 检测GT911触摸屏 (ILI9881C配套)
     ret = i2c_master_probe(i2c_handle, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP, 50);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "Detected GT911 touch controller, using ILI9881C display");
-        return BSP_DISPLAY_TYPE_ILI9881C_GT911;
+        display_type = BSP_DISPLAY_TYPE_ILI9881C_GT911;
+        return display_type;
     }
 
     ESP_LOGW(TAG, "No known touch controller detected, defaulting to ILI9881C");
-    return BSP_DISPLAY_TYPE_ILI9881C_GT911;
+    display_type = BSP_DISPLAY_TYPE_ILI9881C_GT911;
+    return display_type;
 }
 
 //==================================================================================
@@ -1746,4 +1756,21 @@ esp_err_t bsp_usb_host_stop(void)
         vTaskDelete(usb_host_task);
     }
     return ESP_OK;
+}
+
+//==================================================================================
+// 获取显示屏IC名称
+//==================================================================================
+const char* bsp_display_get_panel_ic(void)
+{
+    bsp_detect_display_type();
+
+    switch (display_type) {
+        case BSP_DISPLAY_TYPE_ST7123:
+            return "ST7123";
+        case BSP_DISPLAY_TYPE_ILI9881C_GT911:
+            return "ILI9881C";
+        default:
+            return "Unknown";
+    }
 }
