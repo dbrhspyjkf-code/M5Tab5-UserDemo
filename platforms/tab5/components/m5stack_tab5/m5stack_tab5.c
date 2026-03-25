@@ -20,6 +20,7 @@
 #include "freertos/task.h"
 #include "sdmmc_cmd.h"
 #include "esp_lcd_st7123.h"
+#include "esp_lcd_st7121.h"
 #include "esp_lcd_ili9881c.h"
 #include "bsp/m5stack_tab5.h"
 #include "bsp/display.h"
@@ -1000,7 +1001,8 @@ uint8_t bsp_codec_feed_channel(void)
 typedef enum {
     BSP_DISPLAY_TYPE_UNKNOWN = 0,
     BSP_DISPLAY_TYPE_ILI9881C_GT911,
-    BSP_DISPLAY_TYPE_ST7123
+    BSP_DISPLAY_TYPE_ST7123,
+    BSP_DISPLAY_TYPE_ST7121
 } bsp_display_type_t;
 
 static bsp_display_type_t display_type = BSP_DISPLAY_TYPE_UNKNOWN;
@@ -1020,20 +1022,43 @@ static bsp_display_type_t bsp_detect_display_type(void)
         return display_type;
     }
 
-    // 检测ST7123触摸屏
-    ret = i2c_master_probe(i2c_handle, 0x55, 50);
+    // 检测GT911触摸屏
+    ret = i2c_master_probe(i2c_handle, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP, 50);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Detected ST7123 touch controller, using ST7123 display");
-        display_type = BSP_DISPLAY_TYPE_ST7123;
+        ESP_LOGI(TAG, "Detected GT911 touch controller, using ST7703 display");
+        display_type = BSP_DISPLAY_TYPE_ILI9881C_GT911;
         return display_type;
     }
 
-    // 检测GT911触摸屏 (ILI9881C配套)
-    ret = i2c_master_probe(i2c_handle, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP, 50);
+    // 检测ST7123/ST7121触摸屏
+    ret = i2c_master_probe(i2c_handle, 0x55, 50);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Detected GT911 touch controller, using ILI9881C display");
-        display_type = BSP_DISPLAY_TYPE_ILI9881C_GT911;
-        return display_type;
+        esp_lcd_panel_io_handle_t tp_io_handle     = NULL;
+        esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_ST7123_CONFIG();
+        tp_io_config.scl_speed_hz                  = 100000;
+        if (esp_lcd_new_panel_io_i2c(i2c_handle, &tp_io_config, &tp_io_handle) == ESP_OK) {
+            uint8_t fw_version = 0;
+            if (esp_lcd_panel_io_rx_param(tp_io_handle, 0x0000, &fw_version, 1) == ESP_OK) {
+                if (fw_version == 1) {
+                    ESP_LOGI(TAG, "Detected ST7121 touch controller (FW version: %u), using ST7121 display",
+                             fw_version);
+                    display_type = BSP_DISPLAY_TYPE_ST7121;
+                    esp_lcd_panel_io_del(tp_io_handle);
+                    return BSP_DISPLAY_TYPE_ST7121;
+                } else if (fw_version == 3) {
+                    ESP_LOGI(TAG, "Detected ST7123 touch controller (FW version: %u), using ST7123 display",
+                             fw_version);
+                    display_type = BSP_DISPLAY_TYPE_ST7123;
+                    esp_lcd_panel_io_del(tp_io_handle);
+                    return BSP_DISPLAY_TYPE_ST7123;
+                }
+            }
+            esp_lcd_panel_io_del(tp_io_handle);
+        }
+
+        ESP_LOGI(TAG, "Detected 0x55 touch controller, fallback using ST7123 display");
+        display_type = BSP_DISPLAY_TYPE_ST7123;
+        return BSP_DISPLAY_TYPE_ST7123;
     }
 
     ESP_LOGW(TAG, "No known touch controller detected, defaulting to ILI9881C");
@@ -1318,13 +1343,15 @@ static const st7123_lcd_init_cmd_t st7123_vendor_specific_init_default[] = {
     {0x35, (uint8_t[]){0x00}, 1, 100},
 };
 
-// 适配st7123 tab5 屏幕
+// 适配st7123/st7121 tab5 屏幕
 esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* config, bsp_lcd_handles_t* ret_handles)
 {
     esp_err_t ret                         = ESP_OK;
     esp_lcd_panel_io_handle_t io          = NULL;
     esp_lcd_panel_handle_t disp_panel     = NULL;
     esp_lcd_dsi_bus_handle_t mipi_dsi_bus = NULL;
+    bsp_display_type_t display_type       = bsp_detect_display_type();
+    bool is_st7121                        = (display_type == BSP_DISPLAY_TYPE_ST7121);
 
     ESP_RETURN_ON_ERROR(bsp_display_brightness_init(), TAG, "Brightness init failed");
     ESP_RETURN_ON_ERROR(bsp_enable_dsi_phy_power(), TAG, "DSI PHY power failed");
@@ -1332,13 +1359,13 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
     /* create MIPI DSI bus first, it will initialize the DSI PHY as well */
     esp_lcd_dsi_bus_config_t bus_config = {
         .bus_id             = 0,
-        .num_data_lanes     = 2,  // ST7123 uses 2 data lanes
+        .num_data_lanes     = 2,  // ST7123/ST7121 uses 2 data lanes
         .phy_clk_src        = MIPI_DSI_PHY_CLK_SRC_DEFAULT,
-        .lane_bit_rate_mbps = 965,  // ST7123 lane bitrate
+        .lane_bit_rate_mbps = 965,  // ST7123/ST7121 lane bitrate
     };
     ESP_RETURN_ON_ERROR(esp_lcd_new_dsi_bus(&bus_config, &mipi_dsi_bus), TAG, "New DSI bus init failed");
 
-    ESP_LOGI(TAG, "Install MIPI DSI LCD control panel for ST7123");
+    ESP_LOGI(TAG, "Install MIPI DSI LCD control panel for ST712x");
     // we use DBI interface to send LCD commands and parameters
     esp_lcd_dbi_io_config_t dbi_config = {
         .virtual_channel = 0,
@@ -1347,11 +1374,11 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
     };
     ESP_GOTO_ON_ERROR(esp_lcd_new_panel_io_dbi(mipi_dsi_bus, &dbi_config, &io), err, TAG, "New panel IO failed");
 
-    ESP_LOGI(TAG, "Install LCD driver of ST7123");
+    ESP_LOGI(TAG, "Install LCD driver of %s", is_st7121 ? "ST7121" : "ST7123");
     esp_lcd_dpi_panel_config_t dpi_config = {
         .virtual_channel    = 0,
         .dpi_clk_src        = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
-        .dpi_clock_freq_mhz = 70,  // ST7123 DPI clock frequency
+        .dpi_clock_freq_mhz = 70,  // DPI clock frequency
         .pixel_format       = LCD_COLOR_PIXEL_FORMAT_RGB565,
         .num_fbs            = 1,
         .video_timing =
@@ -1361,9 +1388,9 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
                 .hsync_pulse_width = 2,
                 .hsync_back_porch  = 40,
                 .hsync_front_porch = 40,
-                .vsync_pulse_width = 2,
-                .vsync_back_porch  = 8,
-                .vsync_front_porch = 220,
+                .vsync_pulse_width = is_st7121 ? 20 : 2,
+                .vsync_back_porch  = is_st7121 ? 24 : 8,
+                .vsync_front_porch = is_st7121 ? 200 : 220,
             },
         .flags =
             {
@@ -1372,8 +1399,10 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
     };
 
     st7123_vendor_config_t vendor_config = {
-        .init_cmds      = st7123_vendor_specific_init_default,
-        .init_cmds_size = sizeof(st7123_vendor_specific_init_default) / sizeof(st7123_vendor_specific_init_default[0]),
+        .init_cmds = is_st7121 ? NULL : st7123_vendor_specific_init_default,
+        .init_cmds_size =
+            is_st7121 ? 0
+                      : (sizeof(st7123_vendor_specific_init_default) / sizeof(st7123_vendor_specific_init_default[0])),
         .mipi_config =
             {
                 .dsi_bus    = mipi_dsi_bus,
@@ -1390,9 +1419,13 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
         .vendor_config  = &vendor_config,
     };
 
-    // 使用实际的 ST7123 驱动函数
-    ESP_GOTO_ON_ERROR(esp_lcd_new_panel_st7123(io, &lcd_dev_config, &disp_panel), err, TAG,
-                      "New LCD panel ST7123 failed");
+    if (is_st7121) {
+        ESP_GOTO_ON_ERROR(esp_lcd_new_panel_st7121(io, &lcd_dev_config, &disp_panel), err, TAG,
+                          "New LCD panel ST7121 failed");
+    } else {
+        ESP_GOTO_ON_ERROR(esp_lcd_new_panel_st7123(io, &lcd_dev_config, &disp_panel), err, TAG,
+                          "New LCD panel ST7123 failed");
+    }
 
     ESP_GOTO_ON_ERROR(esp_lcd_panel_reset(disp_panel), err, TAG, "LCD panel reset failed");
     ESP_GOTO_ON_ERROR(esp_lcd_panel_init(disp_panel), err, TAG, "LCD panel init failed");
@@ -1458,10 +1491,10 @@ static lv_display_t* bsp_display_lcd_init(const bsp_display_cfg_t* cfg)
     assert(cfg != NULL);
     bsp_lcd_handles_t lcd_panels;
 
-    // 动态检测显示屏类型 (支持ILI9881C和ST7123)
+    // 动态检测显示屏类型
     bsp_display_type_t display_type = bsp_detect_display_type();
 
-    if (display_type == BSP_DISPLAY_TYPE_ST7123) {
+    if (display_type == BSP_DISPLAY_TYPE_ST7123 || display_type == BSP_DISPLAY_TYPE_ST7121) {
         BSP_ERROR_CHECK_RETURN_NULL(bsp_display_new_with_handles_to_st7123(NULL, &lcd_panels));
     } else {
         BSP_ERROR_CHECK_RETURN_NULL(bsp_display_new_with_handles(NULL, &lcd_panels));
@@ -1620,7 +1653,7 @@ static lv_indev_t* bsp_display_indev_init_to_st7123(lv_display_t* disp)
 
     ret = esp_lcd_touch_new_i2c_st7123(tp_io_handle, &tp_cfg, &tp);
     if (ret != ESP_OK || tp == NULL) {
-        ESP_LOGE(TAG, "Failed to create ST7123 touch panel: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to create ST712x touch panel: %s", esp_err_to_name(ret));
         esp_lcd_panel_io_del(tp_io_handle);
         return NULL;
     }
@@ -1639,12 +1672,12 @@ static lv_indev_t* bsp_display_indev_init_to_st7123(lv_display_t* disp)
 
     lv_indev_t* indev = lvgl_port_add_touch(&touch_cfg);
     if (indev == NULL) {
-        ESP_LOGE(TAG, "Failed to add ST7123 touch to LVGL");
+        ESP_LOGE(TAG, "Failed to add ST712x touch to LVGL");
         esp_lcd_panel_io_del(tp_io_handle);
         return NULL;
     }
 
-    ESP_LOGI(TAG, "ST7123 touch panel initialized successfully");
+    ESP_LOGI(TAG, "ST712x touch panel initialized successfully");
     return indev;
 }
 
@@ -1676,10 +1709,10 @@ lv_display_t* bsp_display_start_with_config(const bsp_display_cfg_t* cfg)
 
     BSP_NULL_CHECK(disp = bsp_display_lcd_init(cfg), NULL);
 
-    // 动态检测显示屏类型并初始化对应的触摸屏 (支持ILI9881C和ST7123)
+    // 动态检测显示屏类型并初始化对应的触摸屏
     bsp_display_type_t display_type = bsp_detect_display_type();
 
-    if (display_type == BSP_DISPLAY_TYPE_ST7123) {
+    if (display_type == BSP_DISPLAY_TYPE_ST7123 || display_type == BSP_DISPLAY_TYPE_ST7121) {
         BSP_NULL_CHECK(disp_indev = bsp_display_indev_init_to_st7123(disp), NULL);
     } else {
         BSP_NULL_CHECK(disp_indev = bsp_display_indev_init(disp), NULL);
@@ -1766,6 +1799,8 @@ const char* bsp_display_get_panel_ic(void)
     bsp_detect_display_type();
 
     switch (display_type) {
+        case BSP_DISPLAY_TYPE_ST7121:
+            return "ST7121";
         case BSP_DISPLAY_TYPE_ST7123:
             return "ST7123";
         case BSP_DISPLAY_TYPE_ILI9881C_GT911:

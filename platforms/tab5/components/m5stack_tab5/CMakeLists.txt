@@ -11,5 +11,6 @@ idf_component_register(
         esp_lvgl_port
 	esp_lcd_ili9881c
     esp_lcd_touch_st7123
+    esp_lcd_st7121
     PRIV_REQUIRES usb spiffs fatfs
 )
