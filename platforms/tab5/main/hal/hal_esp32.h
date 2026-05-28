@@ -29,6 +29,7 @@ public:
 
     void setDisplayBrightness(uint8_t brightness) override;
     uint8_t getDisplayBrightness() override;
+    std::string getDisplayPanelIc() override;
 
     void lvglLock() override;
     void lvglUnlock() override;

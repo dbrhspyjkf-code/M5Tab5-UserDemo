@@ -18,12 +18,14 @@ using namespace smooth_ui_toolkit::lvgl_cpp;
 
 static const std::string _tag = "panel-lcd-bl";
 
-static constexpr int16_t _label_pos_x    = 591;
-static constexpr int16_t _label_pos_y    = 94;
-static constexpr int16_t _btn_up_pos_x   = 499;
-static constexpr int16_t _btn_up_pos_y   = 166;
-static constexpr int16_t _btn_down_pos_x = 593;
-static constexpr int16_t _btn_down_pos_y = 166;
+static constexpr int16_t _label_pos_x      = 595;
+static constexpr int16_t _label_pos_y      = 107;
+static constexpr int16_t _label_panel_ic_x = -7;
+static constexpr int16_t _label_panel_ic_y = 74;
+static constexpr int16_t _btn_up_pos_x     = 505;
+static constexpr int16_t _btn_up_pos_y     = 176;
+static constexpr int16_t _btn_down_pos_x   = 599;
+static constexpr int16_t _btn_down_pos_y   = 176;
 
 static constexpr int16_t _midi_up     = 64 + 24;
 static constexpr int16_t _midi_down   = 60 + 24;
@@ -37,6 +39,12 @@ void PanelLcdBacklight::init()
     _label_brightness->setTextFont(&lv_font_montserrat_36);
     _label_brightness->setTextColor(lv_color_hex(0xFEFEFE));
     _label_brightness->setText(fmt::format("{}", GetHAL()->getDisplayBrightness()));
+
+    _label_panel_ic = std::make_unique<Label>(lv_screen_active());
+    _label_panel_ic->align(LV_ALIGN_RIGHT_MID, _label_panel_ic_x, _label_panel_ic_y);
+    _label_panel_ic->setTextFont(&lv_font_montserrat_16);
+    _label_panel_ic->setTextColor(lv_color_hex(0x55866D));
+    _label_panel_ic->setText(fmt::format("LCD IC: {}", GetHAL()->getDisplayPanelIc()));
 
     _btn_up = std::make_unique<Container>(lv_screen_active());
     _btn_up->align(LV_ALIGN_CENTER, _btn_up_pos_x, _btn_up_pos_y);

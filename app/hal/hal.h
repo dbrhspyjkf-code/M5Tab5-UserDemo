@@ -73,6 +73,11 @@ public:
     {
         return 0;
     }
+    virtual std::string getDisplayPanelIc()
+    {
+        return "ILI9881C";
+        // return "ST7123";
+    }
 
     /* ---------------------------------- Lvgl ---------------------------------- */
     lv_indev_t* lvTouchpad = nullptr;
