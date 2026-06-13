@@ -12,6 +12,7 @@
 #include "app_startup_anim/app_startup_anim.h"
 #include "app_ha/app_ha.h"
 #include "app_home/app_home.h"
+#include "app_xiaozhi/app_xiaozhi.h"
 /* Header files locator (Don't remove) */
 
 // Start boot anim app and wait for it to finish
@@ -43,14 +44,20 @@ inline void on_install_apps()
     auto ha_uptr   = std::make_unique<AppHA>();
     AppHA* ha      = ha_uptr.get();
 
+    auto xz_uptr   = std::make_unique<AppXiaoZhi>();
+    AppXiaoZhi* xz = xz_uptr.get();
+
     // ── Install (AppHome auto-opens via onCreate → open()) ──
     mooncake::GetMooncake().installApp(std::move(home_uptr));
     int ha_id = mooncake::GetMooncake().installApp(std::move(ha_uptr));
+    int xz_id = mooncake::GetMooncake().installApp(std::move(xz_uptr));
 
-    // ── Wire: AppHA calls home->restoreScreen() just before destroying its UI ──
+    // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
+    xz->setCloseCallback([home]() { home->restoreScreen(); });
 
     // ── Register apps in the home screen ──
     home->addApp("智能家居", ha_id);
+    home->addApp("小  智", xz_id);
     /* Install app locator (Don't remove) */
 }

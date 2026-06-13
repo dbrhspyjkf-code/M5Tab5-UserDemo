@@ -1,0 +1,9 @@
+menu "xiaozhi-esp32 configuration"
+
+config OTA_URL
+    string "Default OTA URL"
+    default "https://api.tenclass.net/xiaozhi/ota/"
+    help
+        The application will access this URL to check for new firmware and server address.
+
+endmenu

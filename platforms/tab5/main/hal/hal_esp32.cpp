@@ -170,10 +170,8 @@ void HalEsp32::init()
 
     bsp_display_unlock();
 
-    mclog::tagInfo(_tag, "wifi init");
-    if (wifi_init()) {
-        sync_network_time();
-    }
+    // WiFi is managed by xiaozhi's Tab5BridgeBoard::StartNetwork().
+    // sync_network_time() is called after WiFi connects via the event handler.
 }
 
 static const gpio_num_t _driver_gpios[] = {

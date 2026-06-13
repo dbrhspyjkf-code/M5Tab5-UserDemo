@@ -376,6 +376,16 @@ void bsp_display_unlock(void);
  * @param[in] rotation Angle of the display rotation
  */
 void bsp_display_rotate(lv_display_t *disp, lv_disp_rotation_t rotation);
+
+/**
+ * @brief Get the LVGL display handle created by bsp_display_start()
+ *
+ * Useful for bridge code that needs to reuse the existing display
+ * without reinitializing hardware.
+ *
+ * @return lv_display_t* LVGL display handle, or NULL if not yet initialized
+ */
+lv_display_t* bsp_display_get_lvgl_disp(void);
 #endif  // BSP_CONFIG_NO_GRAPHIC_LIB == 0
 
 void bsp_io_expander_pi4ioe_init(i2c_master_bus_handle_t bus_handle);

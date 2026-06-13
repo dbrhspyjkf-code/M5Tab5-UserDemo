@@ -856,7 +856,7 @@ esp_codec_dev_handle_t bsp_audio_codec_microphone_init(void)
     es7210_codec_cfg_t es7210_cfg = {
         .ctrl_if = i2c_ctrl_if,  // Codec Control interface
     };
-    es7210_cfg.mic_selected            = ES7120_SEL_MIC1 | ES7120_SEL_MIC2 | ES7120_SEL_MIC3 | ES7120_SEL_MIC4;
+    es7210_cfg.mic_selected            = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3 | ES7210_SEL_MIC4;
     const audio_codec_if_t* es7210_dev = es7210_codec_new(&es7210_cfg);
     BSP_NULL_CHECK(es7210_dev, NULL);
 
@@ -1006,6 +1006,7 @@ typedef enum {
 } bsp_display_type_t;
 
 static bsp_display_type_t display_type = BSP_DISPLAY_TYPE_UNKNOWN;
+static lv_display_t* s_lv_display = NULL;
 
 static bsp_display_type_t bsp_detect_display_type(void)
 {
@@ -1551,7 +1552,13 @@ static lv_display_t* bsp_display_lcd_init(const bsp_display_cfg_t* cfg)
 #endif
                                                  }};
 
-    return lvgl_port_add_disp_dsi(&disp_cfg, &dpi_cfg);
+    s_lv_display = lvgl_port_add_disp_dsi(&disp_cfg, &dpi_cfg);
+    return s_lv_display;
+}
+
+lv_display_t* bsp_display_get_lvgl_disp(void)
+{
+    return s_lv_display;
 }
 
 esp_lcd_touch_handle_t _lcd_touch_handle;
