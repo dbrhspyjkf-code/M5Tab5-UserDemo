@@ -10,7 +10,7 @@
  *
  * - Display:  Tab5BridgeLcdDisplay wrapping bsp_display_get_lvgl_disp()
  * - I2C:      bsp_i2c_get_handle() (already initialized by BSP)
- * - Audio:    Dummy codec; Tab5-UserDemo owns audio/I2S hardware
+ * - Audio:    Real ES8388/ES7210 codec on BSP I2C bus (I2S_NUM_0 free)
  * - WiFi:     Reuses Tab5-UserDemo's already-started hosted WiFi
  * - Touch:    Re-uses touch indev initialized by Tab5-UserDemo BSP
  */

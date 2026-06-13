@@ -27,7 +27,7 @@ static void set_local_timezone()
     tzset();
 }
 
-static void sync_network_time()
+void sync_network_time()
 {
     set_local_timezone();
 

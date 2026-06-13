@@ -5,7 +5,8 @@
 #include "esp_lcd_st7123.h"         // st7123_lcd_init_cmd_t (m5stack_tab5 priv_include)
 
 #include "boards/m5stack-tab5/config.h"
-#include "codecs/dummy_audio_codec.h"
+#include "tab5_audio_codec.h"       // real ES8388/ES7210 codec on Tab5
+#include <es8388_codec.h>           // ES8388_CODEC_DEFAULT_ADDR (0x20)
 
 #include <bsp/m5stack_tab5.h>
 #include <esp_log.h>
@@ -41,8 +42,24 @@ void Tab5BridgeBoard::StartNetwork()
 
 AudioCodec* Tab5BridgeBoard::GetAudioCodec()
 {
-    static DummyAudioCodec dummy_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE);
-    return &dummy_codec;
+    // Real ES8388 (DAC/speaker) + ES7210 (ADC/mic) on the BSP I2C bus.
+    // BSP does NOT init the codec (bsp_codec_init is disabled), so I2S_NUM_0
+    // is free for xiaozhi. Chip is ES8388 @ 0x20 — config.h's ES8311 addr is wrong.
+    static Tab5AudioCodec codec(
+        i2c_bus_,
+        AUDIO_INPUT_SAMPLE_RATE,
+        AUDIO_OUTPUT_SAMPLE_RATE,
+        AUDIO_I2S_GPIO_MCLK,
+        AUDIO_I2S_GPIO_BCLK,
+        AUDIO_I2S_GPIO_WS,
+        AUDIO_I2S_GPIO_DOUT,
+        AUDIO_I2S_GPIO_DIN,
+        AUDIO_CODEC_PA_PIN,
+        ES8388_CODEC_DEFAULT_ADDR,   // 0x20 (live I2C scan confirmed 0x10 7-bit)
+        AUDIO_CODEC_ES7210_ADDR,     // ES7210_CODEC_DEFAULT_ADDR 0x80
+        AUDIO_INPUT_REFERENCE
+    );
+    return &codec;
 }
 
 Display* Tab5BridgeBoard::GetDisplay()

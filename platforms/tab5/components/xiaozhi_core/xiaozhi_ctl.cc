@@ -23,7 +23,8 @@ extern "C" void xiaozhi_start_task(void)
 {
     if (s_task != nullptr) return;
     ESP_LOGI(TAG, "starting xiaozhi task");
-    xTaskCreate(xiaozhi_task_fn, "xiaozhi", 8192, nullptr, 5, &s_task);
+    // 16 KB stack: online mode does TLS/websocket + SetupUI builds the LVGL UI.
+    xTaskCreate(xiaozhi_task_fn, "xiaozhi", 16384, nullptr, 5, &s_task);
 }
 
 extern "C" void xiaozhi_activate_screen(void)

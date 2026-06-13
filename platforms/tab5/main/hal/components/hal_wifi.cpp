@@ -22,6 +22,9 @@
 
 #define TAG "wifi"
 
+// Defined in hal_esp32.cpp — SNTP time sync (needed for TLS to xiaozhi cloud).
+void sync_network_time();
+
 static EventGroupHandle_t s_wifi_event_group = nullptr;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
@@ -115,6 +118,10 @@ bool HalEsp32::wifi_init()
 
     if (ok) {
         ESP_LOGI(TAG, "WiFi connected");
+        // Sync system clock via SNTP. Without this the RTC reads year 2002,
+        // which breaks TLS cert validation (e.g. api.tenclass.net for xiaozhi).
+        // Also serves as a DNS/internet reachability check (uses ntp.aliyun.com).
+        sync_network_time();
     } else {
         ESP_LOGW(TAG, "WiFi NOT connected");
     }

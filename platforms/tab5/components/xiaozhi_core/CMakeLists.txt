@@ -27,6 +27,8 @@ list(APPEND SOURCES
     "${XZ}/audio/processors/audio_debugger.cc"
     "${XZ}/audio/wake_words/afe_wake_word.cc"
     "${XZ}/audio/wake_words/custom_wake_word.cc"
+    # Tab5 real ES8388/ES7210 codec implementation
+    "${XZ}/boards/m5stack-tab5/tab5_audio_codec.cc"
 )
 
 # ── Display ───────────────────────────────────────────────────────────────
@@ -71,11 +73,6 @@ list(APPEND SOURCES
     "${XZ}/boards/common/system_reset.cc"
     "${XZ}/boards/common/afsk_demod.cc"
     "${XZ}/boards/common/adc_battery_monitor.cc"
-)
-
-# ── Tab5 audio codec (only; m5stack_tab5.cc is replaced by our bridge) ────
-list(APPEND SOURCES
-    "${XZ}/boards/m5stack-tab5/tab5_audio_codec.cc"
 )
 
 # ── Our bridge files + emote stubs (EmoteDisplay vtable for dynamic_cast) ─
