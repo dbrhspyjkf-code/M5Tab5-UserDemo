@@ -311,6 +311,23 @@ public:
     {
     }
 
+    /* ---------------------------------- HTTP ---------------------------------- */
+    struct HttpResponse_t {
+        int status = 0;
+        std::string body;
+        bool ok = false;
+    };
+    virtual HttpResponse_t httpGet(const std::string& url,
+        const std::vector<std::pair<std::string, std::string>>& headers = {})
+    {
+        return {};
+    }
+    virtual HttpResponse_t httpPost(const std::string& url, const std::string& body,
+        const std::vector<std::pair<std::string, std::string>>& headers = {})
+    {
+        return {};
+    }
+
     /* ------------------------------ UART monitor ------------------------------ */
     struct UartMonitorData_t {
         std::mutex mutex;

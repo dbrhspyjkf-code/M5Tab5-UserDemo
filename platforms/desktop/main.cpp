@@ -7,6 +7,7 @@
 #include <app.h>
 #include <memory>
 #include <hal/hal.h>
+#include <SDL2/SDL.h>
 
 int main()
 {
@@ -22,6 +23,7 @@ int main()
     app::Init(callback);
     while (!app::IsDone()) {
         app::Update();
+        SDL_Delay(5);
     }
     app::Destroy();
 

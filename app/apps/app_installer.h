@@ -10,6 +10,8 @@
 #include "app_template/app_template.h"
 #include "app_launcher/app_launcher.h"
 #include "app_startup_anim/app_startup_anim.h"
+#include "app_ha/app_ha.h"
+#include "app_home/app_home.h"
 /* Header files locator (Don't remove) */
 
 // Start boot anim app and wait for it to finish
@@ -34,8 +36,21 @@ inline void on_startup_anim()
  */
 inline void on_install_apps()
 {
-    // 安装 App
-    // mooncake::GetMooncake().installApp(std::make_unique<AppTemplate>());
-    mooncake::GetMooncake().installApp(std::make_unique<AppLauncher>());
+    // ── Create instances and save raw pointers before moving into Mooncake ──
+    auto home_uptr = std::make_unique<AppHome>();
+    AppHome* home  = home_uptr.get();
+
+    auto ha_uptr   = std::make_unique<AppHA>();
+    AppHA* ha      = ha_uptr.get();
+
+    // ── Install (AppHome auto-opens via onCreate → open()) ──
+    mooncake::GetMooncake().installApp(std::move(home_uptr));
+    int ha_id = mooncake::GetMooncake().installApp(std::move(ha_uptr));
+
+    // ── Wire: AppHA calls home->restoreScreen() just before destroying its UI ──
+    ha->setCloseCallback([home]() { home->restoreScreen(); });
+
+    // ── Register apps in the home screen ──
+    home->addApp("智能家居", ha_id);
     /* Install app locator (Don't remove) */
 }

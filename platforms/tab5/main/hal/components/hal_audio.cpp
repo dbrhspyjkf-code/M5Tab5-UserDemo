@@ -19,6 +19,10 @@ static const char* TAG = "audio";
 
 static uint8_t _current_speaker_volume = 60;
 
+static bool _codec_ready() {
+    return bsp_get_codec_handle()->set_volume != nullptr;
+}
+
 void HalEsp32::setSpeakerVolume(uint8_t volume)
 {
     _current_speaker_volume = std::clamp((int)volume, 0, 100);
@@ -32,6 +36,7 @@ uint8_t HalEsp32::getSpeakerVolume()
 
 void HalEsp32::audioRecord(std::vector<int16_t>& data, uint16_t durationMs, float gain)
 {
+    if (!_codec_ready()) return;
     data.resize(48000 * 4 * durationMs / 1000);
 
     // ESP_LOGI(TAG, "start record");
@@ -62,6 +67,14 @@ void _audio_play_task(void* param)
         if (_audio_task_data.is_audio_ready) {
             _audio_task_data.is_audio_playing = true;
             _audio_task_data.mutex.unlock();
+
+            if (!_codec_ready()) {
+                _audio_task_data.mutex.lock();
+                _audio_task_data.is_audio_playing = false;
+                _audio_task_data.is_audio_ready   = false;
+                _audio_task_data.mutex.unlock();
+                continue;
+            }
 
             bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
             codec_handle->set_volume(_current_speaker_volume);
@@ -101,6 +114,7 @@ void HalEsp32::audioPlay(std::vector<int16_t>& data, bool async)
         _audio_task_data.audio_data     = data;
         _audio_task_data.is_audio_ready = true;
     } else {
+        if (!_codec_ready()) return;
         bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
         codec_handle->set_volume(_current_speaker_volume);
         size_t bytes_written = 0;
@@ -273,6 +287,7 @@ static MusicTestData_t _music_test_data;
 
 static esp_err_t audio_mute_function(AUDIO_PLAYER_MUTE_SETTING setting)
 {
+    if (!_codec_ready()) return ESP_OK;
     bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
     codec_handle->set_mute(setting == AUDIO_PLAYER_MUTE ? true : false);
     return ESP_OK;
@@ -292,6 +307,7 @@ static void audio_player_callback(audio_player_cb_ctx_t* ctx)
 
 static void _music_play_task(void* param)
 {
+    if (!_codec_ready()) { vTaskDelete(NULL); return; }
     bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
     codec_handle->set_volume(_current_speaker_volume);
     codec_handle->i2s_reconfig_clk_fn(48000, 16, I2S_SLOT_MODE_STEREO);
@@ -387,12 +403,10 @@ void HalEsp32::stopPlayMusicTest()
 /* -------------------------------------------------------------------------- */
 void HalEsp32::playStartupSfx()
 {
-    std::lock_guard<std::mutex> lock(_music_test_data.mutex);
-    try_create_music_play_task(MP3_PLAY_TARGET_STARTUP_SFX);
+    // codec not initialized (bsp_codec_init skipped); no-op for HA panel
 }
 
 void HalEsp32::playShutdownSfx()
 {
-    std::lock_guard<std::mutex> lock(_music_test_data.mutex);
-    try_create_music_play_task(MP3_PLAY_TARGET_SHUTDOWN_SFX);
+    // codec not initialized (bsp_codec_init skipped); no-op for HA panel
 }

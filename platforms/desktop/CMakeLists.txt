@@ -18,16 +18,6 @@ add_subdirectory(dependencies/mooncake_log)
 set(SMOOTH_UI_TOOLKIT_BUILD_EXAMPLE OFF)
 add_subdirectory(dependencies/smooth_ui_toolkit)
 
-# App layer
-file(GLOB_RECURSE APP_LAYER_SRCS
-    app/*.c
-    app/*.cc
-    app/*.cpp
-)
-set(APP_LAYER_INCS
-    app/
-)
-
 # Lvgl
 set(LV_CONF_INCLUDE_SIMPLE OFF)
 set(LV_CONF_PATH ../../lv_conf.h)
@@ -38,6 +28,13 @@ find_package(SDL2 REQUIRED SDL2)
 include_directories(PUBLIC ${SDL2_INCLUDE_DIRS})
 target_include_directories(lvgl PUBLIC ${SDL2_INCLUDE_DIRS})
 
+# CURL for HA HTTP client
+find_package(CURL REQUIRED)
+include_directories(${CURL_INCLUDE_DIRS})
+
+# nlohmann json (header only) — include parent so #include <nlohmann/json.hpp> resolves
+include_directories(dependencies)
+
 # App layer
 file(GLOB_RECURSE APP_LAYER_SRCS
     app/*.c
@@ -48,21 +45,24 @@ set(APP_LAYER_INCS
     app/
 )
 
-# 桌面端源文件
+# 桌面端源文件 (exclude any build/ subtree to avoid picking up CMake's own
+# CompilerId test sources, which collide on link)
 file(GLOB_RECURSE APP_DESKTOP_BUILD_SRCS
     platforms/desktop/*.cpp
     platforms/desktop/*.cc
     platforms/desktop/*.c
 )
+list(FILTER APP_DESKTOP_BUILD_SRCS EXCLUDE REGEX "platforms/desktop/build/.*")
 add_executable(app_desktop_build ${APP_DESKTOP_BUILD_SRCS} ${APP_LAYER_SRCS})
 target_include_directories(app_desktop_build PUBLIC ${APP_LAYER_INCS})
-target_link_libraries(app_desktop_build PUBLIC 
-    mooncake 
+target_link_libraries(app_desktop_build PUBLIC
+    mooncake
     mooncake_log
-    lvgl 
-    lvgl_examples 
-    lvgl_demos 
+    lvgl
+    lvgl_examples
+    lvgl_demos
     ${SDL2_LIBRARIES}
+    ${CURL_LIBRARIES}
     smooth_ui_toolkit
     pthread
 )

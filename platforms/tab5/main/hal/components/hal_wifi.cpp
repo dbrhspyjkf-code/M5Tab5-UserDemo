@@ -5,8 +5,6 @@
  */
 #include "hal/hal_esp32.h"
 #include <mooncake_log.h>
-#include <vector>
-#include <memory>
 #include <string.h>
 #include <bsp/m5stack_tab5.h>
 #include <freertos/FreeRTOS.h>
@@ -15,179 +13,53 @@
 #include <nvs_flash.h>
 #include <esp_event.h>
 #include <esp_log.h>
-#include <nvs_flash.h>
 #include <esp_netif.h>
-#include <esp_wifi_default.h>
-#include <esp_wifi_netif.h>
-#include <esp_private/wifi.h>
-#include <esp_http_server.h>
+
+// ─── WiFi credentials ─────────────────────────────────────────────────────────
+#define WIFI_STA_SSID  "ChinaNet-11G"
+#define WIFI_STA_PASS  "Blackbug225"
+#define WIFI_MAX_RETRY 10
 
 #define TAG "wifi"
 
-#define WIFI_SSID    "M5Tab5-UserDemo-WiFi"
-#define WIFI_PASS    ""
-#define MAX_STA_CONN 4
+static EventGroupHandle_t s_wifi_event_group = nullptr;
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT      BIT1
 
-static bool s_wifi_ap_netif_started = false;
+static int s_retry_num = 0;
+static bool s_wifi_initialized = false;
 
-static void wifi_remote_ap_start_handler(void* arg, esp_event_base_t base, int32_t event_id, void* data)
+static void sta_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data)
 {
-    auto* netif = static_cast<esp_netif_t*>(arg);
-    if (s_wifi_ap_netif_started || esp_netif_is_netif_up(netif)) {
-        ESP_LOGW(TAG, "ignore duplicate Wi-Fi AP start event");
-        return;
-    }
-
-    auto driver = static_cast<wifi_netif_driver_t>(esp_netif_get_io_driver(netif));
-    uint8_t mac[6];
-    esp_err_t ret = esp_wifi_get_if_mac(driver, mac);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_wifi_get_if_mac failed: %s", esp_err_to_name(ret));
-        return;
-    }
-
-    if (esp_wifi_is_if_ready_when_started(driver)) {
-        ret = esp_wifi_register_if_rxcb(driver, esp_netif_receive, netif);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "esp_wifi_register_if_rxcb failed: %s", esp_err_to_name(ret));
-            return;
+    if (event_base == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_START) {
+            esp_wifi_connect();
+        } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            if (s_retry_num < WIFI_MAX_RETRY) {
+                esp_wifi_connect();
+                s_retry_num++;
+                ESP_LOGI(TAG, "retry WiFi connect (%d/%d)", s_retry_num, WIFI_MAX_RETRY);
+            } else {
+                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+                ESP_LOGW(TAG, "WiFi connection failed after %d retries", WIFI_MAX_RETRY);
+            }
         }
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        auto* event = (ip_event_got_ip_t*)event_data;
+        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        s_retry_num = 0;
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
-
-    ret = esp_wifi_internal_reg_netstack_buf_cb(esp_netif_netstack_buf_ref, esp_netif_netstack_buf_free);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "netstack cb register failed: %s", esp_err_to_name(ret));
-        return;
-    }
-
-    esp_netif_set_mac(netif, mac);
-    esp_netif_action_start(netif, base, event_id, data);
-    s_wifi_ap_netif_started = true;
-}
-
-static void wifi_remote_ap_stop_handler(void* arg, esp_event_base_t base, int32_t event_id, void* data)
-{
-    auto* netif = static_cast<esp_netif_t*>(arg);
-    if (!s_wifi_ap_netif_started && !esp_netif_is_netif_up(netif)) {
-        ESP_LOGW(TAG, "ignore duplicate Wi-Fi AP stop event");
-        return;
-    }
-
-    esp_netif_action_stop(netif, base, event_id, data);
-    s_wifi_ap_netif_started = false;
-}
-
-static esp_netif_t* create_wifi_remote_ap_netif()
-{
-    esp_netif_config_t cfg = ESP_NETIF_DEFAULT_WIFI_AP();
-    esp_netif_t* netif     = esp_netif_new(&cfg);
-    assert(netif);
-
-    ESP_ERROR_CHECK(esp_netif_attach_wifi_ap(netif));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, wifi_remote_ap_start_handler, netif));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STOP, wifi_remote_ap_stop_handler, netif));
-
-    return netif;
-}
-
-// HTTP 处理函数
-esp_err_t hello_get_handler(httpd_req_t* req)
-{
-    const char* html_response = R"rawliteral(
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Hello</title>
-            <style>
-                body {
-                    display: flex;
-                    flex-direction: column;
-                    justify-content: center;
-                    align-items: center;
-                    height: 100vh;
-                    margin: 0;
-                    font-family: sans-serif;
-                    background-color: #f0f0f0;
-                }
-                h1 {
-                    font-size: 48px;
-                    color: #333;
-                    margin: 0;
-                }
-                p {
-                    font-size: 18px;
-                    color: #666;
-                    margin-top: 10px;
-                }
-            </style>
-        </head>
-        <body>
-            <h1>Hello World</h1>
-            <p>From M5Tab5</p>
-        </body>
-        </html>
-    )rawliteral";
-
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, html_response, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-// URI 路由
-httpd_uri_t hello_uri = {.uri = "/", .method = HTTP_GET, .handler = hello_get_handler, .user_ctx = nullptr};
-
-// 启动 Web Server
-httpd_handle_t start_webserver()
-{
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    httpd_handle_t server = nullptr;
-
-    if (httpd_start(&server, &config) == ESP_OK) {
-        httpd_register_uri_handler(server, &hello_uri);
-    }
-    return server;
-}
-
-// 初始化 Wi-Fi AP 模式
-void wifi_init_softap()
-{
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    create_wifi_remote_ap_netif();
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    wifi_config_t wifi_config = {};
-    std::strncpy(reinterpret_cast<char*>(wifi_config.ap.ssid), WIFI_SSID, sizeof(wifi_config.ap.ssid));
-    std::strncpy(reinterpret_cast<char*>(wifi_config.ap.password), WIFI_PASS, sizeof(wifi_config.ap.password));
-    wifi_config.ap.ssid_len       = std::strlen(WIFI_SSID);
-    wifi_config.ap.max_connection = MAX_STA_CONN;
-    wifi_config.ap.authmode       = WIFI_AUTH_OPEN;
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    ESP_LOGI(TAG, "Wi-Fi AP started. SSID:%s password:%s", WIFI_SSID, WIFI_PASS);
-}
-
-static void wifi_ap_test_task(void* param)
-{
-    wifi_init_softap();
-    start_webserver();
-
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-    vTaskDelete(NULL);
 }
 
 bool HalEsp32::wifi_init()
 {
-    mclog::tagInfo(TAG, "wifi init");
+    if (s_wifi_initialized) return true;
 
+    ESP_LOGI(TAG, "WiFi STA init: connecting to %s", WIFI_STA_SSID);
+
+    // NVS required by WiFi
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -195,8 +67,58 @@ bool HalEsp32::wifi_init()
     }
     ESP_ERROR_CHECK(ret);
 
-    xTaskCreate(wifi_ap_test_task, "ap", 4096, nullptr, 5, nullptr);
-    return true;
+    s_wifi_event_group = xEventGroupCreate();
+
+    // netif and event loop may already be initialized by BSP
+    esp_err_t ni = esp_netif_init();
+    if (ni != ESP_OK && ni != ESP_ERR_INVALID_STATE)
+        ESP_ERROR_CHECK(ni);
+
+    esp_err_t el = esp_event_loop_create_default();
+    if (el != ESP_OK && el != ESP_ERR_INVALID_STATE)
+        ESP_ERROR_CHECK(el);
+
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    esp_event_handler_instance_t inst_any;
+    esp_event_handler_instance_t inst_ip;
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &sta_event_handler, nullptr, &inst_any));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &sta_event_handler, nullptr, &inst_ip));
+
+    wifi_config_t wifi_config = {};
+    strncpy((char*)wifi_config.sta.ssid,     WIFI_STA_SSID, sizeof(wifi_config.sta.ssid));
+    strncpy((char*)wifi_config.sta.password, WIFI_STA_PASS, sizeof(wifi_config.sta.password));
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    // Wait up to 15s for connection
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                            pdFALSE, pdFALSE,
+                                            pdMS_TO_TICKS(15000));
+
+    esp_event_handler_instance_unregister(IP_EVENT,  IP_EVENT_STA_GOT_IP, inst_ip);
+    esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,   inst_any);
+    vEventGroupDelete(s_wifi_event_group);
+    s_wifi_event_group = nullptr;
+
+    bool ok = (bits & WIFI_CONNECTED_BIT) != 0;
+    s_wifi_initialized = ok;
+
+    if (ok) {
+        ESP_LOGI(TAG, "WiFi connected");
+    } else {
+        ESP_LOGW(TAG, "WiFi NOT connected");
+    }
+    return ok;
 }
 
 void HalEsp32::setExtAntennaEnable(bool enable)
@@ -213,5 +135,6 @@ bool HalEsp32::getExtAntennaEnable()
 
 void HalEsp32::startWifiAp()
 {
+    // STA mode only — AP not used
     wifi_init();
 }

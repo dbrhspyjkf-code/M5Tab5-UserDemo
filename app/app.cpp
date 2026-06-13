@@ -32,12 +32,13 @@ void app::Init(InitCallback_t callback)
 
 void app::Update()
 {
-    GetMooncake().update();
+    {
+        LvglLockGuard lock;
+        GetMooncake().update();
+    }
 
 #if defined(__APPLE__) && defined(__MACH__)
-    // 'nextEventMatchingMask should only be called from the Main Thread!'
-    auto time_till_next = lv_timer_handler();
-    std::this_thread::sleep_for(std::chrono::milliseconds(time_till_next));
+    lv_timer_handler();
 #endif
 }
 

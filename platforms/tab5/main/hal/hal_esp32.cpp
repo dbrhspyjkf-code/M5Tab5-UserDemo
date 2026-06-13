@@ -11,12 +11,50 @@ extern "C" {
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <esp_netif_sntp.h>
 #include <bsp/m5stack_tab5.h>
 #include <lv_demos.h>
+#include <cstdlib>
+#include <ctime>
 
 extern esp_lcd_touch_handle_t _lcd_touch_handle;
 
 static const std::string _tag = "hal";
+
+static void set_local_timezone()
+{
+    setenv("TZ", "CST-8", 1);
+    tzset();
+}
+
+static void sync_network_time()
+{
+    set_local_timezone();
+
+    static bool sntp_initialized = false;
+    if (!sntp_initialized) {
+        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("ntp.aliyun.com");
+        esp_err_t ret = esp_netif_sntp_init(&config);
+        if (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE) {
+            sntp_initialized = true;
+        } else {
+            mclog::tagWarn(_tag, "sntp init failed: {}", esp_err_to_name(ret));
+            return;
+        }
+    }
+
+    esp_err_t ret = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000));
+    if (ret == ESP_OK) {
+        time_t now = time(nullptr);
+        struct tm local_now;
+        localtime_r(&now, &local_now);
+        mclog::tagInfo(_tag, "network time synced: {:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}",
+                       local_now.tm_year + 1900, local_now.tm_mon + 1, local_now.tm_mday,
+                       local_now.tm_hour, local_now.tm_min, local_now.tm_sec);
+    } else {
+        mclog::tagWarn(_tag, "sntp sync timeout: {}", esp_err_to_name(ret));
+    }
+}
 
 static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {
@@ -58,6 +96,10 @@ void HalEsp32::init()
     i2c_master_bus_handle_t i2c_bus_handle = bsp_i2c_get_handle();
     bsp_io_expander_pi4ioe_init(i2c_bus_handle);
 
+    mclog::tagInfo(_tag, "wifi power on");
+    bsp_set_wifi_power_enable(true);
+    delay(500);  // give C6 time to boot before SDIO transport connects
+
     setChargeQcEnable(true);
     delay(50);
     setChargeEnable(true);
@@ -66,9 +108,10 @@ void HalEsp32::init()
     mclog::tagInfo(_tag, "i2c scan");
     bsp_i2c_scan();
 
-    mclog::tagInfo(_tag, "codec init");
-    delay(200);
-    bsp_codec_init();
+    // bsp_codec_init() uses legacy I2C API incompatible with BSP new driver; skip for HA panel
+    // mclog::tagInfo(_tag, "codec init");
+    // delay(200);
+    // bsp_codec_init();
 
     mclog::tagInfo(_tag, "imu init");
     imu_init();
@@ -84,6 +127,7 @@ void HalEsp32::init()
     rx8130.begin(i2c_bus_handle, 0x32);
     rx8130.initBat();
     clearRtcIrq();
+    set_local_timezone();
     update_system_time();
 
     mclog::tagInfo(_tag, "display init");
@@ -111,11 +155,12 @@ void HalEsp32::init()
     // lv_indev_set_read_cb(lvTouchpad, lvgl_read_cb);
     // lv_indev_set_display(lvTouchpad, lvDisp);
 
-    mclog::tagInfo(_tag, "usb host init");
-    bsp_usb_host_start(BSP_USB_HOST_POWER_MODE_USB_DEV, true);
-
-    mclog::tagInfo(_tag, "hid init");
-    hid_init();
+    // HA panel does not use USB host/HID. Keep it disabled so the USB-Serial/JTAG
+    // connection remains stable while the dashboard is running.
+    // mclog::tagInfo(_tag, "usb host init");
+    // bsp_usb_host_start(BSP_USB_HOST_POWER_MODE_USB_DEV, true);
+    // mclog::tagInfo(_tag, "hid init");
+    // hid_init();
 
     mclog::tagInfo(_tag, "rs485 init");
     rs485_init();
@@ -124,6 +169,11 @@ void HalEsp32::init()
     set_gpio_output_capability();
 
     bsp_display_unlock();
+
+    mclog::tagInfo(_tag, "wifi init");
+    if (wifi_init()) {
+        sync_network_time();
+    }
 }
 
 static const gpio_num_t _driver_gpios[] = {

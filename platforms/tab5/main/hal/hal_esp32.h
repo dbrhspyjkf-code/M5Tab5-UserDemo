@@ -89,6 +89,11 @@ public:
     void gpioSetLevel(uint8_t pin, bool level) override;
     void gpioReset(uint8_t pin) override;
 
+    HttpResponse_t httpGet(const std::string& url,
+        const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
+    HttpResponse_t httpPost(const std::string& url, const std::string& body,
+        const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
+
 private:
     void set_gpio_output_capability();
     void hid_init();

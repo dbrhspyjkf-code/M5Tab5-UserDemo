@@ -62,6 +62,11 @@ public:
 
     void uartMonitorSend(std::string msg, bool newLine = true) override;
 
+    HttpResponse_t httpGet(const std::string& url,
+        const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
+    HttpResponse_t httpPost(const std::string& url, const std::string& body,
+        const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
+
 private:
     uint8_t _current_lcd_brightness = 100;
     uint8_t _current_speaker_volume = 20;
