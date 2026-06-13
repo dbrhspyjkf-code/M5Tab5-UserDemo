@@ -69,10 +69,12 @@ Display* Tab5BridgeBoard::GetDisplay()
 
 Backlight* Tab5BridgeBoard::GetBacklight()
 {
-    // Backlight is already initialized and on.  Return a static instance
-    // so xiaozhi can adjust brightness without re-initializing the pin.
-    static PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
-    return &backlight;
+    // Return nullptr: the BSP already drives the backlight on GPIO22 and keeps
+    // it on. Constructing xiaozhi's PwmBacklight here re-inits LEDC on the same
+    // pin ("ledc: GPIO 22 is not usable" conflict) and ends up turning the
+    // screen OFF (black) shortly after MCP init calls GetBacklight(). All
+    // xiaozhi callers null-check GetBacklight(), so nullptr is safe.
+    return nullptr;
 }
 
 // Register this as the board used by xiaozhi's Application singleton.

@@ -63,3 +63,24 @@ CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=15
 CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n
 CONFIG_LV_USE_IMGFONT=y
 CONFIG_OTA_URL="https://api.tenclass.net/xiaozhi/ota/"
+
+# Move mbedtls/TLS allocations to PSRAM so the TLS handshake to the xiaozhi
+# cloud doesn't exhaust internal RAM (was causing esp-aes alloc failures and
+# esp_hosted SDIO buffer crashes).
+# CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC is not set
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# Fixed high app version (not git-describe). Two reasons:
+#  1. ParseVersion() does std::stoi per dot-segment; a git version like
+#     "V0.4-..." threw and aborted the device. "99.0.0" is clean numeric.
+#  2. Keeps the OTA server from ever seeing a "newer" official firmware and
+#     auto-flashing over this custom Tab5+xiaozhi build.
+CONFIG_APP_PROJECT_VER_FROM_CONFIG=y
+CONFIG_APP_PROJECT_VER="99.0.0"
+
+# Free DMA-capable internal RAM for esp_hosted SDIO + I2S audio DMA. The
+# xiaozhi voice path crashed with "esp_dma_capable_malloc: Not enough heap"
+# / "sdio_rx_get_buffer" once audio started streaming. Move WiFi/LWIP buffers
+# to PSRAM and reserve more internal RAM for DMA-only allocations.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
