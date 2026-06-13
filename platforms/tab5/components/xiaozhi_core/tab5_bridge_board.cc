@@ -5,6 +5,7 @@
 #include "esp_lcd_st7123.h"         // st7123_lcd_init_cmd_t (m5stack_tab5 priv_include)
 
 #include "boards/m5stack-tab5/config.h"
+#include "codecs/dummy_audio_codec.h"
 
 #include <bsp/m5stack_tab5.h>
 #include <esp_log.h>
@@ -32,23 +33,16 @@ Tab5BridgeBoard::~Tab5BridgeBoard()
     display_ = nullptr;
 }
 
+void Tab5BridgeBoard::StartNetwork()
+{
+    ESP_LOGI(TAG, "reuse Tab5 hosted WiFi network");
+    OnNetworkEvent(NetworkEvent::Connected, "hosted-wifi");
+}
+
 AudioCodec* Tab5BridgeBoard::GetAudioCodec()
 {
-    static Tab5AudioCodec codec(
-        i2c_bus_,
-        AUDIO_INPUT_SAMPLE_RATE,
-        AUDIO_OUTPUT_SAMPLE_RATE,
-        AUDIO_I2S_GPIO_MCLK,
-        AUDIO_I2S_GPIO_BCLK,
-        AUDIO_I2S_GPIO_WS,
-        AUDIO_I2S_GPIO_DOUT,
-        AUDIO_I2S_GPIO_DIN,
-        AUDIO_CODEC_PA_PIN,
-        AUDIO_CODEC_ES8311_ADDR,   // config.h names this ES8311 (same I2C addr, chip is ES8388)
-        AUDIO_CODEC_ES7210_ADDR,
-        AUDIO_INPUT_REFERENCE
-    );
-    return &codec;
+    static DummyAudioCodec dummy_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE);
+    return &dummy_codec;
 }
 
 Display* Tab5BridgeBoard::GetDisplay()

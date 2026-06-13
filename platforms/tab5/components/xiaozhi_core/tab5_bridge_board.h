@@ -2,7 +2,6 @@
 
 #include "boards/common/wifi_board.h"
 #include "tab5_bridge_lcd.h"
-#include "boards/m5stack-tab5/tab5_audio_codec.h"
 #include <driver/i2c_master.h>
 
 /**
@@ -11,8 +10,8 @@
  *
  * - Display:  Tab5BridgeLcdDisplay wrapping bsp_display_get_lvgl_disp()
  * - I2C:      bsp_i2c_get_handle() (already initialized by BSP)
- * - Audio:    Tab5AudioCodec using the BSP I2C handle
- * - WiFi:     Inherited from WifiBoard (manages WiFi via NVS credentials)
+ * - Audio:    Dummy codec; Tab5-UserDemo owns audio/I2S hardware
+ * - WiFi:     Reuses Tab5-UserDemo's already-started hosted WiFi
  * - Touch:    Re-uses touch indev initialized by Tab5-UserDemo BSP
  */
 class Tab5BridgeBoard : public WifiBoard {
@@ -22,6 +21,7 @@ public:
 
     std::string GetBoardType() override { return "m5stack-tab5"; }
 
+    void StartNetwork() override;
     AudioCodec*  GetAudioCodec() override;
     Display*     GetDisplay()    override;
     Backlight*   GetBacklight()  override;
