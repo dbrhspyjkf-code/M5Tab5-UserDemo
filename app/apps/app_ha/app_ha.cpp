@@ -10,16 +10,24 @@ using json = nlohmann::json;
 
 static const std::string _tag = "app-ha";
 
+// ─── Server address ───────────────────────────────────────────────────────────
+// Host running HA / Sonos bridge / weather service. Configurable on-screen via
+// the Settings app (stored in NVS key "ha_host"); falls back to this default.
+static const char* HA_HOST_DEFAULT = "192.168.1.142";
+
+static std::string ha_host()
+{
+    return GetHAL()->getConfig("ha_host", HA_HOST_DEFAULT);
+}
+static std::string ha_url()    { return "http://" + ha_host() + ":8123"; }
+static std::string sonos_url() { return "http://" + ha_host() + ":8900"; }
+
 // ─── Entity config ────────────────────────────────────────────────────────────
-static const char* HA_URL   = "http://192.168.1.142:8123";
 static const char* HA_TOKEN =
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
     ".eyJpc3MiOiJhZGY3Y2Q0Y2YxNDg0OTQxYjhhNWE1NjRjM2RmZGZiYSIsImlhdCI6MTc4MTIzND"
     "I2MSwiZXhwIjoyMDk2NTk0MjYxfQ"
     ".wI-2PpOXyGUUDYSeCZleq_AUNJ0uPyyIOHxnkcFbJYk";
-
-// Sonos controller endpoint (matches HomeControl-iOS /api/sonos/state)
-static const char* SONOS_URL = "http://192.168.1.142:8900";
 static const char* TV_EID = "media_player.xiaomi_cn_629973618_esprh1";
 
 // Lights: entity_id → display label
@@ -67,22 +75,35 @@ AppHA::AppHA()
 
 void AppHA::onCreate()
 {
-    _closing = false;
-    _ha = std::make_shared<HaClient>();
-
-    HaClient::Config cfg;
-    cfg.url   = HA_URL;
-    cfg.token = HA_TOKEN;
-    _ha->init(cfg);
-
-    _sonos = std::make_unique<SonosClient>();
-    SonosClient::Config scfg;
-    scfg.baseUrl = SONOS_URL;
-    _sonos->init(scfg);
+    // The HA + Sonos clients are intentionally created in onOpen (and fully
+    // released in onClose), NOT here. onCreate runs once at install time and the
+    // object would then live forever. HaClient::_states holds ~300 entities
+    // whose many small string/map allocations land mostly in internal SRAM;
+    // keeping them around after the app closes starved xiaozhi of internal DMA
+    // RAM and crashed it (I2S DMA alloc failure → Load access fault) when
+    // entering it after HA. Create-on-open / destroy-on-close frees that RAM.
 }
 
 void AppHA::onOpen()
 {
+    _closing = false;
+
+    // (Re)create the clients each time the app opens. Reading ha_url()/sonos_url()
+    // here also means a HA address changed in Settings takes effect on next open.
+    if (!_ha) {
+        _ha = std::make_shared<HaClient>();
+        HaClient::Config cfg;
+        cfg.url   = ha_url();
+        cfg.token = HA_TOKEN;
+        _ha->init(cfg);
+    }
+    if (!_sonos) {
+        _sonos = std::make_unique<SonosClient>();
+        SonosClient::Config scfg;
+        scfg.baseUrl = sonos_url();
+        _sonos->init(scfg);
+    }
+
     _view = std::make_unique<ha_view::HaView>();
     _view->init([this](const std::string& entity_id,
                        const std::string& action,
@@ -520,7 +541,7 @@ void AppHA::_fetch_lock_history_async()
 void AppHA::_fetch_weather_async()
 {
     _start_worker([this]() {
-        auto resp = GetHAL()->httpGet("http://192.168.1.142:8766/weather?city=Guangzhou");
+        auto resp = GetHAL()->httpGet("http://" + ha_host() + ":8766/weather?city=Guangzhou");
         if (!resp.ok) {
             mclog::tagWarn(_tag, "weather fetch failed: {}", resp.status);
             return;
@@ -549,14 +570,29 @@ void AppHA::_start_worker(std::function<void()> fn)
 {
     if (_closing.load()) return;
     _active_workers.fetch_add(1, std::memory_order_relaxed);
-    std::thread([this, fn = std::move(fn)]() {
-        fn();
-        // Decrement and notify so onClose can wait cleanly.
+
+    auto worker_done = [this]() {
         if (_active_workers.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             std::lock_guard<std::mutex> lock(_worker_mutex);
             _worker_cv.notify_all();
         }
-    }).detach();
+    };
+
+    // Spawn through the HAL so a failed thread creation degrades gracefully
+    // instead of aborting the device. This matters right after leaving xiaozhi:
+    // its freed audio task stacks are still being reclaimed, so internal RAM is
+    // momentarily fragmented and pthread_create can fail. std::thread would
+    // abort() there (C++ exceptions are disabled); tryRunDetached returns false.
+    bool ok = GetHAL()->tryRunDetached([fn = std::move(fn), worker_done]() {
+        fn();
+        worker_done();
+    });
+    if (!ok) {
+        // Couldn't spawn — undo the counter so onClose's _join_workers() does
+        // not wait forever, and skip this fetch (it'll be retried next tick).
+        mclog::tagWarn(_tag, "worker spawn failed (low internal RAM), skipping");
+        worker_done();
+    }
 }
 
 void AppHA::_join_workers()
@@ -579,4 +615,9 @@ void AppHA::onClose()
     // an undefined state.
     if (_close_cb) _close_cb();
     _view.reset();
+    // Release the clients so HaClient::_states (~300 entities, mostly internal
+    // SRAM) is fully freed while the app is closed. Recreated in onOpen. This is
+    // what lets xiaozhi allocate its I2S DMA after the user has been in HA.
+    _ha.reset();
+    _sonos.reset();
 }

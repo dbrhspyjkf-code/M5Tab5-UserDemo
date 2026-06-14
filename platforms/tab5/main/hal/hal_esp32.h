@@ -75,6 +75,14 @@ public:
     void setExtAntennaEnable(bool enable) override;
     bool getExtAntennaEnable() override;
     void startWifiAp() override;
+    bool isWifiConnected() override;
+    std::vector<WifiAp_t> wifiScan() override;
+
+    std::string getConfig(const std::string& key, const std::string& defaultValue = "") override;
+    void setConfig(const std::string& key, const std::string& value) override;
+
+    void reboot() override;
+    bool tryRunDetached(std::function<void()> fn) override;
 
     bool isSdCardMounted() override;
     std::vector<FileEntry_t> scanSdCard(const std::string& dirPath) override;

@@ -1,5 +1,8 @@
 .cache
 .vscode
 build
+build-*
+build_*
 dependencies
 .DS_Store
+__pycache__

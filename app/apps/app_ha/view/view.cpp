@@ -44,6 +44,9 @@ static constexpr int HDR_H   = 80;   // header strip
 static constexpr int TAB_H   = 68;   // bottom tab bar
 static constexpr int CONT_Y  = HDR_H + GAP;
 static constexpr int CONT_H  = H - HDR_H - TAB_H - GAP * 2;
+static constexpr int PILL_W      = 200;
+static constexpr int PILL_H      = 40;
+static constexpr int PILL_BOTTOM = 12;
 
 // Card sizes inside content area
 static constexpr int CARD_H  = 123;  // standard device card height
@@ -1163,22 +1166,6 @@ void HaView::_build_skeleton()
     _build_header();
     _build_tab_bar();
 
-    // Invisible swipe-up zone at the bottom — triggers home navigation
-    lv_obj_t* swipe_zone = lv_obj_create(_scr);
-    lv_obj_set_size(swipe_zone, W, 40);
-    lv_obj_set_pos(swipe_zone, 0, H - 40);
-    lv_obj_set_style_bg_opa(swipe_zone, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(swipe_zone, 0, 0);
-    lv_obj_clear_flag(swipe_zone, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(swipe_zone, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(swipe_zone, [](lv_event_t* e) {
-        lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
-        if (dir == LV_DIR_TOP) {
-            auto* view = static_cast<HaView*>(lv_event_get_user_data(e));
-            if (view->_on_action_fn) view->_on_action_fn("app", "home", "");
-        }
-    }, LV_EVENT_GESTURE, this);
-
     // Content area (scrollable)
     _content_area = lv_obj_create(_scr);
     lv_obj_set_pos(_content_area, 0, CONT_Y);
@@ -1187,6 +1174,33 @@ void HaView::_build_skeleton()
     lv_obj_set_style_border_width(_content_area, 0, 0);
     lv_obj_set_style_pad_all(_content_area, 0, 0);
     lv_obj_clear_flag(_content_area, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* exit_btn = lv_obj_create(_scr);
+    lv_obj_set_size(exit_btn, PILL_W, PILL_H);
+    lv_obj_set_pos(exit_btn, W - PILL_W - 20, (HDR_H - PILL_H) / 2);
+    lv_obj_set_style_bg_color(exit_btn, lv_color_hex(0xEAF3FA), 0);
+    lv_obj_set_style_bg_opa(exit_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(exit_btn, PILL_H / 2, 0);
+    lv_obj_set_style_border_color(exit_btn, lv_color_hex(0x3B9EDB), 0);
+    lv_obj_set_style_border_width(exit_btn, 2, 0);
+    lv_obj_clear_flag(exit_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(exit_btn, LV_OBJ_FLAG_CLICKABLE);
+
+    // Accent-colored indicator bar centered inside pill
+    lv_obj_t* bar = lv_obj_create(exit_btn);
+    lv_obj_set_size(bar, 80, 5);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x3B9EDB), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(bar, 3, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_clear_flag(bar, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    lv_obj_center(bar);
+
+    lv_obj_add_event_cb(exit_btn, [](lv_event_t* e) {
+        lv_event_stop_bubbling(e);
+        auto* view = static_cast<HaView*>(lv_event_get_user_data(e));
+        if (view->_on_action_fn) view->_on_action_fn("app", "home", "");
+    }, LV_EVENT_CLICKED, this);
 }
 
 void HaView::_build_header()

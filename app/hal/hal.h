@@ -5,11 +5,13 @@
  */
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <queue>
 #include <string>
 #include <lvgl.h>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 /**
@@ -261,6 +263,62 @@ public:
     }
     virtual void startWifiAp()
     {
+    }
+    // True once the STA has an IP. Default true so non-device platforms (e.g.
+    // desktop sim) never trigger the "no WiFi" config flow.
+    virtual bool isWifiConnected()
+    {
+        return true;
+    }
+
+    // Scan for nearby WiFi access points (STA scan). Returns unique SSIDs,
+    // strongest signal first. Empty if scan unsupported/failed.
+    struct WifiAp_t {
+        std::string ssid;
+        int8_t rssi;
+        bool locked;  // requires a password (not open)
+    };
+    virtual std::vector<WifiAp_t> wifiScan()
+    {
+        return {};
+    }
+
+    /* ------------------------- Persistent config (NVS) ------------------------ */
+    // Simple string key/value store backed by NVS on device. Used for
+    // runtime-configurable WiFi credentials and HA server address so the user
+    // can change them on-screen without reflashing.
+    virtual std::string getConfig(const std::string& key, const std::string& defaultValue = "")
+    {
+        return defaultValue;
+    }
+    virtual void setConfig(const std::string& key, const std::string& value)
+    {
+    }
+
+    /* --------------------------------- System --------------------------------- */
+    virtual void reboot()
+    {
+    }
+
+    /**
+     * @brief Spawn a detached background worker, failing gracefully.
+     *
+     * On device a std::thread maps to a pthread whose stack
+     * (CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT = 16 KB) must come from a
+     * contiguous internal-RAM block. When internal RAM is momentarily
+     * fragmented (e.g. just after leaving xiaozhi, whose audio task stacks are
+     * still being reclaimed), pthread_create fails — and with C++ exceptions
+     * disabled, std::thread would abort() the whole device. This helper lets the
+     * caller detect that failure (returns false) and skip the work instead.
+     *
+     * Default (desktop sim) implementation just uses std::thread.
+     *
+     * @return true if the worker was started, false if it could not be spawned.
+     */
+    virtual bool tryRunDetached(std::function<void()> fn)
+    {
+        std::thread(std::move(fn)).detach();
+        return true;
     }
 
     /* --------------------------------- SD Card -------------------------------- */

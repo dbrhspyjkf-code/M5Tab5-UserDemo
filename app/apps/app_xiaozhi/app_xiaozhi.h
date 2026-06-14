@@ -1,5 +1,6 @@
 #pragma once
 #include <mooncake.h>
+#include <lvgl.h>
 #include <functional>
 
 /**
@@ -26,4 +27,8 @@ public:
 private:
     std::function<void()> _close_cb;
     bool _initialized = false;
+    lv_obj_t* _exit_button = nullptr;
+
+    void _installExitButton();
+    void _removeExitButton();
 };

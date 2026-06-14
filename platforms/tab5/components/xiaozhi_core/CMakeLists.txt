@@ -87,6 +87,11 @@ list(APPEND SOURCES
 file(GLOB LANG_SOUNDS   "${XZ}/assets/locales/zh-CN/*.ogg")
 file(GLOB COMMON_SOUNDS "${XZ}/assets/common/*.ogg")
 
+# Full-coverage Chinese chat font (GB2312 common ~3500 glyphs). The builtin
+# font_puhui_basic only has a small subset, so LLM replies render as boxes.
+# cbin font data is used in-place from flash (no big RAM copy).
+set(CHAT_FONT_BIN "${CMAKE_CURRENT_SOURCE_DIR}/../../managed_components/78__xiaozhi-fonts/cbin/font_puhui_common_30_4.bin")
+
 # ── Include directories ───────────────────────────────────────────────────
 set(BSP_PRIV "${CMAKE_CURRENT_SOURCE_DIR}/../m5stack_tab5/priv_include")
 
@@ -106,13 +111,14 @@ set(INCLUDE_DIRS
 
 idf_component_register(
     SRCS            ${SOURCES}
-    EMBED_FILES     ${LANG_SOUNDS} ${COMMON_SOUNDS}
+    EMBED_FILES     ${LANG_SOUNDS} ${COMMON_SOUNDS} ${CHAT_FONT_BIN}
     INCLUDE_DIRS    ${INCLUDE_DIRS}
     WHOLE_ARCHIVE
     PRIV_REQUIRES
         esp_pm
         esp_psram
         esp_netif
+        esp_wifi
         esp_driver_gpio
         esp_driver_uart
         esp_driver_i2c
