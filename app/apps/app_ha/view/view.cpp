@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <hal/hal.h>
 #include <mooncake_log.h>
+#include "screensaver/screensaver.h"
 
 using namespace ha_view;
 
@@ -15,23 +16,23 @@ LV_FONT_DECLARE(font_zh_18);
 LV_FONT_DECLARE(font_zh_36);
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
-static constexpr uint32_t C_BG          = 0xC8DFEF;  // light blue background
-static constexpr uint32_t C_CARD        = 0xF0F7FC;  // card background
-static constexpr uint32_t C_CARD_ON     = 0xFFFFFF;  // active card
-static constexpr uint32_t C_ACCENT      = 0x3B9EDB;  // blue accent
-static constexpr uint32_t C_ACCENT_SOFT = 0xD0EAFB;  // soft blue fill
-static constexpr uint32_t C_TEXT        = 0x1A2535;  // primary text
-static constexpr uint32_t C_TEXT2       = 0x6B7A8D;  // secondary text
-static constexpr uint32_t C_TAB_BG      = 0xEAF3FA;  // tab bar bg
-static constexpr uint32_t C_TAB_ACTIVE  = 0xFFFFFF;  // active tab pill
+static constexpr uint32_t C_BG          = 0x0A1A2E;  // light blue background
+static constexpr uint32_t C_CARD        = 0x13304E;  // card background
+static constexpr uint32_t C_CARD_ON     = 0x1E5288;  // active card
+static constexpr uint32_t C_ACCENT      = 0x4FA3FF;  // blue accent
+static constexpr uint32_t C_ACCENT_SOFT = 0x1A3A5C;  // soft blue fill
+static constexpr uint32_t C_TEXT        = 0xEAF3FB;  // primary text
+static constexpr uint32_t C_TEXT2       = 0x8FA8C4;  // secondary text
+static constexpr uint32_t C_TAB_BG      = 0x0C2038;  // tab bar bg
+static constexpr uint32_t C_TAB_ACTIVE  = 0x1E6FC2;  // active tab pill
 static constexpr uint32_t C_GREEN       = 0x34A853;
 static constexpr uint32_t C_AMBER       = 0xF59E0B;
 static constexpr uint32_t C_RED         = 0xEF4444;
-static constexpr uint32_t C_FAN_ACTIVE  = 0x3B9EDB;
+static constexpr uint32_t C_FAN_ACTIVE  = 0x4FA3FF;
 static constexpr uint32_t C_SONOS_PURP  = 0x7C3AED;  // Sonos brand purple
-static constexpr uint32_t C_SONOS_SOFT  = 0xEDE7F6;  // soft purple fill
-static constexpr uint32_t C_PILL_PLAY   = 0xDCFCE7;  // playing pill background
-static constexpr uint32_t C_PILL_IDLE   = 0xE8EDF2;  // paused/stopped pill background
+static constexpr uint32_t C_SONOS_SOFT  = 0x2A2350;  // soft purple fill
+static constexpr uint32_t C_PILL_PLAY   = 0x14402A;  // playing pill background
+static constexpr uint32_t C_PILL_IDLE   = 0x1A2C42;  // paused/stopped pill background
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 static constexpr int W       = 1280;
@@ -41,25 +42,38 @@ static constexpr int GAP     = 12;
 static constexpr int RADIUS  = 20;
 
 static constexpr int HDR_H   = 80;   // header strip
-static constexpr int TAB_H   = 68;   // bottom tab bar
-static constexpr int CONT_Y  = HDR_H + GAP;
-static constexpr int CONT_H  = H - HDR_H - TAB_H - GAP * 2;
-static constexpr int PILL_W      = 200;
-static constexpr int PILL_H      = 40;
-static constexpr int PILL_BOTTOM = 12;
+static constexpr int TAB_H   = 82;   // bottom tab bar (+20%)
+static constexpr int CONT_Y  = GAP;
+static constexpr int CONT_H  = H - TAB_H - GAP * 2;
 
 // Card sizes inside content area
 static constexpr int CARD_H  = 123;  // standard device card height
-static constexpr int FAN_H   = 260;  // fan card height (4 rows + padding)
+static constexpr int FAN_H   = 430;  // fan card height (2-col layout: 4 gears left, 3 btns right)
 static constexpr int LOCK_H  = 180;  // smart lock card height
-static constexpr int SONOS_H    = 260;  // compact sonos card, fits media tab without scroll
-static constexpr int TV_H       = 258;  // compact TV card, fits media tab without scroll
+static constexpr int SONOS_H    = 292;  // sonos card (btn_h=70: +32 over original 260)
+static constexpr int TV_H       = 290;  // TV card (btn_h=70: +32 over original 258)
 static constexpr int FISHTANK_H = 210;  // combined fish tank card
 
 // ─── Forward declarations ────────────────────────────────────────────────────
 static lv_obj_t* _make_card(lv_obj_t* parent, int x, int y, int w, int h,
                               uint32_t bg = C_CARD, int radius = RADIUS);
 static void _add_shadow(lv_obj_t* obj);
+
+// True while the user is actively pressing or scrolling with any pointer.
+// Used to defer tab rebuilds: yanking the content out from under a live touch
+// both janks the gesture and is the classic mid-scroll use-after-free window.
+static bool _any_pointer_active()
+{
+    lv_indev_t* indev = lv_indev_get_next(nullptr);
+    while (indev) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            if (lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) return true;
+            if (lv_indev_get_scroll_obj(indev) != nullptr) return true;
+        }
+        indev = lv_indev_get_next(indev);
+    }
+    return false;
+}
 
 // ─── Card click data ──────────────────────────────────────────────────────────
 struct CardData {
@@ -123,7 +137,7 @@ static lv_obj_t* _make_card(lv_obj_t* parent, int x, int y, int w, int h,
 static void _add_shadow(lv_obj_t* obj)
 {
     lv_obj_set_style_shadow_width(obj, 18, 0);
-    lv_obj_set_style_shadow_color(obj, lv_color_hex(0xA0B8CC), 0);
+    lv_obj_set_style_shadow_color(obj, lv_color_hex(0x5A7A9C), 0);
     lv_obj_set_style_shadow_opa(obj, LV_OPA_30, 0);
     lv_obj_set_style_shadow_ofs_y(obj, 4, 0);
 }
@@ -225,8 +239,7 @@ static void _add_tv_icon(lv_obj_t* parent, uint32_t color)
 static void _build_device_card(lv_obj_t* parent, int x, int y, int w, int h,
                                  const DeviceCard& card, HaView* view)
 {
-    uint32_t bg = card.is_on ? C_CARD_ON : C_CARD;
-    lv_obj_t* c = _make_card(parent, x, y, w, h, bg);
+    lv_obj_t* c = _make_card(parent, x, y, w, h, C_CARD);
     _add_shadow(c);
 
     // Icon circle (left side, vertically centered)
@@ -235,12 +248,13 @@ static void _build_device_card(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_size(ic, ic_size, ic_size);
     lv_obj_set_style_radius(ic, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(ic, 0, 0);
-    lv_obj_set_style_bg_color(ic, lv_color_hex(card.is_on ? C_ACCENT_SOFT : 0xE8EDF2), 0);
+    lv_obj_set_style_bg_color(ic, lv_color_hex(card.is_offline ? 0x16242E
+                                  : (card.is_on ? C_ACCENT_SOFT : 0x1A2C42)), 0);
     lv_obj_align(ic, LV_ALIGN_LEFT_MID, 14, 0);
     lv_obj_clear_flag(ic, LV_OBJ_FLAG_SCROLLABLE);
 
     const char* icon_text = card.icon.empty() ? LV_SYMBOL_HOME : card.icon.c_str();
-    uint32_t icon_color = card.is_on ? C_ACCENT : 0x8899AA;
+    uint32_t icon_color = card.is_offline ? 0x46586C : (card.is_on ? C_ACCENT : 0x4A6A8C);
     if (strcmp(icon_text, "lightbulb") == 0) {
         _add_lightbulb_icon(ic, icon_color);
     } else {
@@ -255,25 +269,36 @@ static void _build_device_card(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_t* lbl = lv_label_create(c);
     lv_label_set_text(lbl, card.label.c_str());
     lv_obj_set_style_text_font(lbl, &font_zh_36, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(card.is_on ? C_TEXT : C_TEXT2), 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(card.is_offline ? 0x5A6A7C
+                                  : (card.is_on ? C_TEXT : C_TEXT2)), 0);
     lv_obj_set_width(lbl, w - 14 - ic_size - 12 - 18);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 14 + ic_size + 12, 0);
 
-    // Status dot (top-right)
+    // Status dot (top-right): green=on, red=offline, grey=off.
     lv_obj_t* dot = lv_obj_create(c);
     lv_obj_set_size(dot, 8, 8);
     lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(dot, 0, 0);
-    lv_obj_set_style_bg_color(dot, lv_color_hex(card.is_on ? C_GREEN : 0xCCCCCC), 0);
+    lv_obj_set_style_bg_color(dot, lv_color_hex(card.is_offline ? C_RED
+                                  : (card.is_on ? C_GREEN : 0x3A4A5C)), 0);
     lv_obj_align(dot, LV_ALIGN_TOP_RIGHT, -10, 10);
     lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Clickable
-    lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
-    auto* d = new CardData{view, card.entity_id, "toggle", ""};
-    _bind_action(c, d);
-    lv_obj_set_style_bg_color(c, lv_color_hex(C_ACCENT_SOFT), LV_STATE_PRESSED);
+    if (card.is_offline) {
+        // Offline: show a "未连接" badge and make the card non-interactive so a
+        // tap doesn't pretend to control a device HA can't reach.
+        lv_obj_t* off = lv_label_create(c);
+        lv_label_set_text(off, "未连接");
+        lv_obj_set_style_text_font(off, &font_zh_18, 0);
+        lv_obj_set_style_text_color(off, lv_color_hex(C_RED), 0);
+        lv_obj_align(off, LV_ALIGN_BOTTOM_RIGHT, -12, -10);
+    } else {
+        lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
+        auto* d = new CardData{view, card.entity_id, "toggle", ""};
+        _bind_action(c, d);
+        lv_obj_set_style_bg_color(c, lv_color_hex(C_ACCENT_SOFT), LV_STATE_PRESSED);
+    }
 }
 
 // ─── Sensor card ──────────────────────────────────────────────────────────────
@@ -287,15 +312,15 @@ static void _build_sensor_card(lv_obj_t* parent, int x, int y, int w, int h,
     _make_label(c, card.label.c_str(), C_TEXT2, &font_zh_36,
                 LV_ALIGN_TOP_LEFT, 14, 10);
 
-    // Primary value — big (zh font when value is Chinese text)
-    const lv_font_t* val_font = card.is_text_value ? (const lv_font_t*)&font_zh_36 : &lv_font_montserrat_44;
+    // Primary value — smaller than title
+    const lv_font_t* val_font = card.is_text_value ? (const lv_font_t*)&font_zh_18 : &lv_font_montserrat_28;
     _make_label(c, card.value.empty() ? "--" : card.value.c_str(),
                 C_TEXT, val_font,
                 LV_ALIGN_BOTTOM_LEFT, 14, -10);
 
     // Secondary value — right side
     if (!card.value2.empty()) {
-        const lv_font_t* val2_font = card.is_text_value ? (const lv_font_t*)&font_zh_18 : &lv_font_montserrat_36;
+        const lv_font_t* val2_font = card.is_text_value ? (const lv_font_t*)&font_zh_18 : &lv_font_montserrat_22;
         _make_label(c, card.value2.c_str(), C_ACCENT,
                     val2_font,
                     LV_ALIGN_BOTTOM_RIGHT, -14, -10);
@@ -315,25 +340,10 @@ static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
                                const DeviceCard& card, HaView* /*view*/)
 {
     bool locked = card.is_on;
-    lv_obj_t* c = _make_card(parent, x, y, w, h, C_CARD_ON);
+    lv_obj_t* c = _make_card(parent, x, y, w, h, C_CARD);
     _add_shadow(c);
 
-    // ── Left: big icon circle ─────────────────────────────────────────────────
-    int ic_size = 52;
-    lv_obj_t* ic = lv_obj_create(c);
-    lv_obj_set_size(ic, ic_size, ic_size);
-    lv_obj_set_style_radius(ic, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(ic, 0, 0);
-    lv_obj_set_style_bg_color(ic, lv_color_hex(locked ? C_ACCENT_SOFT : 0xFFF3DC), 0);
-    lv_obj_align(ic, LV_ALIGN_LEFT_MID, 14, 0);
-
-    lv_obj_t* ic_lbl = lv_label_create(ic);
-    lv_label_set_text(ic_lbl, locked ? LV_SYMBOL_CLOSE : LV_SYMBOL_OK);
-    lv_obj_set_style_text_color(ic_lbl, lv_color_hex(locked ? C_ACCENT : C_AMBER), 0);
-    lv_obj_set_style_text_font(ic_lbl, &lv_font_montserrat_22, 0);
-    lv_obj_center(ic_lbl);
-
-    int lx   = 14 + ic_size + 12;
+    int lx   = 14;
     int rpad = 12;
     int row1_y = 10;
     int row2_y = h / 3 + 6;
@@ -343,7 +353,7 @@ static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
     auto _div = [&](int dy) {
         lv_obj_t* d = lv_obj_create(c);
         lv_obj_set_size(d, w - lx - rpad, 1);
-        lv_obj_set_style_bg_color(d, lv_color_hex(0xD0E8F4), 0);
+        lv_obj_set_style_bg_color(d, lv_color_hex(0x1C3E62), 0);
         lv_obj_set_style_border_width(d, 0, 0);
         lv_obj_align(d, LV_ALIGN_TOP_LEFT, lx, dy);
     };
@@ -419,7 +429,7 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
     int pad = 14;
     int ic_size = 44;
 
-    lv_obj_t* c = _make_card(parent, x, y, w, FISHTANK_H, C_CARD_ON);
+    lv_obj_t* c = _make_card(parent, x, y, w, FISHTANK_H, C_CARD);
     _add_shadow(c);
 
     // Icon circle
@@ -427,7 +437,7 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
     lv_obj_set_size(ic, ic_size, ic_size);
     lv_obj_set_style_radius(ic, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(ic, 0, 0);
-    lv_obj_set_style_bg_color(ic, lv_color_hex(card.is_on ? C_ACCENT_SOFT : 0xE8EDF2), 0);
+    lv_obj_set_style_bg_color(ic, lv_color_hex(card.is_on ? C_ACCENT_SOFT : 0x1A2C42), 0);
     lv_obj_align(ic, LV_ALIGN_TOP_LEFT, pad, 12);
     lv_obj_clear_flag(ic, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* ic_lbl = lv_label_create(ic);
@@ -457,7 +467,7 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
     // Divider 1
     lv_obj_t* dv1 = lv_obj_create(c);
     lv_obj_set_size(dv1, w - pad * 2, 1);
-    lv_obj_set_style_bg_color(dv1, lv_color_hex(0xD0E8F4), 0);
+    lv_obj_set_style_bg_color(dv1, lv_color_hex(0x1C3E62), 0);
     lv_obj_set_style_border_width(dv1, 0, 0);
     lv_obj_align(dv1, LV_ALIGN_TOP_LEFT, pad, 68);
     lv_obj_clear_flag(dv1, LV_OBJ_FLAG_SCROLLABLE);
@@ -474,7 +484,7 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
     int ctrl_y = 78, ctrl_h = 54, gap = 8;
     int ctrl_w = (w - pad * 2 - gap) / 2;
     for (int i = 0; i < 2; i++) {
-        uint32_t btn_bg = fbtns[i].active ? C_ACCENT : 0xDDE8F2;
+        uint32_t btn_bg = fbtns[i].active ? C_CARD_ON : 0x16304C;
         uint32_t btn_fg = fbtns[i].active ? 0xFFFFFF : C_TEXT2;
         lv_obj_t* b = _make_card(c, pad + i * (ctrl_w + gap), ctrl_y,
                                   ctrl_w, ctrl_h, btn_bg, 10);
@@ -499,7 +509,7 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
     // Divider 2
     lv_obj_t* dv2 = lv_obj_create(c);
     lv_obj_set_size(dv2, w - pad * 2, 1);
-    lv_obj_set_style_bg_color(dv2, lv_color_hex(0xD0E8F4), 0);
+    lv_obj_set_style_bg_color(dv2, lv_color_hex(0x1C3E62), 0);
     lv_obj_set_style_border_width(dv2, 0, 0);
     lv_obj_align(dv2, LV_ALIGN_TOP_LEFT, pad, 142);
     lv_obj_clear_flag(dv2, LV_OBJ_FLAG_SCROLLABLE);
@@ -527,7 +537,7 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
         lv_obj_t* bar_bg = lv_obj_create(c);
         lv_obj_set_pos(bar_bg, bar_x, bar_y);
         lv_obj_set_size(bar_bg, bar_w, bar_h);
-        lv_obj_set_style_bg_color(bar_bg, lv_color_hex(0xDDE8F2), 0);
+        lv_obj_set_style_bg_color(bar_bg, lv_color_hex(0x16304C), 0);
         lv_obj_set_style_border_width(bar_bg, 0, 0);
         lv_obj_set_style_radius(bar_bg, 5, 0);
         lv_obj_clear_flag(bar_bg, LV_OBJ_FLAG_SCROLLABLE);
@@ -551,44 +561,44 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
 static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
                               const DeviceCard& card, HaView* view)
 {
-    lv_obj_t* c = _make_card(parent, x, y, w, FAN_H, C_CARD_ON);
+    lv_obj_t* c = _make_card(parent, x, y, w, FAN_H, C_CARD);
     _add_shadow(c);
 
-    // Title row
+    // Title row (no separate power button — power lives in right column row 0)
     lv_obj_t* name_lbl = lv_label_create(c);
     lv_label_set_text(name_lbl, card.label.c_str());
     lv_obj_set_style_text_font(name_lbl, &font_zh_36, 0);
     lv_obj_set_style_text_color(name_lbl, lv_color_hex(C_TEXT), 0);
     lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 14, 12);
 
-    lv_obj_t* power = _make_card(c, w - 130, 10, 112, 46,
-                                  card.is_on ? C_ACCENT : 0xDDE8F2, 10);
-    lv_obj_add_flag(power, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_t* power_lbl = lv_label_create(power);
-    lv_label_set_text(power_lbl, card.is_on ? "OFF" : "ON");
-    lv_obj_set_style_text_font(power_lbl, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(power_lbl, lv_color_hex(card.is_on ? 0xFFFFFF : C_TEXT2), 0);
-    lv_obj_center(power_lbl);
-    auto* dpower = new CardData{view, card.entity_id, "toggle", ""};
-    _bind_action(power, dpower);
-
-    // ── Gear buttons ─────────────────────────────────────────────────────────
+    // Two-column layout: left = gear (1-4档), right = power + 自然风 + 摇头
     static const struct { const char* lbl; int pct; } GEARS[4] = {
         {"1档", 25}, {"2档", 50}, {"3档", 75}, {"4档", 100}
     };
-    int btn_gap = 8, gear_y = 60;
-    int gear_w  = (w - 2 * PAD - btn_gap * 3) / 4;
-    int gear_h  = 54;
 
+    int btn_h   = 80;
+    int btn_gap = 10;
+    int col_gap = 12;
+    int col_w   = (w - 2 * PAD - col_gap) / 2;
+    int left_x  = PAD;
+    int right_x = PAD + col_w + col_gap;
+    int start_y = 60;  // below title
+
+    // ── Left column: gear buttons ─────────────────────────────────────────────
     int active = -1;
     for (int i = 0; i < 4; i++)
         if (card.percentage >= GEARS[i].pct - 12) active = i;
 
+    auto _fan_btn_border = [](lv_obj_t* b) {
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(0x2A5080), 0);
+    };
     for (int i = 0; i < 4; i++) {
         bool hi  = (i == active) && card.is_on;
-        uint32_t bbg = hi ? C_ACCENT : 0xDDE8F2;
-        lv_obj_t* b = _make_card(c, PAD + i * (gear_w + btn_gap), gear_y,
-                                   gear_w, gear_h, bbg, 10);
+        uint32_t bbg = hi ? C_CARD_ON : 0x16304C;
+        int by = start_y + i * (btn_h + btn_gap);
+        lv_obj_t* b = _make_card(c, left_x, by, col_w, btn_h, bbg, 10);
+        _fan_btn_border(b);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_t* bl = lv_label_create(b);
         lv_label_set_text(bl, GEARS[i].lbl);
@@ -600,40 +610,59 @@ static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
         _bind_action(b, dg);
     }
 
-    // ── Mode buttons ──────────────────────────────────────────────────────────
-    static const struct { const char* lbl; const char* mode; } MODES[2] = {
-        {"直吹风", "normal"}, {"自然风", "natural"}
-    };
-    int mode_y = gear_y + gear_h + 10;
-    int mode_w = (w - 2 * PAD - btn_gap) / 2;
-    for (int i = 0; i < 2; i++) {
-        bool hi = (card.preset_mode == MODES[i].mode);
-        uint32_t mbg = hi ? C_ACCENT : 0xDDE8F2;
-        lv_obj_t* mb = _make_card(c, PAD + i * (mode_w + btn_gap), mode_y,
-                                    mode_w, gear_h, mbg, 10);
+    // ── Right column row 0: power toggle ─────────────────────────────────────
+    {
+        uint32_t pbg = card.is_on ? C_CARD_ON : 0x16304C;
+        lv_obj_t* pw = _make_card(c, right_x, start_y, col_w, btn_h, pbg, 10);
+        _fan_btn_border(pw);
+        lv_obj_add_flag(pw, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* pl = lv_label_create(pw);
+        // Show current state (not the action): running → highlighted "ON".
+        lv_label_set_text(pl, card.is_on ? "ON" : "OFF");
+        lv_obj_set_style_text_font(pl, &font_zh_36, 0);
+        lv_obj_set_style_text_color(pl, lv_color_hex(card.is_on ? 0xFFFFFF : C_TEXT2), 0);
+        lv_obj_center(pl);
+        auto* dpower = new CardData{view, card.entity_id, "toggle", ""};
+        _bind_action(pw, dpower);
+    }
+
+    // ── Right column row 1: 自然风 ────────────────────────────────────────────
+    {
+        bool hi = (card.preset_mode == "\xe8\x87\xaa\xe7\x84\xb6\xe9\xa3\x8e");  // 自然风
+        uint32_t mbg = hi ? C_CARD_ON : 0x16304C;
+        int by = start_y + (btn_h + btn_gap);
+        lv_obj_t* mb = _make_card(c, right_x, by, col_w, btn_h, mbg, 10);
+        _fan_btn_border(mb);
         lv_obj_add_flag(mb, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_t* ml = lv_label_create(mb);
-        lv_label_set_text(ml, MODES[i].lbl);
+        lv_label_set_text(ml, "自然风");
         lv_obj_set_style_text_font(ml, &font_zh_36, 0);
         lv_obj_set_style_text_color(ml, lv_color_hex(hi ? 0xFFFFFF : C_TEXT2), 0);
         lv_obj_center(ml);
-        auto* dm = new CardData{view, card.entity_id, "set_preset_mode", MODES[i].mode};
+        // Toggle: if already in 自然风, switch back to 直吹风
+        const char* target_mode = hi
+            ? "\xe7\x9b\xb4\xe5\x90\xb9\xe9\xa3\x8e"   // 直吹风
+            : "\xe8\x87\xaa\xe7\x84\xb6\xe9\xa3\x8e";  // 自然风
+        auto* dm = new CardData{view, card.entity_id, "set_preset_mode", target_mode};
         _bind_action(mb, dm);
     }
 
-    // ── Oscillation toggle ────────────────────────────────────────────────────
-    int osc_y = mode_y + gear_h + 10;
-    uint32_t osc_bg = card.oscillating ? C_ACCENT : 0xDDE8F2;
-    lv_obj_t* ob = _make_card(c, PAD, osc_y, w - 2 * PAD, gear_h, osc_bg, 10);
-    lv_obj_add_flag(ob, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_t* ol = lv_label_create(ob);
-    lv_label_set_text(ol, card.oscillating ? "摇头  ●" : "摇头  ○");
-    lv_obj_set_style_text_font(ol, &font_zh_36, 0);
-    lv_obj_set_style_text_color(ol, lv_color_hex(card.oscillating ? 0xFFFFFF : C_TEXT2), 0);
-    lv_obj_center(ol);
-    std::string new_osc = card.oscillating ? "false" : "true";
-    auto* dosc = new CardData{view, card.entity_id, "oscillate", new_osc};
-    _bind_action(ob, dosc);
+    // ── Right column row 2: oscillation ──────────────────────────────────────
+    {
+        uint32_t osc_bg = card.oscillating ? C_CARD_ON : 0x16304C;
+        int osc_y = start_y + 2 * (btn_h + btn_gap);
+        lv_obj_t* ob = _make_card(c, right_x, osc_y, col_w, btn_h, osc_bg, 10);
+        _fan_btn_border(ob);
+        lv_obj_add_flag(ob, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* ol = lv_label_create(ob);
+        lv_label_set_text(ol, card.oscillating ? "摇头  ●" : "摇头  ○");
+        lv_obj_set_style_text_font(ol, &font_zh_36, 0);
+        lv_obj_set_style_text_color(ol, lv_color_hex(card.oscillating ? 0xFFFFFF : C_TEXT2), 0);
+        lv_obj_center(ol);
+        std::string new_osc = card.oscillating ? "false" : "true";
+        auto* dosc = new CardData{view, card.entity_id, "oscillate", new_osc};
+        _bind_action(ob, dosc);
+    }
 }
 
 // ─── Sonos card ───────────────────────────────────────────────────────────────
@@ -692,7 +721,7 @@ static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
     // Refresh button (top-right corner)
     int btn_r = 38;
     lv_obj_t* refresh = _make_card(c, w - pad - btn_r, 14,
-                                    btn_r, btn_r, 0xDDE8F2, LV_RADIUS_CIRCLE);
+                                    btn_r, btn_r, 0x16304C, LV_RADIUS_CIRCLE);
     lv_obj_add_flag(refresh, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_t* refresh_lbl = lv_label_create(refresh);
     lv_label_set_text(refresh_lbl, LV_SYMBOL_REFRESH);
@@ -746,7 +775,7 @@ static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
     // ── Divider 1 ─────────────────────────────────────────────────────────────
     lv_obj_t* dv1 = lv_obj_create(c);
     lv_obj_set_size(dv1, w - pad * 2, 1);
-    lv_obj_set_style_bg_color(dv1, lv_color_hex(0xD0E8F4), 0);
+    lv_obj_set_style_bg_color(dv1, lv_color_hex(0x1C3E62), 0);
     lv_obj_set_style_border_width(dv1, 0, 0);
     lv_obj_align(dv1, LV_ALIGN_TOP_LEFT, pad, 108);
 
@@ -759,13 +788,13 @@ static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
         {LV_SYMBOL_NEXT,  "下一首", "sonos_next"},
     };
     int trans_y  = 118;
-    int trans_h  = 54;
+    int trans_h  = 70;
     int trans_gap = 8;
     int trans_w  = (w - pad * 2 - trans_gap * 3) / 4;
     for (int i = 0; i < 4; i++) {
         lv_obj_t* b = _make_card(c,
             pad + i * (trans_w + trans_gap), trans_y,
-            trans_w, trans_h, 0xDDE8F2, 10);
+            trans_w, trans_h, 0x16304C, 10);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         _add_media_button_content(b, TRANS[i].icon, TRANS[i].lbl, C_TEXT2);
         auto* d = new CardData{view, "sonos", TRANS[i].act, ""};
@@ -775,27 +804,27 @@ static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
     // ── Divider 2 ─────────────────────────────────────────────────────────────
     lv_obj_t* dv2 = lv_obj_create(c);
     lv_obj_set_size(dv2, w - pad * 2, 1);
-    lv_obj_set_style_bg_color(dv2, lv_color_hex(0xD0E8F4), 0);
+    lv_obj_set_style_bg_color(dv2, lv_color_hex(0x1C3E62), 0);
     lv_obj_set_style_border_width(dv2, 0, 0);
-    lv_obj_align(dv2, LV_ALIGN_TOP_LEFT, pad, 184);
+    lv_obj_align(dv2, LV_ALIGN_TOP_LEFT, pad, 200);
 
     // ── Row 4: 4 control buttons — same horizontal style
     // 音量- / 音量+ / 静音 / TV输入
     struct CtrlBtn { const char* icon; const char* lbl; const char* act;
                      uint32_t fg; uint32_t bg; };
     CtrlBtn CTRL[4] = {
-        {LV_SYMBOL_VOLUME_MID, "音量-", "sonos_vol_down", C_TEXT2,  0xDDE8F2},
-        {LV_SYMBOL_VOLUME_MAX, "音量+", "sonos_vol_up",   C_TEXT2,  0xDDE8F2},
+        {LV_SYMBOL_VOLUME_MID, "音量-", "sonos_vol_down", C_TEXT2,  0x16304C},
+        {LV_SYMBOL_VOLUME_MAX, "音量+", "sonos_vol_up",   C_TEXT2,  0x16304C},
         {LV_SYMBOL_MUTE,       "静音",  "sonos_mute",     0xFFFFFF, C_AMBER },
         {LV_SYMBOL_VIDEO,      "TV输入","sonos_tv",       0xFFFFFF, 0x6366F1},
     };
     if (!card.muted) {
         CTRL[2].fg = C_TEXT2;
-        CTRL[2].bg = 0xDDE8F2;
+        CTRL[2].bg = 0x16304C;
     }
 
-    int ctrl_y  = 194;
-    int ctrl_h  = 54;
+    int ctrl_y  = 210;
+    int ctrl_h  = 70;
     int ctrl_gap = 8;
     int ctrl_w  = (w - pad * 2 - ctrl_gap * 3) / 4;
     for (int i = 0; i < 4; i++) {
@@ -823,7 +852,7 @@ static void _build_tv_card(lv_obj_t* parent, int x, int y, int w,
     lv_obj_set_size(ic, ic_size, ic_size);
     lv_obj_set_style_radius(ic, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(ic, 0, 0);
-    lv_obj_set_style_bg_color(ic, lv_color_hex(card.is_on ? C_ACCENT_SOFT : 0xE8EDF2), 0);
+    lv_obj_set_style_bg_color(ic, lv_color_hex(card.is_on ? C_ACCENT_SOFT : 0x1A2C42), 0);
     lv_obj_align(ic, LV_ALIGN_TOP_LEFT, pad, 12);
     lv_obj_clear_flag(ic, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -863,23 +892,23 @@ static void _build_tv_card(lv_obj_t* parent, int x, int y, int w,
 
     lv_obj_t* dv1 = lv_obj_create(c);
     lv_obj_set_size(dv1, w - pad * 2, 1);
-    lv_obj_set_style_bg_color(dv1, lv_color_hex(0xD0E8F4), 0);
+    lv_obj_set_style_bg_color(dv1, lv_color_hex(0x1C3E62), 0);
     lv_obj_set_style_border_width(dv1, 0, 0);
     lv_obj_align(dv1, LV_ALIGN_TOP_LEFT, pad, 104);
 
     struct TvBtn { const char* icon; const char* lbl; const char* act; const char* value;
                    uint32_t fg; uint32_t bg; };
     TvBtn controls[4] = {
-        {"I/O",                card.is_on ? "关" : "开", "tv_power",   "", C_TEXT2, 0xDDE8F2},
-        {LV_SYMBOL_VOLUME_MID, "音量-",                  "tv_vol_down", "", C_TEXT2, 0xDDE8F2},
-        {LV_SYMBOL_VOLUME_MAX, "音量+",                  "tv_vol_up",   "", C_TEXT2, 0xDDE8F2},
+        {"I/O",                card.is_on ? "关" : "开", "tv_power",   "", C_TEXT2, 0x16304C},
+        {LV_SYMBOL_VOLUME_MID, "音量-",                  "tv_vol_down", "", C_TEXT2, 0x16304C},
+        {LV_SYMBOL_VOLUME_MAX, "音量+",                  "tv_vol_up",   "", C_TEXT2, 0x16304C},
         {LV_SYMBOL_MUTE,       "静音",                 "tv_mute",     card.muted ? "false" : "true",
                                                         card.muted ? 0xFFFFFF : C_TEXT2,
-                                                        card.muted ? C_AMBER : 0xDDE8F2},
+                                                        card.muted ? C_AMBER : 0x16304C},
     };
 
     int ctrl_y = 114;
-    int ctrl_h = 54;
+    int ctrl_h = 70;
     int gap = 8;
     int ctrl_w = (w - pad * 2 - gap * 3) / 4;
     for (int i = 0; i < 4; i++) {
@@ -893,20 +922,20 @@ static void _build_tv_card(lv_obj_t* parent, int x, int y, int w,
 
     lv_obj_t* dv2 = lv_obj_create(c);
     lv_obj_set_size(dv2, w - pad * 2, 1);
-    lv_obj_set_style_bg_color(dv2, lv_color_hex(0xD0E8F4), 0);
+    lv_obj_set_style_bg_color(dv2, lv_color_hex(0x1C3E62), 0);
     lv_obj_set_style_border_width(dv2, 0, 0);
-    lv_obj_align(dv2, LV_ALIGN_TOP_LEFT, pad, 178);
+    lv_obj_align(dv2, LV_ALIGN_TOP_LEFT, pad, 194);
 
     static const char* SOURCES[3] = {"HDMI 1", "HDMI 2", "HDMI 3"};
-    int src_y = 188;
-    int src_h = 54;
+    int src_y = 204;
+    int src_h = 70;
     int src_gap = 8;
     int src_w = (w - pad * 2 - src_gap * 2) / 3;
     for (int i = 0; i < 3; i++) {
         bool active = card.value == SOURCES[i];
         lv_obj_t* b = _make_card(c,
             pad + i * (src_w + src_gap), src_y,
-            src_w, src_h, active ? C_ACCENT : 0xDDE8F2, 10);
+            src_w, src_h, active ? C_CARD_ON : 0x16304C, 10);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         _add_media_button_content(b, LV_SYMBOL_VIDEO, SOURCES[i],
                                   active ? 0xFFFFFF : C_TEXT2);
@@ -921,11 +950,13 @@ static void _layout_cards(lv_obj_t* cont, const std::vector<DeviceCard>& cards,
                             HaView* view,
                             const std::vector<DeviceCard>& sensors = {},
                             int cols = 4,
-                            int small_card_h = CARD_H)
+                            int small_card_h = CARD_H,
+                            int start_y = 0,
+                            int row_gap = GAP)
 {
     int avail_w = W - 2 * PAD;
     int card_w  = (avail_w - GAP * (cols - 1)) / cols;
-    int y = 0, col = 0;
+    int y = start_y, col = 0;
 
     int half_w = (avail_w - GAP) / 2;  // fan half-width
 
@@ -934,11 +965,11 @@ static void _layout_cards(lv_obj_t* cont, const std::vector<DeviceCard>& cards,
         if (card.is_sonos) {
             if (col > 0) { y += small_card_h + GAP; col = 0; }
             _build_sonos_card(cont, PAD, y, avail_w, card, view);
-            y += SONOS_H + GAP;
+            y += SONOS_H + row_gap;
         } else if (card.is_tv_player) {
             if (col > 0) { y += small_card_h + GAP; col = 0; }
             _build_tv_card(cont, PAD, y, avail_w, card, view);
-            y += TV_H + GAP;
+            y += TV_H + row_gap;
         } else if (card.is_fan) {
             if (col > 0) { y += small_card_h + GAP; col = 0; }
             _build_fan_card(cont, PAD, y, half_w, card, view);
@@ -1101,7 +1132,7 @@ void HaView::_create_page_dots(int n_pages)
         lv_obj_set_pos(dot, dot_x + i * (DOT_W + DOT_GAP), dot_y);
         lv_obj_set_style_radius(dot, DOT_H / 2, 0);
         lv_obj_set_style_border_width(dot, 0, 0);
-        lv_obj_set_style_bg_color(dot, lv_color_hex(0xCCCCCC), 0);
+        lv_obj_set_style_bg_color(dot, lv_color_hex(0x3A4A5C), 0);
         lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
         _page_dots[i] = dot;
@@ -1128,7 +1159,7 @@ void HaView::_set_dot_page(int page)
         lv_obj_set_size(_page_dots[i], w, DOT_H);
         lv_obj_set_pos(_page_dots[i], x, CONT_H - DOT_H - 10);
         lv_obj_set_style_bg_color(_page_dots[i],
-            lv_color_hex(active ? C_ACCENT : 0xBBCCDD), 0);
+            lv_color_hex(active ? C_ACCENT : 0x3A5A7C), 0);
     }
 }
 
@@ -1141,8 +1172,25 @@ uint32_t HaView::_get_millis() const
     return GetHAL()->millis();
 }
 
+// Deferred swipe-up-to-exit handler. Named (not a lambda) so the destructor can
+// pass the exact same function pointer to lv_async_call_cancel — otherwise a
+// second swipe queued just before close would fire after HaView is freed and
+// dereference a dangling pointer.
+static void _exit_async_cb(void* udata)
+{
+    auto* view = static_cast<HaView*>(udata);
+    if (view->_on_action_fn) view->_on_action_fn("app", "home", "");
+}
+
 HaView::~HaView()
 {
+    // Drop any swipe-up exit callback queued but not yet dispatched, so it can't
+    // run against this freed object.
+    lv_async_call_cancel(_exit_async_cb, this);
+    if (_gesture_indev) {
+        lv_indev_remove_event_cb_with_user_data(_gesture_indev, nullptr, this);
+        _gesture_indev = nullptr;
+    }
     if (_scr) {
         lv_obj_delete(_scr);
         _scr = nullptr;
@@ -1163,7 +1211,7 @@ void HaView::_build_skeleton()
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    _build_header();
+    // _build_header(); removed — top status/weather bar dropped
     _build_tab_bar();
 
     // Content area (scrollable)
@@ -1175,32 +1223,28 @@ void HaView::_build_skeleton()
     lv_obj_set_style_pad_all(_content_area, 0, 0);
     lv_obj_clear_flag(_content_area, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* exit_btn = lv_obj_create(_scr);
-    lv_obj_set_size(exit_btn, PILL_W, PILL_H);
-    lv_obj_set_pos(exit_btn, W - PILL_W - 20, (HDR_H - PILL_H) / 2);
-    lv_obj_set_style_bg_color(exit_btn, lv_color_hex(0xEAF3FA), 0);
-    lv_obj_set_style_bg_opa(exit_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(exit_btn, PILL_H / 2, 0);
-    lv_obj_set_style_border_color(exit_btn, lv_color_hex(0x3B9EDB), 0);
-    lv_obj_set_style_border_width(exit_btn, 2, 0);
-    lv_obj_clear_flag(exit_btn, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(exit_btn, LV_OBJ_FLAG_CLICKABLE);
-
-    // Accent-colored indicator bar centered inside pill
-    lv_obj_t* bar = lv_obj_create(exit_btn);
-    lv_obj_set_size(bar, 80, 5);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x3B9EDB), 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(bar, 3, 0);
-    lv_obj_set_style_border_width(bar, 0, 0);
-    lv_obj_clear_flag(bar, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_center(bar);
-
-    lv_obj_add_event_cb(exit_btn, [](lv_event_t* e) {
-        lv_event_stop_bubbling(e);
-        auto* view = static_cast<HaView*>(lv_event_get_user_data(e));
-        if (view->_on_action_fn) view->_on_action_fn("app", "home", "");
-    }, LV_EVENT_CLICKED, this);
+    // Swipe-up-to-exit: register a gesture callback directly on the pointer indev.
+    // lv_indev_send_event fires on the indev for every gesture regardless of which
+    // LVGL object is being touched, so this works even when cards/tabs capture the touch.
+    lv_indev_t* indev = lv_indev_get_next(NULL);
+    while (indev) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            lv_indev_add_event_cb(indev, [](lv_event_t* e) {
+                lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+                // Ignore the touch that's only meant to wake the screensaver.
+                if (screensaver::isActive()) return;
+                if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
+                    // Defer to avoid re-entrancy: removing from within indev dispatch
+                    // silently fails, leaving a dangling callback after HaView is freed.
+                    // Cancellable in ~HaView via the named _exit_async_cb pointer.
+                    lv_async_call(_exit_async_cb, lv_event_get_user_data(e));
+                }
+            }, LV_EVENT_GESTURE, this);
+            _gesture_indev = indev;
+            break;
+        }
+        indev = lv_indev_get_next(indev);
+    }
 }
 
 void HaView::_build_header()
@@ -1323,6 +1367,7 @@ void HaView::_update_header(const WeatherInfo& w, const BatteryInfo& battery, bo
                               const std::string& time_str,
                               const std::string& date_str)
 {
+    if (!_lbl_time) return;  // header removed: skip status updates
     lv_label_set_text(_lbl_time, time_str.c_str());
     lv_label_set_text(_lbl_date, date_str.c_str());
 
@@ -1361,6 +1406,16 @@ void HaView::_update_tab(TabPage tab,
         _device_tab_page = (int)((sx + W / 2) / W);
     }
 
+    // Reset all indevs before deleting objects to clear dangling scroll_obj/act_obj
+    // pointers that cause use-after-free crashes when the user is mid-scroll.
+    {
+        lv_indev_t* indev = lv_indev_get_next(nullptr);
+        while (indev) {
+            lv_indev_reset(indev, nullptr);
+            indev = lv_indev_get_next(indev);
+        }
+    }
+
     // Rebuild content for active tab
     if (_tab_content) {
         lv_obj_delete(_tab_content);
@@ -1385,10 +1440,15 @@ void HaView::_update_tab(TabPage tab,
     lv_obj_set_scrollbar_mode(_tab_content, LV_SCROLLBAR_MODE_OFF);
 
     switch (tab) {
-        case TabPage::LIVING:
-            lv_obj_set_scroll_dir(_tab_content, LV_DIR_VER);
-            _layout_cards(_tab_content, living, this, {}, 3, CARD_H);
+        case TabPage::LIVING: {
+            // Distribute all available height evenly across 4 rows (3 cols × 4 rows = 12 cards max).
+            // 5 equal gaps (top + 3 between rows + bottom) + 4 card rows = CONT_H
+            static constexpr int LIVING_ROWS = 4;
+            int living_card_h = (CONT_H - (LIVING_ROWS + 1) * GAP) / LIVING_ROWS;
+            lv_obj_set_scroll_dir(_tab_content, LV_DIR_NONE);
+            _layout_cards(_tab_content, living, this, {}, 3, living_card_h, GAP);
             break;
+        }
         case TabPage::KITCHEN_BATH: {
             lv_obj_set_scroll_dir(_tab_content, LV_DIR_HOR);
             lv_obj_set_scroll_snap_x(_tab_content, LV_SCROLL_SNAP_START);
@@ -1414,10 +1474,13 @@ void HaView::_update_tab(TabPage tab,
             }
             break;
         }
-        case TabPage::MEDIA:
-            lv_obj_set_scroll_dir(_tab_content, LV_DIR_VER);
-            _layout_cards(_tab_content, media, this);
+        case TabPage::MEDIA: {
+            // Distribute available height evenly: top gap + Sonos + mid gap + TV + bottom gap
+            int media_gap = (CONT_H - SONOS_H - TV_H) / 3;  // = (614-260-258)/3 = 32
+            lv_obj_set_scroll_dir(_tab_content, LV_DIR_NONE);
+            _layout_cards(_tab_content, media, this, {}, 4, CARD_H, media_gap, media_gap);
             break;
+        }
     }
 }
 
@@ -1431,6 +1494,23 @@ void HaView::update(const std::vector<DeviceCard>& living,
                     const std::string& time_str,
                     const std::string& date_str)
 {
+    // Has the data the *active* tab renders actually changed since the last
+    // build? Compare before overwriting the cache. This is the key to not
+    // destroying/recreating ~30–50 LVGL objects on every frame: a rebuild only
+    // happens when something the user can see has changed (or they tapped).
+    bool data_changed = false;
+    switch (_active_tab) {
+        case TabPage::LIVING:
+            data_changed = (living != _living_cache);
+            break;
+        case TabPage::KITCHEN_BATH:
+            data_changed = (kitchen != _kitchen_cache) || (sensors != _sensors_cache);
+            break;
+        case TabPage::MEDIA:
+            data_changed = (media != _media_cache);
+            break;
+    }
+
     // Refresh the cache so a tab tap between updates can rebuild synchronously
     // using the latest known data instead of stale or empty content.
     _living_cache  = living;
@@ -1443,14 +1523,14 @@ void HaView::update(const std::vector<DeviceCard>& living,
     // desktop HAL uses a non-recursive mutex.
     _update_header(weather, battery, connected, time_str, date_str);
 
-    // Tab content rebuilds destroy + recreate ~30–50 LVGL objects; throttled
-    // to avoid PSRAM fragmentation. Action callbacks call requestRebuild() to
-    // force the next frame so user taps feel immediate.
+    // Rebuild the tab only on first build, an explicit tap (requestRebuild), or
+    // a real data change — never on a fixed timer. Each rebuild destroys and
+    // recreates ~30–50 LVGL objects, so doing it every frame fragmented PSRAM
+    // and opened use-after-free windows. Defer while a touch/scroll is live:
+    // pulling the content out mid-gesture both janks and crashes.
     uint32_t now = _get_millis();
-    bool should_rebuild = _force_rebuild ||
-        _last_tab_rebuild_ms == 0 ||
-        now - _last_tab_rebuild_ms >= TAB_REBUILD_INTERVAL_MS;
-    if (should_rebuild) {
+    bool should_rebuild = _force_rebuild || _last_tab_rebuild_ms == 0 || data_changed;
+    if (should_rebuild && !_any_pointer_active()) {
         _update_tab(_active_tab, living, kitchen, media, sensors);
         _last_tab_rebuild_ms = now;
         _force_rebuild = false;

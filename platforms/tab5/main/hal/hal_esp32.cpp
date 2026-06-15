@@ -116,6 +116,12 @@ void HalEsp32::init()
     mclog::tagInfo(_tag, "i2c scan");
     bsp_i2c_scan();
 
+    // Mount the "storage" SPIFFS partition at /spiffs (formats on first boot).
+    // Used by the wallpaper screensaver to cache the daily Bing JPEG.
+    mclog::tagInfo(_tag, "spiffs mount");
+    if (bsp_spiffs_mount() != ESP_OK)
+        mclog::tagWarn(_tag, "spiffs mount failed");
+
     // bsp_codec_init() uses legacy I2C API incompatible with BSP new driver; skip for HA panel
     // mclog::tagInfo(_tag, "codec init");
     // delay(200);

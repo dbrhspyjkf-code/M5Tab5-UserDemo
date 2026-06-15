@@ -129,5 +129,6 @@ void AppStartupAnim::onClose()
     _logo_5.reset();
     _label_version.reset();
 
-    GetHAL()->setSpeakerVolume(60);
+    GetHAL()->setDisplayBrightness(60);
+    GetHAL()->setSpeakerVolume(70);
 }

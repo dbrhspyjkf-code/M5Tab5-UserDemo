@@ -101,6 +101,9 @@ public:
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
     HttpResponse_t httpPost(const std::string& url, const std::string& body,
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
+    bool httpGetToFile(const std::string& url, const std::string& filePath,
+        const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
+    uint8_t* decodeJpegToRGB565(const std::string& filePath, int& outW, int& outH) override;
 
 private:
     void set_gpio_output_capability();

@@ -27,8 +27,8 @@ public:
 private:
     std::function<void()> _close_cb;
     bool _initialized = false;
-    lv_obj_t* _exit_button = nullptr;
+    lv_indev_t* _gesture_indev = nullptr;
 
-    void _installExitButton();
-    void _removeExitButton();
+    void _installSwipeGesture();
+    void _removeSwipeGesture();
 };

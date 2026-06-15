@@ -89,3 +89,26 @@ extern "C" int xiaozhi_get_battery_percent(void)
 {
     return s_battery_percent;
 }
+
+extern "C" void xiaozhi_set_speaker_volume(int volume)
+{
+    if (!s_initialized) return;
+    auto* codec = Board::GetInstance().GetAudioCodec();
+    if (codec) codec->SetOutputVolume(volume);
+}
+
+extern "C" int xiaozhi_get_speaker_volume(void)
+{
+    if (!s_initialized) return 70;
+    auto* codec = Board::GetInstance().GetAudioCodec();
+    return codec ? codec->output_volume() : 70;
+}
+
+extern "C" bool xiaozhi_is_active(void)
+{
+    if (!s_initialized) return false;
+    auto st = Application::GetInstance().GetDeviceState();
+    return st == kDeviceStateConnecting
+        || st == kDeviceStateListening
+        || st == kDeviceStateSpeaking;
+}

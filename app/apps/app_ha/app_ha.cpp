@@ -10,6 +10,20 @@ using json = nlohmann::json;
 
 static const std::string _tag = "app-ha";
 
+// std::stoi throws on non-numeric input; an uncaught throw on this device
+// terminates → reboots. HA can return "unavailable"/"unknown"/null for an
+// attribute at any time (entity offline, HA restarting), so every parse of a
+// HA value goes through this guard instead of std::stoi directly.
+static int _safe_stoi(const std::string& s, int def = 0)
+{
+    if (s.empty()) return def;
+    try {
+        return std::stoi(s);
+    } catch (...) {
+        return def;
+    }
+}
+
 // ─── Server address ───────────────────────────────────────────────────────────
 // Host running HA / Sonos bridge / weather service. Configurable on-screen via
 // the Settings app (stored in NVS key "ha_host"); falls back to this default.
@@ -115,7 +129,7 @@ void AppHA::onOpen()
         } else if (action == "toggle") {
             _ha->toggle(entity_id);
         } else if (action == "set_percentage") {
-            _ha->setFanPercentage(entity_id, std::stoi(value));
+            _ha->setFanPercentage(entity_id, _safe_stoi(value, 0));
         } else if (action == "oscillate") {
             _ha->setFanOscillation(entity_id, value == "true");
         } else if (action == "set_preset_mode") {
@@ -188,6 +202,7 @@ static ha_view::DeviceCard _make_card(const char* eid, const char* lbl,
     c.label     = lbl;
     c.icon      = icon;
     c.is_on     = (state == "on" || state == "playing");
+    c.is_offline = (state == "unavailable" || state == "unknown");
     return c;
 }
 
@@ -201,7 +216,7 @@ static ha_view::DeviceCard _make_fan_card(const char* eid, const char* lbl,
     std::string st = ha.getEntityState(eid);
     c.is_on      = (st == "on");
     std::string pct = ha.getEntityAttr(eid, "percentage", "0");
-    c.percentage  = pct.empty() ? 0 : std::stoi(pct);
+    c.percentage  = _safe_stoi(pct, 0);
     c.oscillating = (ha.getEntityAttr(eid, "oscillating", "false") == "true");
     c.preset_mode = ha.getEntityAttr(eid, "preset_mode", "normal");
     return c;
@@ -241,7 +256,7 @@ static ha_view::DeviceCard _make_lock_card(HaClient& ha)
     c.value = open_t;  // ISO timestamp → formatted in view
     std::string op = ha.getEntityAttr(EID_OPEN, "操作方式", "");
     if (!op.empty()) {
-        int opcode = op.empty() ? 0 : std::stoi(op);
+        int opcode = _safe_stoi(op, 0);
         switch (opcode) {
             case 1: c.lock_user = "钥匙"; break;
             case 2: c.lock_user = "指纹"; break;

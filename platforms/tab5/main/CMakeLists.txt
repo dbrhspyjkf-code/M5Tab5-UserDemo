@@ -40,6 +40,8 @@ idf_component_register(SRCS "app_main.cpp" ${APP_LAYER_SRCS} ${MY_HAL_SRCS}
                     PRIV_REQUIRES
                         xiaozhi_core
                         esp_http_client
+                        esp-tls
+                        esp_driver_jpeg
                         esp_pm)
 
 # LVGL assert handler: abort() instead of while(1) so crashes restart cleanly

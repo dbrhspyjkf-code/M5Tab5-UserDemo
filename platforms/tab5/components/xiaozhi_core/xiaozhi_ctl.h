@@ -34,6 +34,18 @@ void xiaozhi_set_battery_percent(int percent);
 /** Read the last value set by xiaozhi_set_battery_percent(). */
 int  xiaozhi_get_battery_percent(void);
 
+/** Set speaker output volume (0-100) via the Application audio codec. */
+void xiaozhi_set_speaker_volume(int volume);
+
+/** Get current speaker output volume (0-100). */
+int  xiaozhi_get_speaker_volume(void);
+
+/**
+ * True while xiaozhi is in an active conversation (connecting / listening /
+ * speaking). Used to dismiss the screensaver when woken by voice.
+ */
+bool xiaozhi_is_active(void);
+
 #ifdef __cplusplus
 }
 #endif

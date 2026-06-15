@@ -60,6 +60,8 @@ void HaClient::setFanPercentage(const std::string& entity_id, int percentage)
             if (e.entity_id == entity_id) {
                 e.attributes["percentage"] = std::to_string(percentage);
                 e.state = percentage > 0 ? "on" : "off";
+                // Switching to a gear implies direct-wind mode
+                e.attributes["preset_mode"] = "\xe7\x9b\xb4\xe5\x90\xb9\xe9\xa3\x8e";  // 直吹风
                 break;
             }
         }
@@ -185,7 +187,11 @@ void HaClient::_start_worker(std::function<void()> fn)
     // call GetHAL() which is a singleton that outlives this client. Detach is
     // safe and avoids accumulating joinable threads.
     if (!_running.load()) return;
-    std::thread(std::move(fn)).detach();
+    try {
+        std::thread(std::move(fn)).detach();
+    } catch (const std::system_error& e) {
+        mclog::tagWarn(_tag, "worker thread creation failed (OOM?): {}", e.what());
+    }
 }
 
 void HaClient::_poll_loop()
@@ -199,6 +205,10 @@ void HaClient::_poll_loop()
 
         if (_refresh_requested.load()) {
             _refresh_requested = false;
+            // Wait 2 s before confirming so HA has time to process the command
+            // and the optimistic UI state doesn't flicker back to the old value.
+            for (int i = 0; i < 40 && _running.load(); i++)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
             _fetch_states();
             last = std::chrono::steady_clock::now();
             continue;

@@ -5,6 +5,7 @@
 #include <font_awesome.h>
 #include <esp_log.h>
 #include <esp_wifi.h>
+#include <esp_random.h>
 #include <ctime>
 #include <cstring>
 static const char* TAG = "Tab5BridgeLcd";
@@ -112,20 +113,18 @@ void Tab5BridgeLcdDisplay::BuildRichUi()
 
     scr_ = lv_obj_create(NULL);
     lv_obj_set_size(scr_, width_, height_);
-    lv_obj_set_style_bg_color(scr_, lv_color_hex(0x0D1B2A), 0);
+    lv_obj_set_style_bg_color(scr_, lv_color_hex(0x0A1A2E), 0);
     lv_obj_set_style_pad_all(scr_, 0, 0);
     lv_obj_clear_flag(scr_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(scr_, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr_, scr_tap_cb, LV_EVENT_CLICKED, nullptr);
 
-    BuildInfoBar();     // y=0,   h=56
-    BuildEmotionArea(); // y=56,  h=124
-    BuildChatScroll();  // y=180, h=484
+    // The top info bar (clock/WiFi/battery) now lives on the home screen, so
+    // xiaozhi runs full-screen with no top bar. The bottom status bar (the
+    // listening/speaking state dot) stays.
+    BuildEmotionArea(); // y=12,  h=136
+    BuildChatScroll();  // y=152, h=512
     BuildStatusBar();   // y=664, h=56  → total=720
-
-    info_timer_ = lv_timer_create(info_timer_cb, 1000, this); // 1 s
-    // Populate info bar immediately (don't wait 1 s for first tick).
-    UpdateInfoBar();
 }
 
 void Tab5BridgeLcdDisplay::BuildInfoBar()
@@ -133,7 +132,7 @@ void Tab5BridgeLcdDisplay::BuildInfoBar()
     lv_obj_t* bar = lv_obj_create(scr_);
     lv_obj_set_pos(bar, 0, 0);
     lv_obj_set_size(bar, width_, 56);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x091422), 0);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x07111E), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(bar, 0, 0);
     lv_obj_set_style_pad_all(bar, 0, 0);
@@ -142,7 +141,7 @@ void Tab5BridgeLcdDisplay::BuildInfoBar()
     // Title (left)
     lv_obj_t* title = lv_label_create(bar);
     lv_obj_set_style_text_font(title, zh_font(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x5599CC), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(title, "小智 AI");
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 24, 0);
 
@@ -156,14 +155,14 @@ void Tab5BridgeLcdDisplay::BuildInfoBar()
     // WiFi icon
     wifi_icon_ = lv_label_create(bar);
     lv_obj_set_style_text_font(wifi_icon_, &font_awesome_30_4, 0);
-    lv_obj_set_style_text_color(wifi_icon_, lv_color_hex(0x5599CC), 0);
+    lv_obj_set_style_text_color(wifi_icon_, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(wifi_icon_, FONT_AWESOME_WIFI);
     lv_obj_align(wifi_icon_, LV_ALIGN_RIGHT_MID, -150, 0);
 
     // Battery icon
     batt_icon_ = lv_label_create(bar);
     lv_obj_set_style_text_font(batt_icon_, &font_awesome_30_4, 0);
-    lv_obj_set_style_text_color(batt_icon_, lv_color_hex(0x5599CC), 0);
+    lv_obj_set_style_text_color(batt_icon_, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(batt_icon_, FONT_AWESOME_BATTERY_FULL);
     lv_obj_align(batt_icon_, LV_ALIGN_RIGHT_MID, -80, 0);
 
@@ -177,31 +176,68 @@ void Tab5BridgeLcdDisplay::BuildInfoBar()
 
 void Tab5BridgeLcdDisplay::BuildEmotionArea()
 {
-    lv_obj_t* area = lv_obj_create(scr_);
-    lv_obj_set_pos(area, 0, 56);
-    lv_obj_set_size(area, width_, 124);
-    lv_obj_set_style_bg_opa(area, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(area, 0, 0);
-    lv_obj_set_style_pad_all(area, 0, 0);
-    lv_obj_clear_flag(area, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_add_flag(area, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-
-    // Font-awesome icon scaled 2x (512 = 2× in LVGL 9, where 256 = 1×)
-    emotion_icon_lbl_ = lv_label_create(area);
+    // The face lives directly on the screen (not a small band) so it can wander
+    // the WHOLE screen while idle. Resting position is the top band, above chat.
+    // Font-awesome icon scaled 3× (768 = 3× in LVGL 9, 256 = 1×; +50% over 2×).
+    emotion_icon_lbl_ = lv_label_create(scr_);
     lv_obj_set_style_text_font(emotion_icon_lbl_, &font_awesome_30_4, 0);
     lv_obj_set_style_text_color(emotion_icon_lbl_, lv_color_hex(0xFFD700), 0);
     lv_label_set_text(emotion_icon_lbl_, FONT_AWESOME_NEUTRAL);
-    lv_obj_align(emotion_icon_lbl_, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_transform_scale_x(emotion_icon_lbl_, 512, 0);
-    lv_obj_set_style_transform_scale_y(emotion_icon_lbl_, 512, 0);
+    lv_obj_align(emotion_icon_lbl_, LV_ALIGN_TOP_MID, 0, 70);
+    lv_obj_set_style_transform_scale_x(emotion_icon_lbl_, 768, 0);
+    lv_obj_set_style_transform_scale_y(emotion_icon_lbl_, 768, 0);
+
+    // Idle "screensaver" — drift the face to random spots across the whole
+    // screen while idle, and glide back to the top band when a conversation
+    // starts. translate styles shift it visually without changing its layout
+    // anchor, so SetEmotion / recenter stay simple.
+    // Slow cadence + instant moves (below). This device is resource-tight: the
+    // always-on wake-word AFE shares CPU with display rendering, so a continuous
+    // animation here starved the audio pipeline (couldn't wake / no response).
+    lv_timer_create(EmojiWanderTimerCb, 5000, this);
+}
+
+void Tab5BridgeLcdDisplay::EmojiWanderTimerCb(lv_timer_t* t)
+{
+    auto* self = static_cast<Tab5BridgeLcdDisplay*>(lv_timer_get_user_data(t));
+    if (!self || !self->emotion_icon_lbl_) return;
+
+    lv_obj_t* e = self->emotion_icon_lbl_;
+    bool idle = (Application::GetInstance().GetDeviceState() == kDeviceStateIdle);
+
+    if (idle) {
+        // Float above chat/status ONCE (move_foreground reorders → full redraw;
+        // doing it every tick was part of what starved the audio). After that
+        // the label stays topmost.
+        static bool fg_done = false;
+        if (!fg_done) { lv_obj_move_foreground(e); fg_done = true; }
+
+        // Instant hop to a random spot — a single small redraw every 5 s,
+        // negligible load, instead of 90 animated frames. Base anchor is
+        // top-mid (x centered, y=70).
+        int max_x = self->width_ / 2 - 90;
+        int min_y = -50;
+        int max_y = self->height_ - 70 - 110;
+        if (max_x < 1) max_x = 1;
+        if (max_y < min_y + 1) max_y = min_y + 1;
+        int tx = (int)(esp_random() % (uint32_t)(2 * max_x + 1)) - max_x;
+        int ty = min_y + (int)(esp_random() % (uint32_t)(max_y - min_y + 1));
+        lv_obj_set_style_translate_x(e, tx, 0);
+        lv_obj_set_style_translate_y(e, ty, 0);
+    } else if (lv_obj_get_style_translate_x(e, 0) != 0 ||
+               lv_obj_get_style_translate_y(e, 0) != 0) {
+        // Snap back to the top band for the conversation.
+        lv_obj_set_style_translate_x(e, 0, 0);
+        lv_obj_set_style_translate_y(e, 0, 0);
+    }
 }
 
 void Tab5BridgeLcdDisplay::BuildChatScroll()
 {
     chat_scroll_ = lv_obj_create(scr_);
-    lv_obj_set_pos(chat_scroll_, 0, 180);
-    lv_obj_set_size(chat_scroll_, width_, 484);
-    lv_obj_set_style_bg_color(chat_scroll_, lv_color_hex(0x0D1B2A), 0);
+    lv_obj_set_pos(chat_scroll_, 0, 152);
+    lv_obj_set_size(chat_scroll_, width_, 512);
+    lv_obj_set_style_bg_color(chat_scroll_, lv_color_hex(0x0A1A2E), 0);
     lv_obj_set_style_bg_opa(chat_scroll_, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(chat_scroll_, 0, 0);
     lv_obj_set_style_pad_left(chat_scroll_, 40, 0);
@@ -217,7 +253,7 @@ void Tab5BridgeLcdDisplay::BuildChatScroll()
     // Placeholder hint
     hint_lbl_ = lv_label_create(chat_scroll_);
     lv_obj_set_style_text_font(hint_lbl_, zh_font(), 0);
-    lv_obj_set_style_text_color(hint_lbl_, lv_color_hex(0x334455), 0);
+    lv_obj_set_style_text_color(hint_lbl_, lv_color_hex(0x4A6A8C), 0);
     lv_obj_set_style_text_align(hint_lbl_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(hint_lbl_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(hint_lbl_, width_ - 80);
@@ -230,7 +266,7 @@ void Tab5BridgeLcdDisplay::BuildStatusBar()
     lv_obj_t* bar = lv_obj_create(scr_);
     lv_obj_set_pos(bar, 0, 664);
     lv_obj_set_size(bar, width_, 56);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x091422), 0);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x07111E), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(bar, 0, 0);
     lv_obj_set_style_pad_all(bar, 0, 0);
@@ -238,13 +274,13 @@ void Tab5BridgeLcdDisplay::BuildStatusBar()
 
     state_dot_lbl_ = lv_label_create(bar);
     lv_obj_set_style_text_font(state_dot_lbl_, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(state_dot_lbl_, lv_color_hex(0x556677), 0);
+    lv_obj_set_style_text_color(state_dot_lbl_, lv_color_hex(0x6A8CA8), 0);
     lv_label_set_text(state_dot_lbl_, "●");
     lv_obj_align(state_dot_lbl_, LV_ALIGN_LEFT_MID, 36, 0);
 
     state_text_lbl_ = lv_label_create(bar);
     lv_obj_set_style_text_font(state_text_lbl_, zh_font(), 0);
-    lv_obj_set_style_text_color(state_text_lbl_, lv_color_hex(0x778899), 0);
+    lv_obj_set_style_text_color(state_text_lbl_, lv_color_hex(0x9DB4CC), 0);
     lv_label_set_text(state_text_lbl_, "待命");
     lv_obj_align(state_text_lbl_, LV_ALIGN_LEFT_MID, 68, 0);
 }
@@ -280,7 +316,7 @@ void Tab5BridgeLcdDisplay::AddChatBubble(const char* role, const char* content)
 
     // Bubble background
     lv_obj_t* bubble = lv_obj_create(row);
-    lv_color_t bg = is_user ? lv_color_hex(0x1A4A8A) : lv_color_hex(0x1C2D3E);
+    lv_color_t bg = is_user ? lv_color_hex(0x1E6FC2) : lv_color_hex(0x13304E);
     lv_obj_set_style_bg_color(bubble, bg, 0);
     lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(bubble, 18, 0);
@@ -331,7 +367,7 @@ void Tab5BridgeLcdDisplay::UpdateInfoBar()
             rssi = ap.rssi;
         }
         lv_label_set_text(wifi_icon_, rssi_to_icon(rssi));
-        lv_color_t c = rssi ? lv_color_hex(0x5599CC) : lv_color_hex(0xFF4444);
+        lv_color_t c = rssi ? lv_color_hex(0x4FA3FF) : lv_color_hex(0xFF4444);
         lv_obj_set_style_text_color(wifi_icon_, c, 0);
     }
 
@@ -345,7 +381,7 @@ void Tab5BridgeLcdDisplay::UpdateInfoBar()
             lv_label_set_text(batt_pct_lbl_, buf);
             lv_color_t c = pct < 20 ? lv_color_hex(0xFF4444)
                          : pct < 40 ? lv_color_hex(0xF39C12)
-                         :            lv_color_hex(0x5599CC);
+                         :            lv_color_hex(0x4FA3FF);
             lv_obj_set_style_text_color(batt_icon_, c, 0);
             lv_obj_set_style_text_color(batt_pct_lbl_, c, 0);
         } else {
@@ -377,11 +413,11 @@ void Tab5BridgeLcdDisplay::SetStatus(const char* status)
     // Status bar dot color
     lv_color_t dot_color;
     switch (state_) {
-        case State::LISTENING:   dot_color = lv_color_hex(0x3A7BD5); break;
+        case State::LISTENING:   dot_color = lv_color_hex(0x4FA3FF); break;
         case State::SPEAKING:    dot_color = lv_color_hex(0x2ECC71); break;
         case State::CONNECTING:  dot_color = lv_color_hex(0xF39C12); break;
         case State::THINKING:    dot_color = lv_color_hex(0x9B59B6); break;
-        default:                 dot_color = lv_color_hex(0x556677); break;
+        default:                 dot_color = lv_color_hex(0x6A8CA8); break;
     }
     if (state_dot_lbl_)  lv_obj_set_style_text_color(state_dot_lbl_, dot_color, 0);
     if (state_text_lbl_) lv_label_set_text(state_text_lbl_, status);

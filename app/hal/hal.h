@@ -386,6 +386,23 @@ public:
         return {};
     }
 
+    // Stream an HTTP GET body straight to a file (no large in-RAM buffer). Used
+    // for downloading wallpaper JPEGs to SPIFFS. Returns true on 2xx + written.
+    virtual bool httpGetToFile(const std::string& url, const std::string& filePath,
+        const std::vector<std::pair<std::string, std::string>>& headers = {})
+    {
+        return false;
+    }
+
+    /* -------------------------------- JPEG -------------------------------- */
+    // Decode a JPEG file into a newly-allocated RGB565 buffer (PSRAM on device).
+    // On success returns the buffer (caller frees with free()) and sets w/h;
+    // returns nullptr on failure. Desktop has no hardware decoder → nullptr.
+    virtual uint8_t* decodeJpegToRGB565(const std::string& filePath, int& outW, int& outH)
+    {
+        return nullptr;
+    }
+
     /* ------------------------------ UART monitor ------------------------------ */
     struct UartMonitorData_t {
         std::mutex mutex;
