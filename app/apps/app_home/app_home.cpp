@@ -5,7 +5,9 @@
 #include <hal/hal.h>
 #include <ctime>
 #include <cstdio>
+#include <cstdint>
 #include <nlohmann/json.hpp>
+#include <xiaozhi_ctl.h>
 
 static const std::string _tag = "app-home";
 
@@ -161,17 +163,36 @@ void AppHome::onOpen()
     lv_obj_set_style_text_color(_status_wcond, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(_status_wcond, "");
 
+    // Helper: make a status-bar item tappable. tag routes the click:
+    // 1 = battery → power dialog, 2 = wifi → network dialog, 3 = gear → quick settings.
+    auto make_tappable = [&](lv_obj_t* item, int tag) {
+        lv_obj_add_flag(item, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_ext_click_area(item, 18);  // enlarge touch target
+        lv_obj_set_user_data(item, (void*)(intptr_t)tag);
+        lv_obj_add_event_cb(item, _statusClick_cb, LV_EVENT_CLICKED, this);
+    };
+
     _status_wifi = lv_label_create(sbar);
     lv_obj_set_style_text_font(_status_wifi, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(_status_wifi, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(_status_wifi, LV_SYMBOL_WIFI);
-    lv_obj_align(_status_wifi, LV_ALIGN_RIGHT_MID, -150, 0);
+    lv_obj_align(_status_wifi, LV_ALIGN_RIGHT_MID, -250, 0);
+    make_tappable(_status_wifi, 2);
+
+    // Quick-settings gear — to the left of the battery (volume + brightness).
+    _status_tools = lv_label_create(sbar);
+    lv_obj_set_style_text_font(_status_tools, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(_status_tools, lv_color_hex(0x4FA3FF), 0);
+    lv_label_set_text(_status_tools, LV_SYMBOL_SETTINGS);
+    lv_obj_align(_status_tools, LV_ALIGN_RIGHT_MID, -180, 0);
+    make_tappable(_status_tools, 3);
 
     _status_batt = lv_label_create(sbar);
     lv_obj_set_style_text_font(_status_batt, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(_status_batt, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(_status_batt, LV_SYMBOL_BATTERY_FULL " --%");
     lv_obj_align(_status_batt, LV_ALIGN_RIGHT_MID, -28, 0);
+    make_tappable(_status_batt, 1);
 
     _last_status_ms = 0;  // force first refresh on next onRunning
     _last_batt_ms   = 0;
@@ -273,6 +294,11 @@ void AppHome::_fetch_weather()
 void AppHome::onClose()
 {
     mclog::tagInfo(_tag, "on close");
+    // The modal lives on lv_layer_top(), not on _scr, so delete it explicitly.
+    if (_modal) {
+        lv_obj_delete(_modal);
+        _modal = nullptr;
+    }
     if (_scr) {
         lv_obj_delete(_scr);
         _scr = nullptr;
@@ -283,6 +309,9 @@ void AppHome::onClose()
     _status_wcond = nullptr;
     _status_wifi  = nullptr;
     _status_batt  = nullptr;
+    _status_tools = nullptr;
+    _qs_vol_lbl = _qs_brt_lbl = nullptr;
+    _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
     _btn_data.clear();
 }
 
@@ -291,4 +320,361 @@ void AppHome::_btn_event_cb(lv_event_t* e)
     auto* bd = static_cast<BtnData*>(lv_event_get_user_data(e));
     bd->home->_child_app_id = bd->app_id;
     mooncake::GetMooncake().openApp(bd->app_id);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Status-bar quick-access popups (power / quick settings / network)
+// ════════════════════════════════════════════════════════════════════════════
+
+namespace {
+constexpr uint32_t M_BG     = 0x132840;  // card background (deep blue)
+constexpr uint32_t M_ACCENT = 0x4FA3FF;
+constexpr uint32_t M_LBL    = 0xBFD3E6;
+constexpr uint32_t M_BTN    = 0x2E5A8F;
+constexpr uint32_t M_SAVE   = 0x2E8B57;
+constexpr uint32_t M_DANGER = 0xC0392B;
+constexpr uint32_t M_WARN   = 0xD08B1E;
+
+// Styled pill button. cb is a captureless lambda; `self` is passed as user_data.
+lv_obj_t* mk_btn(lv_obj_t* parent, const char* text, uint32_t color, int w, int h,
+                 lv_event_cb_t cb, void* self)
+{
+    lv_obj_t* b = lv_obj_create(parent);
+    lv_obj_set_size(b, w, h);
+    lv_obj_set_style_bg_color(b, lv_color_hex(color), 0);
+    lv_obj_set_style_radius(b, 14, 0);
+    lv_obj_set_style_border_width(b, 0, 0);
+    lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, self);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, text);
+    lv_obj_center(l);
+    lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(l, &font_zh_36, 0);
+    return b;
+}
+}  // namespace
+
+void AppHome::_closeModal()
+{
+    if (!_modal) return;
+    lv_obj_delete_async(_modal);  // safe to call from within the modal's own event
+    _modal      = nullptr;
+    _qs_vol_lbl = _qs_brt_lbl = nullptr;
+    _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
+}
+
+lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
+{
+    // Full-screen dimming backdrop on the top layer (covers status bar + buttons).
+    _modal = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(_modal, 1280, 720);
+    lv_obj_set_pos(_modal, 0, 0);
+    lv_obj_set_style_bg_color(_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(_modal, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(_modal, 0, 0);
+    lv_obj_set_style_radius(_modal, 0, 0);
+    lv_obj_set_style_pad_all(_modal, 0, 0);
+    lv_obj_clear_flag(_modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(_modal, LV_OBJ_FLAG_CLICKABLE);
+    // Tap outside the card → dismiss.
+    lv_obj_add_event_cb(_modal, _modalBg_cb, LV_EVENT_CLICKED, this);
+
+    // Centered card. CLICKABLE so taps on it are absorbed (don't reach backdrop).
+    lv_obj_t* card = lv_obj_create(_modal);
+    lv_obj_set_size(card, card_w, card_h);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, lv_color_hex(M_BG), 0);
+    lv_obj_set_style_radius(card, 22, 0);
+    lv_obj_set_style_border_width(card, 2, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(0x2E5A8F), 0);
+    lv_obj_set_style_pad_all(card, 0, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* t = lv_label_create(card);
+    lv_label_set_text(t, title);
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 22);
+    lv_obj_set_style_text_color(t, lv_color_hex(M_ACCENT), 0);
+    lv_obj_set_style_text_font(t, &font_zh_36, 0);
+    return card;
+}
+
+// ─── Power dialog (battery tap) ─────────────────────────────────────────────
+void AppHome::_openPowerDialog()
+{
+    lv_obj_t* card = _openModal(560, 300, "电源选项");
+
+    lv_obj_t* q = lv_label_create(card);
+    lv_label_set_text(q, "是否关机？");
+    lv_obj_align(q, LV_ALIGN_TOP_MID, 0, 96);
+    lv_obj_set_style_text_color(q, lv_color_hex(M_LBL), 0);
+    lv_obj_set_style_text_font(q, &font_zh_36, 0);
+
+    const int BW = 150, BH = 64, GAP = 24;
+    int total = BW * 3 + GAP * 2;
+    int x0 = (560 - total) / 2;
+
+    lv_obj_t* b_off = mk_btn(card, "关机", M_DANGER, BW, BH,
+        [](lv_event_t* e) {
+            auto* s = static_cast<AppHome*>(lv_event_get_user_data(e));
+            s->_closeModal();
+            GetHAL()->powerOff();
+        }, this);
+    lv_obj_align(b_off, LV_ALIGN_BOTTOM_LEFT, x0, -32);
+
+    lv_obj_t* b_reb = mk_btn(card, "重启", M_WARN, BW, BH,
+        [](lv_event_t* e) {
+            auto* s = static_cast<AppHome*>(lv_event_get_user_data(e));
+            s->_closeModal();
+            GetHAL()->reboot();
+        }, this);
+    lv_obj_align(b_reb, LV_ALIGN_BOTTOM_LEFT, x0 + BW + GAP, -32);
+
+    lv_obj_t* b_cancel = mk_btn(card, "取消", M_BTN, BW, BH,
+        [](lv_event_t* e) {
+            static_cast<AppHome*>(lv_event_get_user_data(e))->_closeModal();
+        }, this);
+    lv_obj_align(b_cancel, LV_ALIGN_BOTTOM_LEFT, x0 + 2 * (BW + GAP), -32);
+}
+
+// ─── Quick-settings dialog (gear tap): volume + brightness ──────────────────
+void AppHome::_openQuickSettings()
+{
+    lv_obj_t* card = _openModal(680, 340, "音量与亮度");
+
+    const int LBL_X = 40, SLD_X = 180, SLD_W = 380, SLD_H = 44;
+    const int VAL_X = SLD_X + SLD_W + 18;
+
+    auto mk_row = [&](const char* name, int yy, int min_v, int max_v, int cur_v,
+                      lv_event_cb_t cb, lv_obj_t** out_val) -> lv_obj_t* {
+        lv_obj_t* l = lv_label_create(card);
+        lv_label_set_text(l, name);
+        lv_obj_set_pos(l, LBL_X, yy + 6);
+        lv_obj_set_style_text_color(l, lv_color_hex(M_LBL), 0);
+        lv_obj_set_style_text_font(l, &font_zh_36, 0);
+
+        lv_obj_t* sl = lv_slider_create(card);
+        lv_obj_set_pos(sl, SLD_X, yy + 6);
+        lv_obj_set_size(sl, SLD_W, SLD_H);
+        lv_slider_set_range(sl, min_v, max_v);
+        lv_slider_set_value(sl, cur_v, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(sl, lv_color_hex(0x1A3050), LV_PART_MAIN);
+        lv_obj_set_style_radius(sl, SLD_H / 2, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(sl, lv_color_hex(M_ACCENT), LV_PART_INDICATOR);
+        lv_obj_set_style_radius(sl, SLD_H / 2, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(sl, lv_color_hex(0xFFFFFF), LV_PART_KNOB);
+        lv_obj_set_style_radius(sl, SLD_H / 2, LV_PART_KNOB);
+        lv_obj_set_style_pad_all(sl, 4, LV_PART_KNOB);
+        lv_obj_add_event_cb(sl, cb, LV_EVENT_VALUE_CHANGED, this);
+
+        lv_obj_t* v = lv_label_create(card);
+        char buf[8]; snprintf(buf, sizeof(buf), "%d%%", cur_v);
+        lv_label_set_text(v, buf);
+        lv_obj_set_pos(v, VAL_X, yy + 8);
+        lv_obj_set_style_text_color(v, lv_color_hex(M_ACCENT), 0);
+        lv_obj_set_style_text_font(v, &lv_font_montserrat_28, 0);
+        *out_val = v;
+        return sl;
+    };
+
+    int vol = xiaozhi_get_speaker_volume();
+    int brt = GetHAL()->getDisplayBrightness();
+    mk_row("音量", 86,  0, 100, vol, _qsVol_cb, &_qs_vol_lbl);
+    mk_row("亮度", 158, 10, 100, brt, _qsBrt_cb, &_qs_brt_lbl);
+
+    lv_obj_t* done = mk_btn(card, "完成", M_SAVE, 200, 60,
+        [](lv_event_t* e) {
+            static_cast<AppHome*>(lv_event_get_user_data(e))->_closeModal();
+        }, this);
+    lv_obj_align(done, LV_ALIGN_BOTTOM_MID, 0, -28);
+}
+
+void AppHome::_qsVol_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    int v = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e));
+    xiaozhi_set_speaker_volume(v);
+    char buf[8]; snprintf(buf, sizeof(buf), "%d%%", v);
+    if (self->_qs_vol_lbl) lv_label_set_text(self->_qs_vol_lbl, buf);
+}
+
+void AppHome::_qsBrt_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    int v = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e));
+    GetHAL()->setDisplayBrightness((uint8_t)v);
+    char buf[8]; snprintf(buf, sizeof(buf), "%d%%", v);
+    if (self->_qs_brt_lbl) lv_label_set_text(self->_qs_brt_lbl, buf);
+}
+
+// ─── Network dialog (WiFi tap): WiFi + HA server ────────────────────────────
+void AppHome::_openNetworkDialog()
+{
+    auto* hal = GetHAL();
+    lv_obj_t* card = _openModal(820, 540, "网络设置");
+
+    const int LBL_X = 36, FLD_X = 250, FLD_W = 520, ROW_H = 66;
+    int y = 86;
+
+    auto mk_label = [&](const char* text, int yy) {
+        lv_obj_t* l = lv_label_create(card);
+        lv_label_set_text(l, text);
+        lv_obj_set_pos(l, LBL_X, yy + 12);
+        lv_obj_set_style_text_color(l, lv_color_hex(M_LBL), 0);
+        lv_obj_set_style_text_font(l, &font_zh_36, 0);
+    };
+    auto mk_ta = [&](int yy, int w, bool password) -> lv_obj_t* {
+        lv_obj_t* ta = lv_textarea_create(card);
+        lv_obj_set_pos(ta, FLD_X, yy);
+        lv_obj_set_size(ta, w, ROW_H - 10);
+        lv_textarea_set_one_line(ta, true);
+        lv_textarea_set_password_mode(ta, password);
+        lv_obj_set_style_text_font(ta, &font_zh_36, 0);
+        lv_obj_add_event_cb(ta, _netTa_cb, LV_EVENT_ALL, this);
+        return ta;
+    };
+
+    // WiFi SSID + 扫描
+    mk_label("WiFi 名称", y);
+    _net_ssid = mk_ta(y, FLD_W - 140, false);
+    lv_textarea_set_text(_net_ssid, hal->getConfig("wifi_ssid", "ChinaNet-11G").c_str());
+    lv_obj_t* scan = mk_btn(card, "扫描", M_BTN, 124, ROW_H - 10,
+        [](lv_event_t* e) {
+            static_cast<AppHome*>(lv_event_get_user_data(e))->_doNetworkScan();
+        }, this);
+    lv_obj_set_pos(scan, FLD_X + FLD_W - 124, y);
+    y += ROW_H;
+
+    // Scan results dropdown
+    mk_label("搜索结果", y);
+    _net_ssid_dd = lv_dropdown_create(card);
+    lv_obj_set_pos(_net_ssid_dd, FLD_X, y);
+    lv_obj_set_size(_net_ssid_dd, FLD_W, ROW_H - 10);
+    lv_dropdown_set_options(_net_ssid_dd, "(点扫描)");
+    lv_obj_set_style_text_font(_net_ssid_dd, &font_zh_36, 0);
+    lv_obj_add_event_cb(_net_ssid_dd, [](lv_event_t* e) {
+        auto* s = static_cast<AppHome*>(lv_event_get_user_data(e));
+        char buf[64] = {0};
+        lv_dropdown_get_selected_str(s->_net_ssid_dd, buf, sizeof(buf));
+        if (buf[0] && buf[0] != '(') lv_textarea_set_text(s->_net_ssid, buf);
+    }, LV_EVENT_VALUE_CHANGED, this);
+    y += ROW_H;
+
+    // WiFi password
+    mk_label("WiFi 密码", y);
+    _net_pass = mk_ta(y, FLD_W, true);
+    lv_textarea_set_text(_net_pass, hal->getConfig("wifi_pass", "").c_str());
+    y += ROW_H;
+
+    // HA server host
+    mk_label("HA 服务器", y);
+    _net_host = mk_ta(y, FLD_W, false);
+    lv_textarea_set_text(_net_host, hal->getConfig("ha_host", "192.168.1.142").c_str());
+    y += ROW_H + 6;
+
+    // Save + status
+    lv_obj_t* save = mk_btn(card, "保存并重启", M_SAVE, 260, 60,
+        [](lv_event_t* e) {
+            static_cast<AppHome*>(lv_event_get_user_data(e))->_doNetworkSave();
+        }, this);
+    lv_obj_set_pos(save, FLD_X, y);
+
+    _net_status = lv_label_create(card);
+    lv_label_set_text(_net_status, "");
+    lv_obj_set_pos(_net_status, FLD_X + 280, y + 16);
+    lv_obj_set_style_text_color(_net_status, lv_color_hex(0xFFD166), 0);
+    lv_obj_set_style_text_font(_net_status, &font_zh_36, 0);
+
+    // On-screen keyboard — child of the backdrop so it floats above the card.
+    _net_kb = lv_keyboard_create(_modal);
+    lv_obj_set_size(_net_kb, 1280, 300);
+    lv_obj_align(_net_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_flag(_net_kb, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(_net_kb, _netKb_cb, LV_EVENT_ALL, this);
+}
+
+void AppHome::_doNetworkScan()
+{
+    if (!_net_status) return;
+    lv_label_set_text(_net_status, "扫描中…");
+    auto aps = GetHAL()->wifiScan();
+    if (aps.empty()) {
+        lv_dropdown_set_options(_net_ssid_dd, "(未发现网络)");
+        lv_label_set_text(_net_status, "未发现网络");
+        return;
+    }
+    std::string opts;
+    for (size_t i = 0; i < aps.size(); i++) {
+        if (i) opts += "\n";
+        opts += aps[i].ssid;
+    }
+    lv_dropdown_set_options(_net_ssid_dd, opts.c_str());
+    lv_dropdown_set_selected(_net_ssid_dd, 0);
+    lv_textarea_set_text(_net_ssid, aps[0].ssid.c_str());
+    lv_label_set_text(_net_status, "");
+}
+
+void AppHome::_doNetworkSave()
+{
+    auto* hal = GetHAL();
+    std::string ssid = lv_textarea_get_text(_net_ssid);
+    std::string pass = lv_textarea_get_text(_net_pass);
+    std::string host = lv_textarea_get_text(_net_host);
+    if (ssid.empty()) {
+        lv_label_set_text(_net_status, "请填写 WiFi 名称");
+        return;
+    }
+    hal->setConfig("wifi_ssid", ssid);
+    hal->setConfig("wifi_pass", pass);
+    if (!host.empty()) hal->setConfig("ha_host", host);
+    lv_label_set_text(_net_status, "已保存，正在重启…");
+    mclog::tagInfo(_tag, "network saved ssid={} host={}, rebooting", ssid, host);
+    hal->delay(800);
+    hal->reboot();
+}
+
+void AppHome::_netTa_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    lv_obj_t* ta = (lv_obj_t*)lv_event_get_target(e);
+    lv_event_code_t code = lv_event_get_code(e);
+    if (!self->_net_kb) return;
+    if (code == LV_EVENT_FOCUSED) {
+        lv_keyboard_set_textarea(self->_net_kb, ta);
+        lv_obj_clear_flag(self->_net_kb, LV_OBJ_FLAG_HIDDEN);
+    } else if (code == LV_EVENT_DEFOCUSED) {
+        lv_obj_add_flag(self->_net_kb, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void AppHome::_netKb_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    lv_event_code_t code = lv_event_get_code(e);
+    if ((code == LV_EVENT_READY || code == LV_EVENT_CANCEL) && self->_net_kb) {
+        lv_obj_add_flag(self->_net_kb, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// ─── Status-bar click routing + backdrop dismiss ────────────────────────────
+void AppHome::_statusClick_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    if (self->_modal) return;  // one popup at a time
+    lv_obj_t* item = (lv_obj_t*)lv_event_get_target(e);
+    intptr_t tag = (intptr_t)lv_obj_get_user_data(item);
+    if      (tag == 1) self->_openPowerDialog();
+    else if (tag == 2) self->_openNetworkDialog();
+    else if (tag == 3) self->_openQuickSettings();
+}
+
+void AppHome::_modalBg_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    // Only a tap on the backdrop itself (not bubbled from a child) dismisses.
+    if ((lv_obj_t*)lv_event_get_target(e) == self->_modal) {
+        self->_closeModal();
+    }
 }

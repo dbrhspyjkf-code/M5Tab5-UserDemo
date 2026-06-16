@@ -14,7 +14,11 @@ static const char* BING_API =
     "http://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN";
 static const char* BING_HOST = "http://www.bing.com";
 
+#ifdef PLATFORM_BUILD_DESKTOP
+static const char* TMP_JSON = "/tmp/bing.json";
+#else
 static const char* TMP_JSON = "/spiffs/bing.json";
+#endif
 
 std::string screensaver::todayKey()
 {

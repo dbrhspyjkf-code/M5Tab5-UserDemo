@@ -65,12 +65,11 @@ inline void on_install_apps()
     // ── Register apps in the home screen ──
     home->addApp("智能家居", ha_id);
     home->addApp("小  智", xz_id);
-    home->addApp("设  置", set_id);
+    home->addApp("工  具", set_id);
     /* Install app locator (Don't remove) */
 
-    // If WiFi didn't connect at boot (wrong/blank credentials), jump straight
-    // to Settings so the user can fix it without hunting for the app.
-    if (!GetHAL()->isWifiConnected()) {
-        mooncake::GetMooncake().openApp(set_id);
-    }
+    // WiFi / HA configuration moved to the home status-bar WiFi popup; the
+    // red WiFi icon there signals a failed connection, so there's no longer a
+    // Settings screen to auto-open on boot.
+    (void)set_id;
 }

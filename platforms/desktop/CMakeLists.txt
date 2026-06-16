@@ -32,6 +32,11 @@ target_include_directories(lvgl PUBLIC ${SDL2_INCLUDE_DIRS})
 find_package(CURL REQUIRED)
 include_directories(${CURL_INCLUDE_DIRS})
 
+# libjpeg-turbo for desktop wallpaper decode (mirrors P4 HW JPEG decoder).
+# Homebrew keeps it keg-only, so point at its prefix explicitly if present.
+find_package(JPEG REQUIRED)
+include_directories(${JPEG_INCLUDE_DIRS})
+
 # nlohmann json (header only) — include parent so #include <nlohmann/json.hpp> resolves
 include_directories(dependencies)
 
@@ -43,6 +48,7 @@ file(GLOB_RECURSE APP_LAYER_SRCS
 )
 set(APP_LAYER_INCS
     app/
+    platforms/desktop/compat/
 )
 
 # 桌面端源文件 (exclude any build/ subtree to avoid picking up CMake's own
@@ -63,6 +69,7 @@ target_link_libraries(app_desktop_build PUBLIC
     lvgl_demos
     ${SDL2_LIBRARIES}
     ${CURL_LIBRARIES}
+    ${JPEG_LIBRARIES}
     smooth_ui_toolkit
     pthread
 )

@@ -16,7 +16,11 @@ static const std::string _tag = "screensaver";
 
 namespace {
 
+#ifdef PLATFORM_BUILD_DESKTOP
+constexpr const char* WP_PATH = "/tmp/bing.jpg";
+#else
 constexpr const char* WP_PATH = "/spiffs/bing.jpg";
+#endif
 // Idle timeout before the wallpaper appears. Tunable via NVS key "ss_idle_s".
 constexpr int DEFAULT_IDLE_S = 60;
 
