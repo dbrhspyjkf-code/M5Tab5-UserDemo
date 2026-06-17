@@ -89,6 +89,7 @@ public:
 
     bool usbCDetect() override;
     bool usbADetect() override;
+    bool usbKeyboardDetect() override;
     bool headPhoneDetect() override;
     std::vector<uint8_t> i2cScan(bool isInternal) override;
     void initPortAI2c() override;

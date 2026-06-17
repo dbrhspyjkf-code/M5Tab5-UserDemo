@@ -37,12 +37,16 @@ idf_component_register(SRCS "app_main.cpp" ${APP_LAYER_SRCS} ${MY_HAL_SRCS}
                         chmorgan__esp-audio-player
                         espressif__usb_host_hid
                         usb
+                        78__esp-ml307
+                        espressif__esp-sr
                     PRIV_REQUIRES
                         xiaozhi_core
+                        78__xiaozhi-fonts
                         esp_http_client
                         esp-tls
                         esp_driver_jpeg
-                        esp_pm)
+                        esp_pm
+                        voice_input)
 
 # LVGL assert handler: abort() instead of while(1) so crashes restart cleanly
 target_compile_definitions(__idf_main PRIVATE

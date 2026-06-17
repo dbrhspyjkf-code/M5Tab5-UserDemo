@@ -114,7 +114,24 @@ public:
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
-    
+
+    /**
+     * Direct access to the protocol layer for out-of-band sends (e.g. STT-only
+     * listen sessions driven by the voice input service). Returns nullptr if
+     * xiaozhi has not yet opened its audio channel.
+     */
+    Protocol* GetProtocol() const { return protocol_.get(); }
+
+    /**
+     * Register a callback to be invoked whenever the server returns an STT
+     * result ({type:"stt"}). Runs on xiaozhi's main task. The voice input
+     * service uses this to forward recognized text back to its recording task
+     * without hijacking the chat pipeline.
+     */
+    void RegisterSttCallback(std::function<void(const std::string&)> cb) {
+        stt_callback_ = std::move(cb);
+    }
+
     /**
      * Reset protocol resources (thread-safe)
      * Can be called from any task to release resources allocated after network connected
@@ -139,6 +156,7 @@ private:
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
+    std::function<void(const std::string&)> stt_callback_;
 
     bool has_server_time_ = false;
     bool aborted_ = false;

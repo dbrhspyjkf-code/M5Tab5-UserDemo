@@ -12,6 +12,12 @@
 
 static const std::string _tag = "hal-http";
 
+static bool _is_claude_gateway_url(const std::string& url)
+{
+    return url.find(":8769/api/claude/message") != std::string::npos
+        || url.find(":8770/api/") != std::string::npos;
+}
+
 static esp_err_t _http_event_handler(esp_http_client_event_t* evt)
 {
     auto* body = static_cast<std::string*>(evt->user_data);
@@ -88,7 +94,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPost(
     config.method         = HTTP_METHOD_POST;
     config.event_handler  = _http_event_handler;
     config.user_data      = &body;
-    config.timeout_ms     = 10000;
+    config.timeout_ms     = _is_claude_gateway_url(url) ? 240000 : 10000;
     config.buffer_size    = 1024;
     config.buffer_size_tx = 2048;
 

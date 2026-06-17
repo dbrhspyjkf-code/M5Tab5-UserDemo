@@ -6,3 +6,6 @@ build_*
 dependencies
 .DS_Store
 __pycache__
+var/project_assistant/results/*.json
+var/project_assistant/requests/*.json
+var/project_assistant/execution/*.md

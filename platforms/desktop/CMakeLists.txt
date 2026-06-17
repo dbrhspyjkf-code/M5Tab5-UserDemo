@@ -6,22 +6,22 @@ set(CMAKE_CXX_STANDARD 17)
 
 add_definitions(-DPLATFORM_BUILD_DESKTOP)
 
-# Mooncake 
+# Mooncake
 set(MOONCAKE_BUILD_EXAMPLE OFF)
-add_subdirectory(dependencies/mooncake)
+add_subdirectory(../../dependencies/mooncake ${CMAKE_BINARY_DIR}/mooncake)
 
 # Mooncake log
 set(MOONCAKE_EVENT_BUILD_EXAMPLE OFF)
-add_subdirectory(dependencies/mooncake_log)
+add_subdirectory(../../dependencies/mooncake_log ${CMAKE_BINARY_DIR}/mooncake_log)
 
 # Smooth ui shit
 set(SMOOTH_UI_TOOLKIT_BUILD_EXAMPLE OFF)
-add_subdirectory(dependencies/smooth_ui_toolkit)
+add_subdirectory(../../dependencies/smooth_ui_toolkit ${CMAKE_BINARY_DIR}/smooth_ui_toolkit)
 
 # Lvgl
 set(LV_CONF_INCLUDE_SIMPLE OFF)
 set(LV_CONF_PATH ../../lv_conf.h)
-add_subdirectory(dependencies/lvgl)
+add_subdirectory(../../dependencies/lvgl ${CMAKE_BINARY_DIR}/lvgl)
 
 # SDL
 find_package(SDL2 REQUIRED SDL2)
@@ -38,27 +38,30 @@ find_package(JPEG REQUIRED)
 include_directories(${JPEG_INCLUDE_DIRS})
 
 # nlohmann json (header only) — include parent so #include <nlohmann/json.hpp> resolves
-include_directories(dependencies)
+include_directories(../../dependencies)
 
 # App layer
 file(GLOB_RECURSE APP_LAYER_SRCS
-    app/*.c
-    app/*.cc
-    app/*.cpp
+    ../../app/*.c
+    ../../app/*.cc
+    ../../app/*.cpp
+)
+list(APPEND APP_LAYER_SRCS
+    ../../platforms/tab5/managed_components/78__xiaozhi-fonts/src/font_puhui_20_4.c
 )
 set(APP_LAYER_INCS
-    app/
-    platforms/desktop/compat/
+    ../../app/
+    compat/
 )
 
 # 桌面端源文件 (exclude any build/ subtree to avoid picking up CMake's own
 # CompilerId test sources, which collide on link)
 file(GLOB_RECURSE APP_DESKTOP_BUILD_SRCS
-    platforms/desktop/*.cpp
-    platforms/desktop/*.cc
-    platforms/desktop/*.c
+    *.cpp
+    *.cc
+    *.c
 )
-list(FILTER APP_DESKTOP_BUILD_SRCS EXCLUDE REGEX "platforms/desktop/build/.*")
+list(FILTER APP_DESKTOP_BUILD_SRCS EXCLUDE REGEX "build/.*")
 add_executable(app_desktop_build ${APP_DESKTOP_BUILD_SRCS} ${APP_LAYER_SRCS})
 target_include_directories(app_desktop_build PUBLIC ${APP_LAYER_INCS})
 target_link_libraries(app_desktop_build PUBLIC

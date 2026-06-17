@@ -192,6 +192,22 @@ public:
     };
     HidMouseData_t hidMouseData;
 
+    // LVGL keypad input-device group — created by hid_init() on device.
+    // Apps add widgets to this group so physical keyboard events reach them.
+    lv_group_t* lvKbGroup = nullptr;
+
+    // Apps register this to be notified when Enter is pressed on a focused
+    // widget via the physical keyboard (bypasses LVGL's key-event pipeline
+    // so it doesn't suffer from the textarea class default adding '\n'
+    // first). Used by chat-style apps so Enter triggers Send rather than
+    // inserting a newline. Cleared in onClose.
+    std::function<void()> onEnterPressed = nullptr;
+
+    virtual bool usbKeyboardDetect()
+    {
+        return false;
+    }
+
     /* ---------------------------------- Audio --------------------------------- */
     virtual void setSpeakerVolume(uint8_t volume)
     {

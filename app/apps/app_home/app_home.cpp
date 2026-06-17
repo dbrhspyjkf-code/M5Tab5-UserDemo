@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <nlohmann/json.hpp>
 #include <xiaozhi_ctl.h>
+#include "../app_voice_input/app_voice_input.h"
 
 static const std::string _tag = "app-home";
 
@@ -644,8 +645,10 @@ void AppHome::_netTa_cb(lv_event_t* e)
     if (code == LV_EVENT_FOCUSED) {
         lv_keyboard_set_textarea(self->_net_kb, ta);
         lv_obj_clear_flag(self->_net_kb, LV_OBJ_FLAG_HIDDEN);
+        AppVoiceInput::requestVoiceInput(ta, 300);
     } else if (code == LV_EVENT_DEFOCUSED) {
         lv_obj_add_flag(self->_net_kb, LV_OBJ_FLAG_HIDDEN);
+        AppVoiceInput::dismissMicButton();
     }
 }
 

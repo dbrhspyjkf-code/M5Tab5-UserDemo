@@ -20,8 +20,109 @@
 #define TAG "usba"
 
 static std::mutex _usba_detect_mutex;
-static bool _is_usba_connected = false;
+static bool _is_usba_connected   = false;
+static bool _is_keyboard_connected = false;
 static lv_obj_t* _cursor_img;
+
+// ── Physical keyboard support ──────────────────────────────────────────────
+struct KeyEvent_t {
+    uint32_t         key;
+    lv_indev_state_t state;
+};
+static QueueHandle_t _key_event_queue = nullptr;
+static uint8_t       _prev_keys[6]    = {0};
+static uint8_t       _prev_modifier   = 0;
+
+// Map a USB HID boot-protocol keycode + modifier byte to an LVGL key code.
+// Returns 0 for keys we don't handle (Fn keys, Print Screen, etc.).
+static uint32_t _hid_keycode_to_lvgl(uint8_t keycode, uint8_t modifier)
+{
+    bool shift = (modifier & (HID_LEFT_SHIFT | HID_RIGHT_SHIFT)) != 0;
+
+    // a–z / A–Z
+    if (keycode >= HID_KEY_A && keycode <= HID_KEY_Z) {
+        char c = 'a' + (keycode - HID_KEY_A);
+        return shift ? (uint32_t)(c - 32) : (uint32_t)c;
+    }
+
+    // Number row 1–9 and 0 (0x1E–0x27)
+    if (keycode >= HID_KEY_1 && keycode <= HID_KEY_0) {
+        static const char nums[] = "1234567890";
+        static const char syms[] = "!@#$%^&*()";
+        int idx = (keycode == HID_KEY_0) ? 9 : (keycode - HID_KEY_1);
+        return shift ? (uint32_t)syms[idx] : (uint32_t)nums[idx];
+    }
+
+    switch (keycode) {
+        case HID_KEY_ENTER:        return LV_KEY_ENTER;
+        case HID_KEY_ESC:          return LV_KEY_ESC;
+        case HID_KEY_DEL:          return LV_KEY_BACKSPACE;  // PC "Backspace" key
+        case HID_KEY_DELETE:       return LV_KEY_DEL;        // PC "Delete" (forward)
+        case HID_KEY_TAB:          return shift ? LV_KEY_PREV : LV_KEY_NEXT;
+        case HID_KEY_SPACE:        return ' ';
+        case HID_KEY_MINUS:        return shift ? '_' : '-';
+        case HID_KEY_EQUAL:        return shift ? '+' : '=';
+        case HID_KEY_OPEN_BRACKET: return shift ? '{' : '[';
+        case HID_KEY_CLOSE_BRACKET:return shift ? '}' : ']';
+        case HID_KEY_BACK_SLASH:   return shift ? '|' : '\\';
+        case HID_KEY_COLON:        return shift ? ':' : ';';
+        case HID_KEY_QUOTE:        return shift ? '"' : '\'';
+        case HID_KEY_TILDE:        return shift ? '~' : '`';
+        case HID_KEY_LESS:         return shift ? '<' : ',';
+        case HID_KEY_GREATER:      return shift ? '>' : '.';
+        case HID_KEY_SLASH:        return shift ? '?' : '/';
+        case HID_KEY_HOME:         return LV_KEY_HOME;
+        case HID_KEY_END:          return LV_KEY_END;
+        case HID_KEY_RIGHT:        return LV_KEY_RIGHT;
+        case HID_KEY_LEFT:         return LV_KEY_LEFT;
+        case HID_KEY_DOWN:         return LV_KEY_DOWN;
+        case HID_KEY_UP:           return LV_KEY_UP;
+        default:                   return 0;
+    }
+}
+
+static void hid_host_keyboard_report_callback(const uint8_t* const data, const int length)
+{
+    if (length < 8 || !_key_event_queue) return;
+
+    uint8_t modifier      = data[0];
+    const uint8_t* keys   = data + 2;  // keycodes[6]
+
+    // Detect key releases (present in prev report, absent from current)
+    for (int i = 0; i < 6; i++) {
+        if (_prev_keys[i] == 0) continue;
+        bool still = false;
+        for (int j = 0; j < 6; j++) {
+            if (keys[j] == _prev_keys[i]) { still = true; break; }
+        }
+        if (!still) {
+            uint32_t lv_key = _hid_keycode_to_lvgl(_prev_keys[i], _prev_modifier);
+            if (lv_key) {
+                KeyEvent_t evt = { lv_key, LV_INDEV_STATE_RELEASED };
+                xQueueSend(_key_event_queue, &evt, 0);
+            }
+        }
+    }
+
+    // Detect new key presses (absent from prev, present in current)
+    for (int i = 0; i < 6; i++) {
+        if (keys[i] == 0) continue;
+        bool was = false;
+        for (int j = 0; j < 6; j++) {
+            if (_prev_keys[j] == keys[i]) { was = true; break; }
+        }
+        if (!was) {
+            uint32_t lv_key = _hid_keycode_to_lvgl(keys[i], modifier);
+            if (lv_key) {
+                KeyEvent_t evt = { lv_key, LV_INDEV_STATE_PRESSED };
+                xQueueSend(_key_event_queue, &evt, 0);
+            }
+        }
+    }
+
+    memcpy(_prev_keys, keys, 6);
+    _prev_modifier = modifier;
+}
 
 QueueHandle_t app_event_queue = NULL;
 typedef enum { APP_EVENT = 0, APP_EVENT_HID_HOST } app_event_group_t;
@@ -111,12 +212,10 @@ void hid_host_interface_callback(hid_host_device_handle_t hid_device_handle, con
 
             if (HID_SUBCLASS_BOOT_INTERFACE == dev_params.sub_class) {
                 if (HID_PROTOCOL_KEYBOARD == dev_params.proto) {
-                    // hid_host_keyboard_report_callback(data, data_length);
+                    hid_host_keyboard_report_callback(data, data_length);
                 } else if (HID_PROTOCOL_MOUSE == dev_params.proto) {
                     hid_host_mouse_report_callback(data, data_length);
                 }
-            } else {
-                // hid_host_generic_report_callback(data, data_length);
             }
 
             break;
@@ -126,6 +225,12 @@ void hid_host_interface_callback(hid_host_device_handle_t hid_device_handle, con
 
             _usba_detect_mutex.lock();
             _is_usba_connected = false;
+            if (HID_PROTOCOL_KEYBOARD == dev_params.proto) {
+                _is_keyboard_connected = false;
+                // Discard stale key states
+                memset(_prev_keys, 0, sizeof(_prev_keys));
+                _prev_modifier = 0;
+            }
             _usba_detect_mutex.unlock();
 
             break;
@@ -160,6 +265,10 @@ void hid_host_device_event(hid_host_device_handle_t hid_device_handle, const hid
 
             _usba_detect_mutex.lock();
             _is_usba_connected = true;
+            if (HID_PROTOCOL_KEYBOARD == dev_params.proto) {
+                _is_keyboard_connected = true;
+                ESP_LOGI(TAG, "Physical keyboard connected");
+            }
             _usba_detect_mutex.unlock();
 
             break;
@@ -228,6 +337,18 @@ static void tab5_usb_host_task(void* pvParameters)
     }
 }
 
+static void lvgl_keyboard_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+{
+    KeyEvent_t evt;
+    if (_key_event_queue && xQueueReceive(_key_event_queue, &evt, 0) == pdTRUE) {
+        data->key   = evt.key;
+        data->state = evt.state;
+        data->continue_reading = (uxQueueMessagesWaiting(_key_event_queue) > 0);
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+}
+
 static void lvgl_mouse_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {
     _usba_detect_mutex.lock();
@@ -255,18 +376,38 @@ void HalEsp32::hid_init()
     mclog::tagInfo(TAG, "hid init");
     xTaskCreatePinnedToCore(tab5_usb_host_task, "usba", 4096 * 2, NULL, 5, NULL, 0);
 
+    // Mouse pointer indev
     auto lvMouse = lv_indev_create();
     lv_indev_set_type(lvMouse, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(lvMouse, lvgl_mouse_read_cb);
     lv_indev_set_display(lvMouse, lvDisp);
 
-    _cursor_img = lv_image_create(lv_screen_active()); /*Create an image object for the cursor */
-    lv_image_set_src(_cursor_img, &mouse_cursor);      /*Set the image source*/
-    lv_indev_set_cursor(lvMouse, _cursor_img);         /*Connect the image  object to the driver*/
+    _cursor_img = lv_image_create(lv_screen_active());
+    lv_image_set_src(_cursor_img, &mouse_cursor);
+    lv_indev_set_cursor(lvMouse, _cursor_img);
+
+    // Physical keyboard indev
+    _key_event_queue = xQueueCreate(32, sizeof(KeyEvent_t));
+
+    lvKeyboard = lv_indev_create();
+    lv_indev_set_type(lvKeyboard, LV_INDEV_TYPE_KEYPAD);
+    lv_indev_set_read_cb(lvKeyboard, lvgl_keyboard_read_cb);
+    lv_indev_set_display(lvKeyboard, lvDisp);
+
+    // Global keyboard group: apps add their widgets to this group so physical
+    // key events are routed to the focused widget (typically a textarea).
+    lvKbGroup = lv_group_create();
+    lv_indev_set_group(lvKeyboard, lvKbGroup);
 }
 
 bool HalEsp32::usbADetect()
 {
     std::lock_guard<std::mutex> lock(_usba_detect_mutex);
     return _is_usba_connected;
+}
+
+bool HalEsp32::usbKeyboardDetect()
+{
+    std::lock_guard<std::mutex> lock(_usba_detect_mutex);
+    return _is_keyboard_connected;
 }

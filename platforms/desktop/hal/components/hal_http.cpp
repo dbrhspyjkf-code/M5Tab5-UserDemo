@@ -8,6 +8,13 @@
 #include <cstdio>
 
 static const std::string _tag = "hal-http";
+static const char* LOCAL_NO_PROXY = "127.0.0.1,localhost,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12";
+
+static bool _is_claude_gateway_url(const std::string& url)
+{
+    return url.find(":8769/api/claude/message") != std::string::npos
+        || url.find(":8770/api/") != std::string::npos;
+}
 
 static size_t _write_file_cb(char* ptr, size_t size, size_t nmemb, FILE* fp)
 {
@@ -44,6 +51,7 @@ hal::HalBase::HttpResponse_t HalDesktop::httpGet(
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 8L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 4L);
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, LOCAL_NO_PROXY);
 
     CURLcode res = curl_easy_perform(curl);
     if (res == CURLE_OK) {
@@ -76,8 +84,9 @@ hal::HalBase::HttpResponse_t HalDesktop::httpPost(
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, _write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 8L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, _is_claude_gateway_url(url) ? 240L : 8L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 4L);
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, LOCAL_NO_PROXY);
 
     CURLcode res = curl_easy_perform(curl);
     if (res == CURLE_OK) {
@@ -119,6 +128,7 @@ bool HalDesktop::httpGetToFile(
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, LOCAL_NO_PROXY);
 
     CURLcode res = curl_easy_perform(curl);
     bool ok = false;

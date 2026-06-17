@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "voice_input_service.cc"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        esp_http_client
+        json
+        nvs_flash
+    PRIV_REQUIRES
+        xiaozhi_core
+        freertos
+)

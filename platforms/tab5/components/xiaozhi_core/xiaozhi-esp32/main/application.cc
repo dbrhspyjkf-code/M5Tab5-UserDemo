@@ -561,9 +561,16 @@ void Application::InitializeProtocol() {
             auto text = cJSON_GetObjectItem(root, "text");
             if (cJSON_IsString(text)) {
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
-                Schedule([display, message = std::string(text->valuestring)]() {
+                auto text_str = std::string(text->valuestring);
+                Schedule([display, message = text_str]() {
                     display->SetChatMessage("user", message.c_str());
                 });
+                // Also dispatch to voice input service if registered.
+                // Note: this runs synchronously on xiaozhi's main task; the
+                // callback should be quick (give a semaphore) and not block.
+                if (stt_callback_) {
+                    stt_callback_(text_str);
+                }
             }
         } else if (strcmp(type->valuestring, "llm") == 0) {
             auto emotion = cJSON_GetObjectItem(root, "emotion");
