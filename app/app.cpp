@@ -6,7 +6,6 @@
 #include "app.h"
 #include "hal/hal.h"
 #include "apps/app_installer.h"
-#include "screensaver/screensaver.h"
 #include <mooncake.h>
 #include <mooncake_log.h>
 #include <lvgl.h>
@@ -30,8 +29,6 @@ void app::Init(InitCallback_t callback)
 
     on_startup_anim();
     on_install_apps();
-
-    screensaver::init();
 }
 
 void app::Update()
@@ -39,9 +36,6 @@ void app::Update()
     {
         LvglLockGuard lock;
         GetMooncake().update();
-        // Idle-wallpaper screensaver. lv_display_get_inactive_time() tracks the
-        // last touch across every app, so no app needs to be instrumented.
-        screensaver::tick(lv_display_get_inactive_time(nullptr));
     }
 
 #if defined(__APPLE__) && defined(__MACH__)

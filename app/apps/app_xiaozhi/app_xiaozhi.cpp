@@ -4,7 +4,6 @@
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <esp_timer.h>
-#include "screensaver/screensaver.h"
 
 static const char* TAG = "AppXiaoZhi";
 
@@ -23,8 +22,6 @@ void AppXiaoZhi::onCreate()
 void AppXiaoZhi::onOpen()
 {
     mclog::tagInfo(TAG, "open — start (if needed) + activate xiaozhi screen");
-    // The screensaver must never cover or compete with the voice assistant.
-    screensaver::setInhibited(true);
     // Spawn the xiaozhi task on first open (guarded internally so repeated
     // opens don't spawn it again).
     xiaozhi_start_task();
@@ -37,12 +34,6 @@ void AppXiaoZhi::onOpen()
 
 void AppXiaoZhi::onRunning()
 {
-    // If voice-woken while the screensaver covers us, dismiss it so the user
-    // sees the conversation instead of talking to a hidden xiaozhi.
-    if (screensaver::isActive() && xiaozhi_is_active()) {
-        screensaver::wake();
-    }
-
     // Update battery reading every 10 s for the xiaozhi info bar.
     static int64_t s_last_batt_ms = 0;
     int64_t now_ms = esp_timer_get_time() / 1000;
@@ -72,8 +63,6 @@ void AppXiaoZhi::onClose()
     // could exhaust internal RAM and crash/reboot the device.
     xiaozhi_suspend();
     _removeSwipeGesture();
-    // Allow the screensaver again now that the assistant is closed.
-    screensaver::setInhibited(false);
     if (_close_cb) {
         _close_cb();
     }
@@ -90,8 +79,6 @@ void AppXiaoZhi::_installSwipeGesture()
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
             lv_indev_add_event_cb(indev, [](lv_event_t* e) {
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
-                // Ignore the touch that's only meant to wake the screensaver.
-                if (screensaver::isActive()) return;
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
                     lv_async_call([](void* udata) {
                         auto* app = static_cast<AppXiaoZhi*>(udata);

@@ -102,5 +102,5 @@ CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=131072
 # regular SRAM/PSRAM that the vector unit can address.
 # CONFIG_ESP_SYSTEM_ALLOW_RTC_FAST_MEM_AS_HEAP is not set
 
-# Mount + auto-format the storage SPIFFS (/spiffs) for wallpaper cache
-CONFIG_BSP_SPIFFS_FORMAT_ON_MOUNT_FAIL=y
+# (storage SPIFFS partition + bsp_spiffs_mount removed — was for the wallpaper
+# screensaver which is gone.)

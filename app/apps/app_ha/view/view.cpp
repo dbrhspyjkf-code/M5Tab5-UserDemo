@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <hal/hal.h>
 #include <mooncake_log.h>
-#include "screensaver/screensaver.h"
 
 using namespace ha_view;
 
@@ -1231,8 +1230,6 @@ void HaView::_build_skeleton()
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
             lv_indev_add_event_cb(indev, [](lv_event_t* e) {
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
-                // Ignore the touch that's only meant to wake the screensaver.
-                if (screensaver::isActive()) return;
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
                     // Defer to avoid re-entrancy: removing from within indev dispatch
                     // silently fails, leaving a dangling callback after HaView is freed.

@@ -1,8 +1,8 @@
 /**
  * @file app_settings.h
- * @brief "工具" (Tools) app. The former settings (volume/brightness/WiFi/HA/
- *        screensaver) moved to the home status-bar popups; this app is now a
- *        tools launcher. First tool: a full-screen calculator.
+ * @brief "工具" (Tools) app. The former settings (volume/brightness/WiFi/HA)
+ *        moved to the home status-bar popups; this app is now a tools launcher.
+ *        First tool: a full-screen calculator.
  *
  * NOTE: the class/dir name stays AppSettings/app_settings to avoid churn in the
  * installer + build globs; only the user-facing name ("工具") and UI changed.

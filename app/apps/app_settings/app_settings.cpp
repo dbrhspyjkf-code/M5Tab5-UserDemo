@@ -8,7 +8,6 @@
 #include <atomic>
 #include <mutex>
 #include <nlohmann/json.hpp>
-#include "screensaver/screensaver.h"
 
 static const std::string _tag = "app-tools";
 
@@ -117,7 +116,6 @@ void AppSettings::_installSwipeGesture()
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
             lv_indev_add_event_cb(indev, [](lv_event_t* e) {
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
-                if (screensaver::isActive()) return;
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
                     lv_async_call([](void* udata) {
                         auto* app = static_cast<AppSettings*>(udata);
