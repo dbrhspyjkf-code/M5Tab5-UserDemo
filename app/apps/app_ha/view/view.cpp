@@ -356,12 +356,19 @@ static void _build_sensor_card(lv_obj_t* parent, int x, int y, int w, int h,
 }
 
 // ─── Lock card ────────────────────────────────────────────────────────────────
-// Format ISO timestamp "2024-01-01T14:32:05.000+00:00" -> "14:32"
+// Format ISO timestamp "2024-01-01T14:32:05.000+00:00" -> local "22:32" (UTC+8).
+// HA event sensors carry UTC; previous version returned the raw UTC HH:MM which
+// was 8 hours behind the user's clock and looked like a stale event.
 static std::string _fmt_lock_time(const std::string& iso)
 {
-    if (iso.size() == 5 && iso[2] == ':') return iso;
-    if (iso.size() < 16) return "";
-    return iso.substr(11, 5);
+    if (iso.size() == 5 && iso[2] == ':') return iso;  // already "HH:MM"
+    if (iso.size() < 19) return "";
+    int h = 0, m = 0;
+    if (sscanf(iso.c_str() + 11, "%2d:%2d", &h, &m) != 2) return "";
+    h = (h + 8) % 24;  // UTC → UTC+8 (中国)
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%02d:%02d", h, m);
+    return buf;
 }
 
 static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
@@ -415,7 +422,9 @@ static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_align(st_lbl, LV_ALIGN_TOP_LEFT, lx, row2_y);
 
     if (!card.value2.empty()) {
-        std::string upd = "更新: " + _fmt_lock_time(card.value2);
+        // Just "HH:MM" — short. card.value2 is the newest event's ISO time
+        // (UTC); _fmt_lock_time converts to local UTC+8.
+        std::string upd = _fmt_lock_time(card.value2);
         lv_obj_t* upd_lbl = lv_label_create(c);
         lv_label_set_text(upd_lbl, upd.c_str());
         lv_obj_set_style_text_font(upd_lbl, zh_font_sm(), 0);
@@ -441,9 +450,10 @@ static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
     int rec_start = h * 2 / 3 + 6;
     int rec_step  = (h - rec_start - 8) / 2;
 
-    // Record 1: "HH:MM 描述"
+    // Record 1: "HH:MM 描述" — card.value is the raw ISO timestamp from
+    // _make_lock_card; _fmt_lock_time converts UTC→local and shortens.
     std::string r1;
-    if (!card.value.empty())    r1 += card.value + "  ";
+    if (!card.value.empty())    r1 += _fmt_lock_time(card.value) + "  ";
     if (!card.lock_user.empty()) r1 += card.lock_user;
     _rec_label(rec_start,             r1,               true);
     // Record 2: already pre-formatted "HH:MM 描述"
@@ -451,6 +461,13 @@ static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
 }
 
 // ─── Fish tank combined card ──────────────────────────────────────────────────
+// Layout: [icon] 鱼缸           28.5°C    (water temp top-right)
+//         ──────────────────────────
+//         [电源][水泵][灯]       (3 buttons in a row)
+//         ──────────────────────────
+//         滤芯              80%   (bar)
+// The fish-tank light moved here from the 灯光 tab — see app_ha.cpp deletion
+// of LIGHTS[].
 static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
                                   const DeviceCard& card, HaView* view)
 {
@@ -500,36 +517,37 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
     lv_obj_align(dv1, LV_ALIGN_TOP_LEFT, pad, 68);
     lv_obj_clear_flag(dv1, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Control buttons: 电源 + 水泵
-    static const char* FISH_EID  = "switch.xiaomi_cn_931286672_m200_on_p_2_1";
-    static const char* PUMP_EID  = "switch.xiaomi_cn_931286672_m200_water_pump_p_2_2";
-    struct FBtn { const char* icon; const char* lbl; const char* eid; bool active; };
-    FBtn fbtns[2] = {
-        {"I/O",           card.is_on   ? "关" : "开", FISH_EID, card.is_on},
-        {LV_SYMBOL_POWER, card.pump_on ? "关" : "开", PUMP_EID, card.pump_on},
+    // Three control buttons: 电源 / 水泵 / 灯
+    static const char* FISH_EID       = "switch.xiaomi_cn_931286672_m200_on_p_2_1";
+    static const char* PUMP_EID       = "switch.xiaomi_cn_931286672_m200_water_pump_p_2_2";
+    static const char* FISH_LIGHT_EID = "light.xiaomi_cn_931286672_m200_s_3_light";
+    struct FBtn { const char* name; const char* eid; bool active; };
+    FBtn fbtns[3] = {
+        {"电源", FISH_EID,       card.is_on},
+        {"水泵", PUMP_EID,       card.pump_on},
+        {"灯光", FISH_LIGHT_EID, card.fish_light_on},
     };
-    // Override first button label to show name + state
     int ctrl_y = 78, ctrl_h = 54, gap = 8;
-    int ctrl_w = (w - pad * 2 - gap) / 2;
-    for (int i = 0; i < 2; i++) {
-        uint32_t btn_bg = fbtns[i].active ? C_CARD_ON : 0x16304C;
+    int ctrl_w = (w - pad * 2 - gap * 2) / 3;
+    // 按钮风格参考落地扇：默认 bg 跟卡片底色同色 + 边框，看起来"只有轮廓"；
+    // 激活态 bg=C_CARD_ON（高亮填充）。
+    auto _border = [](lv_obj_t* b) {
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(0x2A5080), 0);
+    };
+    for (int i = 0; i < 3; i++) {
+        uint32_t btn_bg = fbtns[i].active ? C_CARD_ON : C_CARD;
         uint32_t btn_fg = fbtns[i].active ? 0xFFFFFF : C_TEXT2;
         lv_obj_t* b = _make_card(c, pad + i * (ctrl_w + gap), ctrl_y,
                                   ctrl_w, ctrl_h, btn_bg, 10);
+        _border(b);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
-        const char* name = (i == 0) ? "电源" : "水泵";
-        // icon label (montserrat, top)
-        lv_obj_t* ico = lv_label_create(b);
-        lv_label_set_text(ico, fbtns[i].icon);
-        lv_obj_set_style_text_color(ico, lv_color_hex(btn_fg), 0);
-        lv_obj_set_style_text_font(ico, &lv_font_montserrat_18, 0);
-        lv_obj_align(ico, LV_ALIGN_CENTER, -20, 0);
-        // name label (zh font)
+        // Centered name label only — three buttons too narrow for icon + name side-by-side
         lv_obj_t* nlbl = lv_label_create(b);
-        lv_label_set_text(nlbl, name);
+        lv_label_set_text(nlbl, fbtns[i].name);
         lv_obj_set_style_text_color(nlbl, lv_color_hex(btn_fg), 0);
         lv_obj_set_style_text_font(nlbl, zh_font_sm(), 0);
-        lv_obj_align(nlbl, LV_ALIGN_CENTER, 10, 0);
+        lv_obj_center(nlbl);
         auto* d = new CardData{view, fbtns[i].eid, "toggle", ""};
         _bind_action(b, d);
     }
@@ -595,17 +613,27 @@ static void _build_vacuum_card(lv_obj_t* parent, int x, int y, int w,
 
     // Title
     lv_obj_t* title = lv_label_create(c);
-    lv_label_set_text(title, "扫地机器人");
+    lv_label_set_text(title, card.label.c_str());  // "云鲸逍遥002 Max"
     lv_obj_set_style_text_font(title, zh_font_lg(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad, 14);
 
-    // State (right)
-    lv_obj_t* st = lv_label_create(c);
-    lv_label_set_text(st, card.value.empty() ? "未知" : card.value.c_str());
-    lv_obj_set_style_text_font(st, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(st, lv_color_hex(card.is_on ? C_GREEN : C_TEXT2), 0);
-    lv_obj_align(st, LV_ALIGN_TOP_RIGHT, -pad, 18);
+    // 右上角：充电状态 + 电池百分比
+    if (!card.charge_status.empty() || card.vac_battery_pct >= 0) {
+        char info[32];
+        if (!card.charge_status.empty() && card.vac_battery_pct >= 0)
+            snprintf(info, sizeof(info), "%s · %d%%", card.charge_status.c_str(), card.vac_battery_pct);
+        else if (card.vac_battery_pct >= 0)
+            snprintf(info, sizeof(info), "%d%%", card.vac_battery_pct);
+        else
+            snprintf(info, sizeof(info), "%s", card.charge_status.c_str());
+        lv_obj_t* info_lbl = lv_label_create(c);
+        lv_label_set_text(info_lbl, info);
+        lv_obj_set_style_text_font(info_lbl, zh_font_sm(), 0);
+        uint32_t info_col = (card.charge_status == "已充满" || card.is_on) ? C_GREEN : C_TEXT2;
+        lv_obj_set_style_text_color(info_lbl, lv_color_hex(info_col), 0);
+        lv_obj_align(info_lbl, LV_ALIGN_TOP_RIGHT, -pad, 18);
+    }
 
     // Divider
     lv_obj_t* dv = lv_obj_create(c);
@@ -615,28 +643,37 @@ static void _build_vacuum_card(lv_obj_t* parent, int x, int y, int w,
     lv_obj_align(dv, LV_ALIGN_TOP_LEFT, pad, 62);
     lv_obj_clear_flag(dv, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 2×2 control buttons: 开始 / 暂停 / 回充 / 定位
-    struct VBtn { const char* lbl; const char* action; };
-    static const VBtn vbtns[4] = {
-        {"开始", "vac_start"}, {"暂停", "vac_pause"},
-        {"回充", "vac_dock"},  {"定位", "vac_locate"},
+    // 4 buttons in 2×2 grid: 开始 / 暂停 / 召回 / 童锁
+    // 召回 = vacuum.return_to_base；童锁 = switch.toggle (米家 switch entity)
+    struct VBtn { const char* name; const char* action; bool active; };
+    VBtn vbtns[4] = {
+        {"开始", "vac_start",      card.is_on},
+        {"暂停", "vac_pause",      card.value == "已暂停"},
+        {"召回", "vac_dock",       false},  // 一次性动作，无 active 状态
+        {"童锁", "vac_child_lock", card.child_lock_on},
     };
-    int gap = 8, btn_h = 56;
-    int btn_w = (w - pad * 2 - gap) / 2;
-    int start_y = 78;
-    for (int i = 0; i < 4; i++) {
-        int bx = pad + (i % 2) * (btn_w + gap);
-        int by = start_y + (i / 2) * (btn_h + gap);
-        bool hi = (i == 0 && card.is_on);  // highlight 开始 while cleaning
-        lv_obj_t* b = _make_card(c, bx, by, btn_w, btn_h, hi ? C_CARD_ON : 0x16304C, 10);
+    int gap = 8, ctrl_h = 54;
+    int ctrl_y0 = 78, ctrl_y1 = ctrl_y0 + ctrl_h + gap;
+    int ctrl_w = (w - pad * 2 - gap) / 2;
+    // 按钮风格参考落地扇：默认只有边框（bg 跟卡片底色同色），激活时填充高亮
+    auto _border = [](lv_obj_t* b) {
         lv_obj_set_style_border_width(b, 1, 0);
         lv_obj_set_style_border_color(b, lv_color_hex(0x2A5080), 0);
+    };
+    for (int i = 0; i < 4; i++) {
+        int row = i / 2, col = i % 2;
+        int by  = (row == 0) ? ctrl_y0 : ctrl_y1;
+        uint32_t btn_bg = vbtns[i].active ? C_CARD_ON : C_CARD;
+        uint32_t btn_fg = vbtns[i].active ? 0xFFFFFF : C_TEXT2;
+        lv_obj_t* b = _make_card(c, pad + col * (ctrl_w + gap), by,
+                                  ctrl_w, ctrl_h, btn_bg, 10);
+        _border(b);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_t* bl = lv_label_create(b);
-        lv_label_set_text(bl, vbtns[i].lbl);
-        lv_obj_set_style_text_font(bl, zh_font_lg(), 0);
-        lv_obj_set_style_text_color(bl, lv_color_hex(hi ? 0xFFFFFF : C_TEXT), 0);
-        lv_obj_center(bl);
+        lv_obj_t* nlbl = lv_label_create(b);
+        lv_label_set_text(nlbl, vbtns[i].name);
+        lv_obj_set_style_text_color(nlbl, lv_color_hex(btn_fg), 0);
+        lv_obj_set_style_text_font(nlbl, zh_font_sm(), 0);
+        lv_obj_center(nlbl);
         auto* d = new CardData{view, card.entity_id, vbtns[i].action, ""};
         _bind_action(b, d);
     }
@@ -764,6 +801,85 @@ static void _build_printer_card(lv_obj_t* parent, int x, int y, int w,
     }
 }
 
+// ─── Lenovo L100DW printer (compact status + cartridge) ──────────────────────
+// HA only exposes 2 entities for this printer: sensor.lenovo_l100dw
+// (device_class=enum, state: idle/printing/stopped) and
+// sensor.lenovo_l100dw_black_cartridge (single black toner %). No colors.
+// Compact 1-row layout sized to match sensor cards.
+static void _build_lenovo_printer_card(lv_obj_t* parent, int x, int y, int w,
+                                        const DeviceCard& card)
+{
+    int pad = 14;
+    lv_obj_t* c = _make_card(parent, x, y, w, CARD_H, C_CARD);
+    _add_shadow(c);
+
+    // Title
+    lv_obj_t* title = lv_label_create(c);
+    lv_label_set_text(title, "Lenovo L100DW");
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad, 14);
+
+    // Status (right) — card.value already holds the Chinese label from app_ha.cpp
+    if (card.is_offline) {
+        lv_obj_t* off = lv_label_create(c);
+        lv_label_set_text(off, "未连接");
+        lv_obj_set_style_text_font(off, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(off, lv_color_hex(C_RED), 0);
+        lv_obj_align(off, LV_ALIGN_TOP_RIGHT, -pad, 14);
+        return;
+    }
+
+    lv_obj_t* st = lv_label_create(c);
+    lv_label_set_text(st, card.value.c_str());
+    lv_obj_set_style_text_font(st, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(st, lv_color_hex(C_ACCENT), 0);
+    lv_obj_align(st, LV_ALIGN_TOP_RIGHT, -pad, 14);
+
+    // Divider
+    lv_obj_t* dv = lv_obj_create(c);
+    lv_obj_set_size(dv, w - pad * 2, 1);
+    lv_obj_set_style_bg_color(dv, lv_color_hex(0x1C3E62), 0);
+    lv_obj_set_style_border_width(dv, 0, 0);
+    lv_obj_align(dv, LV_ALIGN_TOP_LEFT, pad, 50);
+    lv_obj_clear_flag(dv, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Cartridge percent (right) — same line as the (removed) "黑色墨盒" label
+    // would have been, so it sits clearly above the progress bar.
+    char pbuf[16];
+    snprintf(pbuf, sizeof(pbuf), "%d%%", card.cartridge_pct);
+    lv_obj_t* pct = lv_label_create(c);
+    lv_label_set_text(pct, pbuf);
+    lv_obj_set_style_text_font(pct, &lv_font_montserrat_18, 0);
+    uint32_t pct_col = card.cartridge_pct > 50 ? C_GREEN
+                     : (card.cartridge_pct > 20 ? C_AMBER : C_RED);
+    lv_obj_set_style_text_color(pct, lv_color_hex(pct_col), 0);
+    lv_obj_align(pct, LV_ALIGN_TOP_RIGHT, -pad, 66);
+
+    // Progress bar (full width, below pct). Removed the "黑色墨盒" label —
+    // cbin 最小字号是 20px，用户嫌大；纯 pct + bar 更简洁。
+    int bar_x = pad, bar_y = 86;
+    int bar_w = w - pad * 2, bar_h = 8;
+    lv_obj_t* bar_bg = lv_obj_create(c);
+    lv_obj_set_pos(bar_bg, bar_x, bar_y);
+    lv_obj_set_size(bar_bg, bar_w, bar_h);
+    lv_obj_set_style_bg_color(bar_bg, lv_color_hex(0x16304C), 0);
+    lv_obj_set_style_border_width(bar_bg, 0, 0);
+    lv_obj_set_style_radius(bar_bg, 5, 0);
+    lv_obj_clear_flag(bar_bg, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (card.cartridge_pct > 0) {
+        int fill_w = (bar_w * card.cartridge_pct) / 100;
+        lv_obj_t* bar_fg = lv_obj_create(c);
+        lv_obj_set_pos(bar_fg, bar_x, bar_y);
+        lv_obj_set_size(bar_fg, fill_w, bar_h);
+        lv_obj_set_style_bg_color(bar_fg, lv_color_hex(pct_col), 0);
+        lv_obj_set_style_border_width(bar_fg, 0, 0);
+        lv_obj_set_style_radius(bar_fg, 5, 0);
+        lv_obj_clear_flag(bar_fg, LV_OBJ_FLAG_SCROLLABLE);
+    }
+}
+
 // ─── Fan card ─────────────────────────────────────────────────────────────────
 static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
                               const DeviceCard& card, HaView* view)
@@ -876,7 +992,7 @@ static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
 static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
                                const DeviceCard& card, HaView* view)
 {
-    lv_obj_t* c = _make_card(parent, x, y, w, SONOS_H, C_CARD_ON);
+    lv_obj_t* c = _make_card(parent, x, y, w, SONOS_H, C_CARD);
     _add_shadow(c);
 
     bool playing = card.is_on;
@@ -1023,7 +1139,7 @@ static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
         {LV_SYMBOL_VOLUME_MID, "音量-", "sonos_vol_down", C_TEXT2,  0x16304C},
         {LV_SYMBOL_VOLUME_MAX, "音量+", "sonos_vol_up",   C_TEXT2,  0x16304C},
         {LV_SYMBOL_MUTE,       "静音",  "sonos_mute",     0xFFFFFF, C_AMBER },
-        {LV_SYMBOL_VIDEO,      "TV输入","sonos_tv",       0xFFFFFF, 0x6366F1},
+        {LV_SYMBOL_VIDEO,      "TV输入","sonos_tv",       C_TEXT2,  0x16304C},
     };
     if (!card.muted) {
         CTRL[2].fg = C_TEXT2;
@@ -1049,7 +1165,7 @@ static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
 static void _build_tv_card(lv_obj_t* parent, int x, int y, int w,
                            const DeviceCard& card, HaView* view)
 {
-    lv_obj_t* c = _make_card(parent, x, y, w, TV_H, C_CARD_ON);
+    lv_obj_t* c = _make_card(parent, x, y, w, TV_H, C_CARD);
     _add_shadow(c);
 
     int pad = 14;
@@ -1088,7 +1204,11 @@ static void _build_tv_card(lv_obj_t* parent, int x, int y, int w,
     lv_obj_set_style_text_color(pill_text, lv_color_hex(pill_fg), 0);
     lv_obj_center(pill_text);
 
+    // 输入源 + 正在播放（同一行："输入: ATV   CIBN酷喵"）
     std::string source = card.value.empty() ? "未选择输入源" : ("输入: " + card.value);
+    if (!card.value2.empty()) {
+        source += "   " + card.value2;  // app_name 紧跟输入源
+    }
     lv_obj_t* source_lbl = lv_label_create(c);
     lv_label_set_text(source_lbl, source.c_str());
     lv_obj_set_style_text_font(source_lbl, zh_font_sm(), 0);
@@ -1209,12 +1329,18 @@ static void _layout_cards(lv_obj_t* cont, const std::vector<DeviceCard>& cards,
     if (!sensors.empty()) {
         if (col > 0) { y += small_card_h + GAP; col = 0; }
         y += 4; // small separator gap
-        for (auto& s : sensors) {
+        for (size_t i = 0; i < sensors.size(); i++) {
+            const auto& s = sensors[i];
             if (s.is_printer) {
-                // Printer detail card: two columns wide, on its own row.
+                // 拓竹独占左半行；如果下一个是 lenovo，联想占右半（并排）
                 if (col > 0) { y += small_card_h + GAP; col = 0; }
-                int pw = (cols >= 2) ? (2 * card_w + GAP) : card_w;
+                int pw = card_w;
                 _build_printer_card(cont, PAD, y, pw, s);
+                if (i + 1 < sensors.size() && sensors[i + 1].is_lenovo_printer) {
+                    int rx_x = PAD + pw + GAP;
+                    _build_lenovo_printer_card(cont, rx_x, y, pw, sensors[i + 1]);
+                    i++;  // consume lenovo
+                }
                 y += PRINTER_H + GAP;
                 continue;
             }
@@ -1263,151 +1389,58 @@ static void _layout_device_cards(lv_obj_t* cont, const std::vector<DeviceCard>& 
     }
 }
 
-// ─── Device tab horizontal pages ─────────────────────────────────────────────
-static lv_obj_t* _make_page(lv_obj_t* parent, int page_idx)
+// ─── Device tab (设备): 单页 — sensors grid（含拓竹|联想并排）───────────────────
+// 鱼缸 + 门锁 已移至 家电 tab（不再在设备 tab 渲染，避免重复）。
+// Was a 2-page horizontal layout; page 0 was 落地扇 (now moved to 家电 tab) and is
+// gone, so the device tab collapses to a single vertically scrolling page.
+static void _layout_device_tab(lv_obj_t* cont,
+                                const std::vector<DeviceCard>& /*kitchen*/,
+                                HaView* view,
+                                const std::vector<DeviceCard>& sensors,
+                                const std::vector<DeviceCard>& /*appliance*/)
 {
-    lv_obj_t* p = lv_obj_create(parent);
-    lv_obj_set_pos(p, page_idx * W, 0);
-    lv_obj_set_size(p, W, CONT_H);
-    lv_obj_set_style_bg_opa(p, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(p, 0, 0);
-    lv_obj_set_style_pad_all(p, 0, 0);
-    lv_obj_set_style_pad_bottom(p, GAP, 0);
-    lv_obj_set_scroll_dir(p, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(p, LV_SCROLLBAR_MODE_OFF);
-    return p;
-}
-
-static void _layout_device_pages(lv_obj_t* cont,
-                                   const std::vector<DeviceCard>& kitchen,
-                                   HaView* view,
-                                   const std::vector<DeviceCard>& sensors)
-{
-    // Page 0: fan (top) + small switches
-    lv_obj_t* p0 = _make_page(cont, 0);
-    _layout_device_cards(p0, kitchen, view);
-
-    // Page 1: sensors + fishtank (half) + lock (half) below sensors
-    lv_obj_t* p1 = _make_page(cont, 1);
-
     static constexpr int SENSOR_COLS = 3;
     if (!sensors.empty()) {
-        _layout_cards(p1, {}, view, sensors, SENSOR_COLS, CARD_H);
-    }
-
-    // y position below the last sensor row
-    // _layout_cards with empty cards: sensors start at y=4, each row = CARD_H+GAP
-    int n_sensor_rows = sensors.empty() ? 0
-                      : ((int)sensors.size() + SENSOR_COLS - 1) / SENSOR_COLS;
-    int below_sensors = sensors.empty() ? 0 : 4 + n_sensor_rows * (CARD_H + GAP);
-
-    const DeviceCard* fishtank = nullptr;
-    const DeviceCard* lock     = nullptr;
-    for (const auto& c : kitchen) {
-        if (c.is_fishtank) fishtank = &c;
-        if (c.is_lock)     lock     = &c;
-    }
-    int avail_w = W - 2 * PAD;
-    int half_w  = (avail_w - GAP) / 2;
-    if (fishtank) {
-        _build_fishtank_card(p1, PAD, below_sensors, half_w, *fishtank, view);
-    }
-    if (lock) {
-        _build_lock_card(p1, PAD + half_w + GAP, below_sensors, half_w, FISHTANK_H, *lock, nullptr);
+        _layout_cards(cont, {}, view, sensors, SENSOR_COLS, CARD_H);
     }
 }
 
-static void _device_page_scroll_cb(lv_event_t* e)
-{
-    HaView* self = (HaView*)lv_event_get_user_data(e);
-    lv_obj_t* cont = lv_event_get_target_obj(e);
-    int32_t sx = lv_obj_get_scroll_x(cont);
-    int page = (int)((sx + W / 2) / W);
-    self->_device_tab_page = page;
-    self->_set_dot_page(page);
-}
-
-// ─── Appliance tab (家电): 2×2 — 鱼缸 | 门锁 / 扫地机 | 洗衣机 ────────────────────
+// ─── Appliance tab (家电): 落地扇 (full-width top) / 鱼缸 | 门锁 / 扫地机 | 洗衣机 ──
 static void _layout_appliance(lv_obj_t* cont, const std::vector<DeviceCard>& cards,
                                HaView* view)
 {
     int avail_w = W - 2 * PAD;
     int half_w  = (avail_w - GAP) / 2;
-    int row_h   = FISHTANK_H;            // all four cards share this height
-    int y0 = GAP, y1 = GAP + row_h + GAP;
+    int row_h   = FISHTANK_H;            // 2×2 cards share this height
 
+    const DeviceCard* fan      = nullptr;
     const DeviceCard* fishtank = nullptr;
     const DeviceCard* lock     = nullptr;
     const DeviceCard* vacuum   = nullptr;
     const DeviceCard* washer   = nullptr;
     for (const auto& c : cards) {
-        if      (c.is_fishtank) fishtank = &c;
+        if      (c.is_fan)      fan      = &c;
+        else if (c.is_fishtank) fishtank = &c;
         else if (c.is_lock)     lock     = &c;
         else if (c.is_vacuum)   vacuum   = &c;
         else if (c.is_washer)   washer   = &c;
     }
 
-    int lx = PAD, rx = PAD + half_w + GAP;
-    if (fishtank) _build_fishtank_card(cont, lx, y0, half_w, *fishtank, view);
-    if (lock)     _build_lock_card(cont, rx, y0, half_w, row_h, *lock, nullptr);
-    if (vacuum)   _build_vacuum_card(cont, lx, y1, half_w, *vacuum, view);
-    if (washer)   _build_washer_card(cont, rx, y1, half_w, *washer, view);
-}
+    // 落地扇独占顶部左半（宽 half_w、高 FAN_H=430）
+    int fan_y = GAP;
+    if (fan) _build_fan_card(cont, PAD, fan_y, half_w, *fan, view);
 
-void HaView::_create_page_dots(int n_pages)
-{
-    static constexpr int DOT_W  = 16;
-    static constexpr int DOT_H  = 8;
-    static constexpr int DOT_GAP = 8;
+    // 鱼缸 + 门锁 叠放在落地扇右边（两卡总高 210+8+210=428 ≈ FAN_H 430，与落地扇视觉对齐）
+    int rx = PAD + half_w + GAP;
+    if (fishtank) _build_fishtank_card(cont, rx, fan_y, half_w, *fishtank, view);
+    if (lock)     _build_lock_card(cont, rx, fan_y + row_h + GAP, half_w, row_h, *lock, nullptr);
 
-    int total_w = n_pages * DOT_W + (n_pages - 1) * DOT_GAP;
-    int dot_x   = (W - total_w) / 2;
-    int dot_y   = CONT_H - DOT_H - 10;
-
-    _dot_container = lv_obj_create(_content_area);
-    lv_obj_set_pos(_dot_container, 0, 0);
-    lv_obj_set_size(_dot_container, W, CONT_H);
-    lv_obj_set_style_bg_opa(_dot_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(_dot_container, 0, 0);
-    lv_obj_clear_flag(_dot_container, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(_dot_container, LV_OBJ_FLAG_CLICKABLE);
-
-    _n_page_dots = n_pages;
-    for (int i = 0; i < n_pages && i < MAX_PAGE_DOTS; i++) {
-        lv_obj_t* dot = lv_obj_create(_dot_container);
-        lv_obj_set_size(dot, DOT_W, DOT_H);
-        lv_obj_set_pos(dot, dot_x + i * (DOT_W + DOT_GAP), dot_y);
-        lv_obj_set_style_radius(dot, DOT_H / 2, 0);
-        lv_obj_set_style_border_width(dot, 0, 0);
-        lv_obj_set_style_bg_color(dot, lv_color_hex(0x3A4A5C), 0);
-        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
-        _page_dots[i] = dot;
-    }
-}
-
-void HaView::_set_dot_page(int page)
-{
-    static constexpr int DOT_W_ACTIVE = 24;
-    static constexpr int DOT_W_IDLE   = 16;
-    static constexpr int DOT_H       = 8;
-    static constexpr int DOT_GAP     = 8;
-
-    // Recompute x positions so active (wider) dot doesn't shift siblings
-    // Base layout uses DOT_W_IDLE for all; active dot expands in place.
-    int total_w = _n_page_dots * DOT_W_IDLE + (_n_page_dots - 1) * DOT_GAP;
-    int base_x  = (W - total_w) / 2;
-
-    for (int i = 0; i < _n_page_dots && i < MAX_PAGE_DOTS; i++) {
-        if (!_page_dots[i]) continue;
-        bool active = (i == page);
-        int w = active ? DOT_W_ACTIVE : DOT_W_IDLE;
-        int x = base_x + i * (DOT_W_IDLE + DOT_GAP);
-        lv_obj_set_size(_page_dots[i], w, DOT_H);
-        lv_obj_set_pos(_page_dots[i], x, CONT_H - DOT_H - 10);
-        lv_obj_set_style_bg_color(_page_dots[i],
-            lv_color_hex(active ? C_ACCENT : 0x3A5A7C), 0);
-    }
+    // 扫地机 + 洗衣机 在落地扇下方（家电 tab 垂直滚动）
+    int y0 = GAP + FAN_H + GAP;
+    int y1 = y0 + row_h + GAP;
+    int lx = PAD;
+    if (vacuum)   _build_vacuum_card(cont, lx, y0, half_w, *vacuum, view);
+    if (washer)   _build_washer_card(cont, rx, y0, half_w, *washer, view);
 }
 
 // ─── Init & skeleton ─────────────────────────────────────────────────────────
@@ -1647,12 +1680,6 @@ void HaView::_update_tab(TabPage tab,
 {
     if (_active_tab != tab) return;
 
-    // Save device-tab page before destroying old content
-    if (tab == TabPage::KITCHEN_BATH && _tab_content) {
-        int32_t sx = lv_obj_get_scroll_x(_tab_content);
-        _device_tab_page = (int)((sx + W / 2) / W);
-    }
-
     // Reset all indevs before deleting objects to clear dangling scroll_obj/act_obj
     // pointers that cause use-after-free crashes when the user is mid-scroll.
     {
@@ -1667,13 +1694,6 @@ void HaView::_update_tab(TabPage tab,
     if (_tab_content) {
         lv_obj_delete(_tab_content);
         _tab_content = nullptr;
-    }
-
-    // Dots live on _content_area; delete them when leaving device tab
-    // (they'll be recreated below when on KITCHEN_BATH)
-    if (tab != TabPage::KITCHEN_BATH && _dot_container) {
-        lv_obj_delete(_dot_container);
-        _dot_container = nullptr;
     }
 
     _tab_content = lv_obj_create(_content_area);
@@ -1697,28 +1717,9 @@ void HaView::_update_tab(TabPage tab,
             break;
         }
         case TabPage::KITCHEN_BATH: {
-            lv_obj_set_scroll_dir(_tab_content, LV_DIR_HOR);
-            lv_obj_set_scroll_snap_x(_tab_content, LV_SCROLL_SNAP_START);
-            _layout_device_pages(_tab_content, kitchen, this, sensors);
-            // Register scroll callback to track current page
-            lv_obj_add_event_cb(_tab_content, _device_page_scroll_cb,
-                                LV_EVENT_SCROLL, this);
-            // Restore page position (force layout first so scroll takes effect)
-            lv_obj_update_layout(_tab_content);
-            {
-                int n_pages = 2;  // p0: fan+switches, p1: sensors+fishtank+lock
-                _device_tab_page = std::min(_device_tab_page, n_pages - 1);
-                if (_device_tab_page > 0) {
-                    lv_obj_scroll_to_x(_tab_content, _device_tab_page * W, LV_ANIM_OFF);
-                }
-                // Keep dots alive across rebuilds; just restore z-order (last child = on top)
-                if (!_dot_container) {
-                    _create_page_dots(n_pages);
-                } else {
-                    lv_obj_move_to_index(_dot_container, -1);
-                }
-                _set_dot_page(_device_tab_page);
-            }
+            // 单页：sensors 3 列 + 鱼缸 | 门锁 下一行，垂直滚动
+            lv_obj_set_scroll_dir(_tab_content, LV_DIR_VER);
+            _layout_device_tab(_tab_content, kitchen, this, sensors, appliance);
             break;
         }
         case TabPage::MEDIA: {

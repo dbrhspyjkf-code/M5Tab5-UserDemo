@@ -61,21 +61,25 @@ static const char* SONOS_EID = "media_player.ke_ting_ke_ting";
 
 // 家电 tab
 static const char* VACUUM_EID        = "vacuum.yun_jing_xiao_yao_002_max_cx7_vacuum";
-static const char* WASHER_STATE_EID  = "select.04e2297c8113_runningmode";       // 运行状态
-static const char* WASHER_REMAIN_EID = "sensor.04e2297c8113_remainingtimehh";   // 剩余/预约时间(小时)
-static const char* WASHER_PROG_EID   = "select.04e2297c8113_laundrycycle";      // 洗衣程序
+static const char* VAC_CHILD_LOCK_EID = "switch.yun_jing_xiao_yao_002_max_cx7_child_lock";
+// 米家把剩余时间拆成 HH/MM 两个 sensor，HH 在 <1h 时返回 "0" 字符串 → 不能用。
+// MM 是单一真值；判断"是否在跑"用 binary_sensor 的 laundrycyclestatus。
+// 主显示用 cyclephase（漂洗/洗涤/脱水/烘干等阶段，比 runningmode 启动/暂停 更细）。
+static const char* WASHER_RUNNING_EID = "binary_sensor.04e2297c8113_laundrycyclestatus"; // 程序是否在跑
+static const char* WASHER_PHASE_EID   = "sensor.04e2297c8113_cyclephase";                // 洗涤阶段
+static const char* WASHER_REMAIN_EID  = "sensor.04e2297c8113_remainingtimemm";            // 剩余分钟
+static const char* WASHER_PROG_EID    = "select.04e2297c8113_laundrycycle";               // 洗衣程序
+static const char* WASHER_STATE_EID   = "select.04e2297c8113_runningmode";                // 启动/暂停
 
-// Lights: entity_id → display label
-static const std::pair<const char*, const char*> LIGHTS[] = {
-    {"switch.xiaomi_cn_2102538340_w1_on_p_2_1",  "走廊灯"},
-    {"switch.xiaomi_cn_2143401838_w2_on_p_2_1",  "吸顶灯"},
-    {"switch.xiaomi_cn_2143401838_w2_on_p_3_1",  "筒灯"},
-    {"switch.xiaomi_cn_945769368_w1_on_p_2_1",   "书台灯"},
-    {"switch.xiaomi_cn_945886502_w1_on_p_2_1",   "餐厅灯"},
-    {"switch.xiaomi_cn_946012639_w1_on_p_2_1",   "厨房灯"},
-    {"switch.xiaomi_cn_945954255_w1_on_p_2_1",   "卫生间灯"},
-    {"light.xiaomi_cn_931286672_m200_s_3_light",  "鱼缸灯"},
-};
+// 小米人脸识别智能门锁 X — 三个事件 sensor（state = ISO 时间，unknown 表示未触发）
+static const char* LOCK_OPEN_EID = "event.lumi_cn_1025181916_bmcn05_lock_opened_e_2_1"; // 开锁
+static const char* LOCK_LOCK_EID = "event.lumi_cn_1025181916_bmcn05_lock_locked_e_2_2"; // 上锁
+static const char* LOCK_BACK_EID = "event.lumi_cn_1025181916_bmcn05_back_locking_e_2_3"; // 反锁
+static const char* LOCK_BAT_EID  = "sensor.lumi_cn_1025181916_bmcn05_battery_level_p_4_1";
+
+// (was: Lights entity_id → display label table LIGHTS[]. Removed when the fish-
+// tank light moved into the fish-tank card; the table itself had no remaining
+// consumers — onRunning() builds the lighting tab inline.)
 
 // Devices: entity_id → display label
 static const std::pair<const char*, const char*> DEVICES[] = {
@@ -206,6 +210,8 @@ void AppHA::onOpen()
             else if (action == "vac_pause")  _ha->callService("vacuum", "pause", VACUUM_EID);
             else if (action == "vac_dock")   _ha->callService("vacuum", "return_to_base", VACUUM_EID);
             else if (action == "vac_locate") _ha->callService("vacuum", "locate", VACUUM_EID);
+            else if (action == "vac_child_lock")
+                _ha->callService("switch", "toggle", VAC_CHILD_LOCK_EID);
             else mclog::tagWarn(_tag, "unknown vacuum action: {}", action);
         }
         _last_ui_update = 0;
@@ -250,37 +256,44 @@ static ha_view::DeviceCard _make_fan_card(const char* eid, const char* lbl,
 
 static ha_view::DeviceCard _make_lock_card(HaClient& ha)
 {
-    static const char* EID_OPEN = "event.lumi_cn_1025181916_bmcn05_lock_opened_e_2_1";
-    static const char* EID_LOCK = "event.lumi_cn_1025181916_bmcn05_lock_locked_e_2_2";
-    static const char* EID_BAT  = "sensor.lumi_cn_1025181916_bmcn05_battery_level_p_4_1";
-
     ha_view::DeviceCard c;
-    c.entity_id = EID_OPEN;
+    c.entity_id = LOCK_OPEN_EID;
     c.label     = "智能门锁";
     c.is_lock   = true;
 
     // Battery from dedicated sensor
-    c.battery = ha.getEntityState(EID_BAT);
+    c.battery = ha.getEntityState(LOCK_BAT_EID);
 
-    // Determine locked/unlocked by comparing last event timestamps
-    std::string open_t = ha.getEntityState(EID_OPEN);  // ISO or "unknown"
-    std::string lock_t = ha.getEntityState(EID_LOCK);  // ISO or "unknown"
-    bool locked = true;
-    if (lock_t != "unknown" && open_t != "unknown")
-        locked = (lock_t > open_t);
-    else if (lock_t == "unknown" && open_t != "unknown")
-        locked = false;
-    c.is_on = locked;
+    // Three event entities: open / lock (上锁) / back (反锁). All carry ISO
+    // timestamps in their state ("unknown" means the event hasn't fired yet).
+    // Use the newest of the three to decide state + update time — otherwise a
+    // back-lock from inside is missed and the card sticks on "已开锁".
+    std::string open_t = ha.getEntityState(LOCK_OPEN_EID);
+    std::string lock_t = ha.getEntityState(LOCK_LOCK_EID);
+    std::string back_t = ha.getEntityState(LOCK_BACK_EID);
+    auto is_ts = [](const std::string& s) {
+        return !s.empty() && s != "unknown" && s != "unavailable";
+    };
 
-    // State update time = whichever event is more recent
-    if (lock_t != "unknown" && lock_t > open_t)
-        c.value2 = lock_t;
-    else if (open_t != "unknown")
-        c.value2 = open_t;
+    // Newest of the three
+    std::string latest;
+    if (is_ts(open_t)) latest = open_t;
+    if (is_ts(lock_t) && (latest.empty() || lock_t > latest)) latest = lock_t;
+    if (is_ts(back_t) && (latest.empty() || back_t > latest)) latest = back_t;
 
-    // Last open event: time + operation method
-    c.value = open_t;  // ISO timestamp → formatted in view
-    std::string op = ha.getEntityAttr(EID_OPEN, "操作方式", "");
+    // State: locked unless the newest event is "open"
+    bool open_is_newest =
+        is_ts(open_t)
+        && (!is_ts(lock_t) || open_t > lock_t)
+        && (!is_ts(back_t) || open_t > back_t);
+    c.is_on = !open_is_newest;
+
+    // Update time = newest event's ISO (view layer converts UTC→local)
+    if (is_ts(latest)) c.value2 = latest;
+
+    // Last open event: time + operation method (for the row-3 history)
+    c.value = open_t;
+    std::string op = ha.getEntityAttr(LOCK_OPEN_EID, "操作方式", "");
     if (!op.empty()) {
         int opcode = _safe_stoi(op, 0);
         switch (opcode) {
@@ -362,6 +375,11 @@ static ha_view::DeviceCard _make_tv_card(HaClient& ha)
     c.value        = ha.getEntityAttr(TV_EID, "source", "");
     c.percentage   = _parse_tv_volume_percent(ha.getEntityAttr(TV_EID, "volume_level", "0"));
     c.muted        = (ha.getEntityAttr(TV_EID, "is_volume_muted", "false") == "true");
+    // 正在播放：米家电视用 app_name（如 "CIBN酷喵"）；空闲时为空
+    std::string app_name = ha.getEntityAttr(TV_EID, "app_name", "");
+    if (!app_name.empty() && app_name != "unknown" && app_name != "unavailable") {
+        c.value2 = app_name;
+    }
     return c;
 }
 
@@ -383,8 +401,6 @@ void AppHA::onRunning()
         _ha->getEntityState("switch.xiaomi_cn_945886502_w1_on_p_2_1"), "lightbulb"));
     living.push_back(_make_card("switch.xiaomi_cn_945769368_w1_on_p_2_1", "书台灯",
         _ha->getEntityState("switch.xiaomi_cn_945769368_w1_on_p_2_1"), "lightbulb"));
-    living.push_back(_make_card("light.xiaomi_cn_931286672_m200_s_3_light", "鱼缸灯",
-        _ha->getEntityState("light.xiaomi_cn_931286672_m200_s_3_light"), "lightbulb"));
     living.push_back(_make_card("switch.xiaomi_cn_946012639_w1_on_p_2_1", "厨房灯",
         _ha->getEntityState("switch.xiaomi_cn_946012639_w1_on_p_2_1"), "lightbulb"));
     living.push_back(_make_card("switch.xiaomi_cn_945954255_w1_on_p_2_1", "卫生间灯",
@@ -395,22 +411,27 @@ void AppHA::onRunning()
         _ha->getEntityState("switch.zimi_cn_1067292111_dhkg02_on_p_3_1"), "lightbulb"));
 
     // ── Tab: 设备 ───────────────────────────────────────────────────────────
-    // 插排 moved to page 1 (next to 燃气探测) — see sensors vector below.
-    std::vector<ha_view::DeviceCard> kitchen;
-    kitchen.push_back(_make_fan_card("fan.dmaker_cn_740412216_p5c_s_2_fan", "落地扇", *_ha));
+    // 设备 tab 单页：sensors grid（含拓竹和联想并排）+ 鱼缸 | 门锁。
+    // 鱼缸 + 门锁在 appliance vector 里也用于家电 tab（共用数据）。
+    // 落地扇已在 家电 tab。
+    std::vector<ha_view::DeviceCard> kitchen;  // empty — 设备 tab 改从 sensors + appliance 读
 
-    // ── Tab: 家电 (鱼缸 / 门锁 / 扫地机 / 洗衣机) ─────────────────────────────────
+    // ── Tab: 家电 (落地扇 / 鱼缸 / 门锁 / 扫地机 / 洗衣机) ─────────────────────────────────
     std::vector<ha_view::DeviceCard> appliance;
-    // 鱼缸综合卡片（电源+水泵+水温+滤芯）
+    // 落地扇（独占顶部一行，高 FAN_H=430）— 从 设备 tab 移过来
+    appliance.push_back(_make_fan_card("fan.dmaker_cn_740412216_p5c_s_2_fan", "落地扇", *_ha));
+    // 鱼缸综合卡片（电源 + 水泵 + 灯 + 水温 + 滤芯）。
+    // 灯光按钮在 view.cpp 的鱼缸卡片内（第三个按钮），灯光 tab 不再列它。
     {
         ha_view::DeviceCard fc;
-        fc.entity_id   = "switch.xiaomi_cn_931286672_m200_on_p_2_1";
-        fc.label       = "鱼缸";
-        fc.is_fishtank = true;
-        fc.is_on       = (_ha->getEntityState("switch.xiaomi_cn_931286672_m200_on_p_2_1") == "on");
-        fc.pump_on     = (_ha->getEntityState("switch.xiaomi_cn_931286672_m200_water_pump_p_2_2") == "on");
-        fc.water_temp  = _ha->getEntityState("sensor.xiaomi_cn_931286672_m200_temperature_p_2_6");
-        fc.filter_life = _ha->getEntityState("sensor.xiaomi_cn_931286672_m200_filter_life_level_p_6_1");
+        fc.entity_id     = "switch.xiaomi_cn_931286672_m200_on_p_2_1";
+        fc.label         = "鱼缸";
+        fc.is_fishtank   = true;
+        fc.is_on         = (_ha->getEntityState("switch.xiaomi_cn_931286672_m200_on_p_2_1") == "on");
+        fc.pump_on       = (_ha->getEntityState("switch.xiaomi_cn_931286672_m200_water_pump_p_2_2") == "on");
+        fc.fish_light_on = (_ha->getEntityState("light.xiaomi_cn_931286672_m200_s_3_light") == "on");
+        fc.water_temp    = _ha->getEntityState("sensor.xiaomi_cn_931286672_m200_temperature_p_2_6");
+        fc.filter_life   = _ha->getEntityState("sensor.xiaomi_cn_931286672_m200_filter_life_level_p_6_1");
         appliance.push_back(std::move(fc));
     }
     // 智能门锁（开锁记录每 60 s 拉一次）
@@ -433,11 +454,11 @@ void AppHA::onRunning()
         }
         appliance.push_back(std::move(lock_card));
     }
-    // 扫地机器人
+    // 扫地机器人（云鲸逍遥002 Max）
     {
         ha_view::DeviceCard vc;
         vc.entity_id = VACUUM_EID;
-        vc.label     = "扫地机器人";
+        vc.label     = "云鲸逍遥002 Max";
         vc.is_vacuum = true;
         std::string vs = _ha->getEntityState(VACUUM_EID);
         vc.is_on = (vs == "cleaning");
@@ -448,25 +469,53 @@ void AppHA::onRunning()
         vc.value = vs;
         for (auto& kv : VAC_ST) if (vs == kv.first) { vc.value = kv.second; break; }
         if (vs.empty() || vs == "unavailable" || vs == "unknown") vc.value = "未连接";
+
+        // 充电状态（云鲸集成用 sensor.charing 暴露 enum state）
+        std::string chg = _ha->getEntityState("sensor.yun_jing_xiao_yao_002_max_cx7_charging");
+        if (!chg.empty() && chg != "unknown" && chg != "unavailable") {
+            if      (chg == "charging")      vc.charge_status = "充电中";
+            else if (chg == "fully_charged") vc.charge_status = "已充满";
+            else if (chg == "not_charging")  vc.charge_status = "未充电";
+            else                              vc.charge_status = chg;
+        }
+        vc.vac_battery_pct = _safe_stoi(_ha->getEntityState("sensor.yun_jing_xiao_yao_002_max_cx7_battery"), -1);
+        vc.child_lock_on  = (_ha->getEntityState(VAC_CHILD_LOCK_EID) == "on");
         appliance.push_back(std::move(vc));
     }
     // 洗衣机（只读状态）
+    // HA 米家集成剩余时间是 HH+MM 双 sensor，HH 在 <1h 时返回 "0" → 改用 MM。
+    // 判断"在跑"看 laundrycyclestatus (binary)，避免待机/暂停时误显示"剩余 0 分钟"。
     {
         ha_view::DeviceCard wc;
-        wc.entity_id = WASHER_STATE_EID;
+        wc.entity_id = WASHER_RUNNING_EID;
         wc.label     = "洗衣机";
         wc.is_washer = true;
-        std::string ws = _ha->getEntityState(WASHER_STATE_EID);
-        wc.is_offline = (ws.empty() || ws == "unavailable" || ws == "unknown");
+        std::string running = _ha->getEntityState(WASHER_RUNNING_EID);
+        std::string mode    = _ha->getEntityState(WASHER_STATE_EID);
+        wc.is_offline = (running.empty() || running == "unavailable" || running == "unknown")
+                     && (mode.empty()    || mode    == "unavailable" || mode    == "unknown");
         if (!wc.is_offline) {
-            wc.value = ws;
-            std::string remain = _ha->getEntityState(WASHER_REMAIN_EID);
-            std::string prog   = _ha->getEntityState(WASHER_PROG_EID);
+            std::string phase = _ha->getEntityState(WASHER_PHASE_EID);
+            std::string prog  = _ha->getEntityState(WASHER_PROG_EID);
+            std::string mm    = _ha->getEntityState(WASHER_REMAIN_EID);
+
+            // 主显示：在跑 → 洗涤阶段（漂洗/洗涤/脱水/烘干等）；暂停 → "已暂停"；待机 → "待机"
+            bool is_running = (running == "on");
+            bool is_paused  = (mode    == "暂停");
+            if (is_paused)               wc.value = "已暂停";
+            else if (is_running) {
+                wc.value = (phase.empty() || phase == "无" || phase == "unavailable" || phase == "unknown")
+                           ? std::string("运行中") : phase;
+            } else                       wc.value = "待机";
+
+            // 副标题：洗衣程序名 + （仅在跑且分钟>0 时）剩余 N 分钟
             std::string line;
-            if (!prog.empty() && prog != "unavailable")   line += prog;
-            if (!remain.empty() && remain != "unavailable") {
+            if (!prog.empty() && prog != "unavailable" && prog != "unknown") line = prog;
+            int minutes = 0;
+            try { minutes = std::stoi(mm); } catch (...) {}
+            if (is_running && minutes > 0) {
                 if (!line.empty()) line += "  ";
-                line += "剩余 " + remain + "h";
+                line += "剩余 " + std::to_string(minutes) + " 分钟";
             }
             wc.value2 = line;
         }
@@ -584,6 +633,25 @@ void AppHA::onRunning()
         sensors.push_back(std::move(c));
     }
 
+    // 联想 L100DW 打印机（紧跟拓竹，设备 tab 渲染时两者并排，联想在拓竹右边）
+    {
+        ha_view::DeviceCard lp;
+        lp.entity_id         = "sensor.lenovo_l100dw";
+        lp.label             = "Lenovo L100DW";
+        lp.is_lenovo_printer = true;
+        std::string lpst     = _ha->getEntityState("sensor.lenovo_l100dw");
+        lp.is_offline        = (lpst.empty() || lpst == "unavailable" || lpst == "unknown");
+        if (!lp.is_offline) {
+            static const std::pair<const char*, const char*> LP_ST[] = {
+                {"idle", "空闲"}, {"printing", "打印中"}, {"stopped", "已停止"},
+            };
+            lp.value = lpst;
+            for (auto& kv : LP_ST) if (lpst == kv.first) { lp.value = kv.second; break; }
+            lp.cartridge_pct = _safe_stoi(_ha->getEntityState("sensor.lenovo_l100dw_black_cartridge"), -1);
+        }
+        sensors.push_back(std::move(lp));
+    }
+
     // ── Time & date ──────────────────────────────────────────────────────────
     time_t t  = time(nullptr);
     tm*    lt = localtime(&t);
@@ -632,8 +700,7 @@ void AppHA::_fetch_lock_history_async()
 {
     _start_worker([this]() {
         auto records = _ha->fetchLockHistory({
-            "event.lumi_cn_1025181916_bmcn05_lock_opened_e_2_1",
-            "event.lumi_cn_1025181916_bmcn05_lock_locked_e_2_2",
+            LOCK_OPEN_EID, LOCK_LOCK_EID, LOCK_BACK_EID,
         }, 24, 4);
 
         if (_closing.load()) return;

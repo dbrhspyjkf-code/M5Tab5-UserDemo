@@ -32,6 +32,7 @@ struct DeviceCard {
     // Fishtank combined card
     bool is_fishtank   = false;
     bool pump_on       = false;
+    bool fish_light_on = false; // 鱼缸灯开关（独立于电源/水泵的第三个按钮）
     std::string water_temp;   // fish tank water temperature
     std::string filter_life;  // filter remaining life %
 
@@ -43,11 +44,19 @@ struct DeviceCard {
 
     // Vacuum (扫地机器人): value = state text (Chinese), is_on = cleaning.
     bool is_vacuum = false;
+    std::string charge_status;    // "充电中" / "已充满" / "未充电"（空 = 未知）
+    int vac_battery_pct = -1;     // 0-100, -1 表示未知（避免和门锁 battery 同名）
+    bool child_lock_on = false;    // 童锁开关
     // Washing machine (洗衣机): value = 运行状态, value2 = 剩余/程序; read-only.
     bool is_washer = false;
     // 3D printer detail (拓竹 X1C): percentage = progress %, value = status
     // (Chinese), value2 = multi-line detail (temps / layer / remaining).
     bool is_printer = false;
+
+    // 联想 L100DW 打印机：cartridge_pct = 墨盒百分比, value = 状态(中文映射),
+    // is_offline 复用现有字段。
+    bool is_lenovo_printer = false;
+    int  cartridge_pct = -1;
 
     // Equality over every rendered field, so update() can skip rebuilding a tab
     // whose data hasn't changed (avoids destroying/recreating ~30–50 LVGL
@@ -64,11 +73,16 @@ struct DeviceCard {
             && lock_user == o.lock_user && lock_event2 == o.lock_event2
             && is_tv_player == o.is_tv_player && is_fishtank == o.is_fishtank
             && pump_on == o.pump_on && water_temp == o.water_temp
+            && fish_light_on == o.fish_light_on
             && filter_life == o.filter_life && is_sonos == o.is_sonos
             && muted == o.muted && is_tv == o.is_tv
             && sonos_state == o.sonos_state
             && is_vacuum == o.is_vacuum && is_washer == o.is_washer
-            && is_printer == o.is_printer;
+            && charge_status == o.charge_status && vac_battery_pct == o.vac_battery_pct
+            && child_lock_on == o.child_lock_on
+            && is_printer == o.is_printer
+            && is_lenovo_printer == o.is_lenovo_printer
+            && cartridge_pct == o.cartridge_pct;
     }
     bool operator!=(const DeviceCard& o) const { return !(*this == o); }
 };
@@ -98,10 +112,6 @@ public:
                                         const std::string& value)>;
 
     ActionCb _on_action_fn;  // public for card callbacks
-
-    // Accessible from file-scope LVGL callbacks
-    int       _device_tab_page = 0;
-    void _set_dot_page(int page);
 
     void init(ActionCb on_action);
     void _switch_tab(TabPage tab);  // called by tab button callbacks
@@ -166,18 +176,11 @@ private:
     // Per-tab content containers (recreated on tab switch)
     lv_obj_t* _tab_content  = nullptr;
 
-    // Device tab horizontal page state
-    lv_obj_t* _dot_container   = nullptr;
-    static constexpr int MAX_PAGE_DOTS = 4;
-    lv_obj_t* _page_dots[MAX_PAGE_DOTS] = {};
-    int       _n_page_dots = 0;
-
     void _build_skeleton();
     void _build_header();
     void _build_tab_bar();
     void _rebuild_tab_content(const std::vector<DeviceCard>& cards,
                                const std::vector<DeviceCard>& sensors);
-    void _create_page_dots(int n_pages);
 
     void _update_header(const WeatherInfo& w, const BatteryInfo& battery, bool connected,
                         const std::string& time_str, const std::string& date_str);

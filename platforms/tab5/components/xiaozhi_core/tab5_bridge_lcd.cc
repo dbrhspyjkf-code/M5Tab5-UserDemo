@@ -178,14 +178,16 @@ void Tab5BridgeLcdDisplay::BuildEmotionArea()
 {
     // The face lives directly on the screen (not a small band) so it can wander
     // the WHOLE screen while idle. Resting position is the top band, above chat.
-    // Font-awesome icon scaled 3× (768 = 3× in LVGL 9, 256 = 1×; +50% over 2×).
+    // Font-awesome icon scaled ~2× (512 ≈ 2× in LVGL 9, 256 = 1×). Was 768/3×
+    // but the icon's glyph padding made the bottom get clipped by the chat
+    // scroll area starting at y=152. y=30 keeps the icon fully within 0..152.
     emotion_icon_lbl_ = lv_label_create(scr_);
     lv_obj_set_style_text_font(emotion_icon_lbl_, &font_awesome_30_4, 0);
     lv_obj_set_style_text_color(emotion_icon_lbl_, lv_color_hex(0xFFD700), 0);
     lv_label_set_text(emotion_icon_lbl_, FONT_AWESOME_NEUTRAL);
-    lv_obj_align(emotion_icon_lbl_, LV_ALIGN_TOP_MID, 0, 70);
-    lv_obj_set_style_transform_scale_x(emotion_icon_lbl_, 768, 0);
-    lv_obj_set_style_transform_scale_y(emotion_icon_lbl_, 768, 0);
+    lv_obj_align(emotion_icon_lbl_, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_style_transform_scale_x(emotion_icon_lbl_, 512, 0);
+    lv_obj_set_style_transform_scale_y(emotion_icon_lbl_, 512, 0);
 
     // Idle "screensaver" — drift the face to random spots across the whole
     // screen while idle, and glide back to the top band when a conversation
