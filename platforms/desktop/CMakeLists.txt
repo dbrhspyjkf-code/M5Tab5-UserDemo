@@ -61,7 +61,7 @@ file(GLOB_RECURSE APP_DESKTOP_BUILD_SRCS
     *.cc
     *.c
 )
-list(FILTER APP_DESKTOP_BUILD_SRCS EXCLUDE REGEX "build/.*")
+list(FILTER APP_DESKTOP_BUILD_SRCS EXCLUDE REGEX "build.*/.*")
 add_executable(app_desktop_build ${APP_DESKTOP_BUILD_SRCS} ${APP_LAYER_SRCS})
 target_include_directories(app_desktop_build PUBLIC ${APP_LAYER_INCS})
 target_link_libraries(app_desktop_build PUBLIC

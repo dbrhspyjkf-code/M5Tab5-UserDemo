@@ -293,9 +293,8 @@ void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
     lv_obj_add_flag(_capture_layer, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(_capture_layer, [](lv_event_t* e) {
         auto* self = (AppVoiceInput*)lv_event_get_user_data(e);
+#ifndef PLATFORM_BUILD_DESKTOP
         if (!self || !self->_service) return;
-        // Only act if we're still actively recording. Taps that arrive
-        // after stop() (e.g. user double-taps) are ignored.
         if (self->_service->state() == voice_input::State::Recording) {
             ESP_LOGI("AppVoiceInput", "capture tap: stopping recording");
             self->_service->stop();
@@ -303,6 +302,9 @@ void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
                 lv_label_set_text(self->_status_label, "Recognizing...");
             }
         }
+#else
+        (void)self;
+#endif
     }, LV_EVENT_CLICKED, this);
     // Send the capture layer to the back so the mic and hint stay clickable
     // (the mic is a sibling, the user can still tap it directly).
@@ -310,6 +312,7 @@ void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
     lv_obj_move_foreground(_mic_btn);
     lv_obj_move_foreground(_status_label);
 
+#ifndef PLATFORM_BUILD_DESKTOP
     // Start recording immediately.
     voice_input::Config cfg;
     cfg.max_record_ms = _config.max_record_ms;
@@ -317,6 +320,7 @@ void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
     cfg.stt_response_timeout_ms = _config.stt_response_timeout_ms;
     cfg.opus_frame_duration_ms = _config.opus_frame_duration_ms;
     _service->start(cfg, stt_callback_wrapper);
+#endif
 }
 
 void AppVoiceInput::_updateMicButton() {

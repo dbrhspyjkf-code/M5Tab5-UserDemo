@@ -11,8 +11,34 @@
 
 using namespace ha_view;
 
-LV_FONT_DECLARE(font_zh_18);
-LV_FONT_DECLARE(font_zh_36);
+// Full-coverage Chinese fonts (same as the Claude app) — GB2312 common ~3500
+// glyphs, so HA labels never render as tofu boxes. The old font_zh_18/_36 were
+// subset fonts (~135 chars) that boxed any char outside the subset.
+//   zh_font_lg() — 30px, replaces the old 36px font_zh_36
+//   zh_font_sm() — 20px, replaces the old 18px font_zh_18
+// On device these are cbin blobs used in-place from flash (no big RAM copy);
+// on the desktop sim we fall back to the linked 20px C-array font.
+#ifndef PLATFORM_BUILD_DESKTOP
+#include <cbin_font.h>
+extern const uint8_t font_puhui_common_30_4_bin_start[]
+    asm("_binary_font_puhui_common_30_4_bin_start");
+extern const uint8_t font_puhui_common_20_4_bin_start[]
+    asm("_binary_font_puhui_common_20_4_bin_start");
+static const lv_font_t* zh_font_lg()
+{
+    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
+    return f;
+}
+static const lv_font_t* zh_font_sm()
+{
+    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_20_4_bin_start);
+    return f;
+}
+#else
+extern "C" const lv_font_t font_puhui_20_4;
+static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
+static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
+#endif
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
 static constexpr uint32_t C_BG          = 0x0A1A2E;  // light blue background
@@ -52,6 +78,9 @@ static constexpr int LOCK_H  = 180;  // smart lock card height
 static constexpr int SONOS_H    = 292;  // sonos card (btn_h=70: +32 over original 260)
 static constexpr int TV_H       = 290;  // TV card (btn_h=70: +32 over original 258)
 static constexpr int FISHTANK_H = 210;  // combined fish tank card
+static constexpr int VACUUM_H   = 210;  // 扫地机器人 card (state + 4 buttons)
+static constexpr int WASHER_H   = 210;  // 洗衣机 status card
+static constexpr int PRINTER_H  = 220;  // 拓竹 3D 打印机 detail card
 
 // ─── Forward declarations ────────────────────────────────────────────────────
 static lv_obj_t* _make_card(lv_obj_t* parent, int x, int y, int w, int h,
@@ -166,7 +195,7 @@ static void _add_media_button_content(lv_obj_t* button,
 
     lv_obj_t* txt = lv_label_create(button);
     lv_label_set_text(txt, label);
-    lv_obj_set_style_text_font(txt, &font_zh_36, 0);
+    lv_obj_set_style_text_font(txt, zh_font_lg(), 0);
     lv_obj_set_style_text_color(txt, lv_color_hex(color), 0);
     lv_obj_align(txt, LV_ALIGN_LEFT_MID, 18 + 38 + 12, 0);
 }
@@ -267,7 +296,7 @@ static void _build_device_card(lv_obj_t* parent, int x, int y, int w, int h,
     // Device name (right of icon, vertically centered)
     lv_obj_t* lbl = lv_label_create(c);
     lv_label_set_text(lbl, card.label.c_str());
-    lv_obj_set_style_text_font(lbl, &font_zh_36, 0);
+    lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(lbl, lv_color_hex(card.is_offline ? 0x5A6A7C
                                   : (card.is_on ? C_TEXT : C_TEXT2)), 0);
     lv_obj_set_width(lbl, w - 14 - ic_size - 12 - 18);
@@ -289,7 +318,7 @@ static void _build_device_card(lv_obj_t* parent, int x, int y, int w, int h,
         // tap doesn't pretend to control a device HA can't reach.
         lv_obj_t* off = lv_label_create(c);
         lv_label_set_text(off, "未连接");
-        lv_obj_set_style_text_font(off, &font_zh_18, 0);
+        lv_obj_set_style_text_font(off, zh_font_sm(), 0);
         lv_obj_set_style_text_color(off, lv_color_hex(C_RED), 0);
         lv_obj_align(off, LV_ALIGN_BOTTOM_RIGHT, -12, -10);
     } else {
@@ -308,18 +337,18 @@ static void _build_sensor_card(lv_obj_t* parent, int x, int y, int w, int h,
     _add_shadow(c);
 
     // Room name (top)
-    _make_label(c, card.label.c_str(), C_TEXT2, &font_zh_36,
+    _make_label(c, card.label.c_str(), C_TEXT2, zh_font_lg(),
                 LV_ALIGN_TOP_LEFT, 14, 10);
 
     // Primary value — smaller than title
-    const lv_font_t* val_font = card.is_text_value ? (const lv_font_t*)&font_zh_18 : &lv_font_montserrat_28;
+    const lv_font_t* val_font = card.is_text_value ? (const lv_font_t*)zh_font_sm() : &lv_font_montserrat_28;
     _make_label(c, card.value.empty() ? "--" : card.value.c_str(),
                 C_TEXT, val_font,
                 LV_ALIGN_BOTTOM_LEFT, 14, -10);
 
     // Secondary value — right side
     if (!card.value2.empty()) {
-        const lv_font_t* val2_font = card.is_text_value ? (const lv_font_t*)&font_zh_18 : &lv_font_montserrat_22;
+        const lv_font_t* val2_font = card.is_text_value ? (const lv_font_t*)zh_font_sm() : &lv_font_montserrat_22;
         _make_label(c, card.value2.c_str(), C_ACCENT,
                     val2_font,
                     LV_ALIGN_BOTTOM_RIGHT, -14, -10);
@@ -360,7 +389,7 @@ static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
     // ── Row 1: name (left)  +  battery % (right) ─────────────────────────────
     lv_obj_t* name_lbl = lv_label_create(c);
     lv_label_set_text(name_lbl, card.label.c_str());
-    lv_obj_set_style_text_font(name_lbl, &font_zh_36, 0);
+    lv_obj_set_style_text_font(name_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(name_lbl, lv_color_hex(C_TEXT), 0);
     lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, lx, row1_y);
 
@@ -381,7 +410,7 @@ static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
     // ── Row 2: status (left)  +  update time (right) ─────────────────────────
     lv_obj_t* st_lbl = lv_label_create(c);
     lv_label_set_text(st_lbl, locked ? "已锁定" : "已开锁");
-    lv_obj_set_style_text_font(st_lbl, &font_zh_18, 0);
+    lv_obj_set_style_text_font(st_lbl, zh_font_sm(), 0);
     lv_obj_set_style_text_color(st_lbl, lv_color_hex(locked ? C_ACCENT : C_AMBER), 0);
     lv_obj_align(st_lbl, LV_ALIGN_TOP_LEFT, lx, row2_y);
 
@@ -389,7 +418,7 @@ static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
         std::string upd = "更新: " + _fmt_lock_time(card.value2);
         lv_obj_t* upd_lbl = lv_label_create(c);
         lv_label_set_text(upd_lbl, upd.c_str());
-        lv_obj_set_style_text_font(upd_lbl, &font_zh_18, 0);
+        lv_obj_set_style_text_font(upd_lbl, zh_font_sm(), 0);
         lv_obj_set_style_text_color(upd_lbl, lv_color_hex(C_TEXT2), 0);
         lv_obj_align(upd_lbl, LV_ALIGN_TOP_RIGHT, -rpad, row2_y);
     }
@@ -402,7 +431,7 @@ static void _build_lock_card(lv_obj_t* parent, int x, int y, int w, int h,
         if (txt.empty()) return;
         lv_obj_t* lbl = lv_label_create(c);
         lv_label_set_text(lbl, txt.c_str());
-        lv_obj_set_style_text_font(lbl, &font_zh_18, 0);
+        lv_obj_set_style_text_font(lbl, zh_font_sm(), 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(primary ? C_TEXT : C_TEXT2), 0);
         lv_obj_set_width(lbl, w - lx - rpad);
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
@@ -448,7 +477,7 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
     // Title
     lv_obj_t* title = lv_label_create(c);
     lv_label_set_text(title, "鱼缸");
-    lv_obj_set_style_text_font(title, &font_zh_36, 0);
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad + ic_size + 12, 18);
 
@@ -499,7 +528,7 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
         lv_obj_t* nlbl = lv_label_create(b);
         lv_label_set_text(nlbl, name);
         lv_obj_set_style_text_color(nlbl, lv_color_hex(btn_fg), 0);
-        lv_obj_set_style_text_font(nlbl, &font_zh_18, 0);
+        lv_obj_set_style_text_font(nlbl, zh_font_sm(), 0);
         lv_obj_align(nlbl, LV_ALIGN_CENTER, 10, 0);
         auto* d = new CardData{view, fbtns[i].eid, "toggle", ""};
         _bind_action(b, d);
@@ -519,7 +548,7 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
 
         lv_obj_t* fl = lv_label_create(c);
         lv_label_set_text(fl, "滤芯");
-        lv_obj_set_style_text_font(fl, &font_zh_18, 0);
+        lv_obj_set_style_text_font(fl, zh_font_sm(), 0);
         lv_obj_set_style_text_color(fl, lv_color_hex(C_TEXT2), 0);
         lv_obj_align(fl, LV_ALIGN_TOP_LEFT, pad, 154);
 
@@ -556,6 +585,185 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
     }
 }
 
+// ─── Vacuum card (扫地机器人) ───────────────────────────────────────────────────
+static void _build_vacuum_card(lv_obj_t* parent, int x, int y, int w,
+                                const DeviceCard& card, HaView* view)
+{
+    int pad = 14;
+    lv_obj_t* c = _make_card(parent, x, y, w, VACUUM_H, C_CARD);
+    _add_shadow(c);
+
+    // Title
+    lv_obj_t* title = lv_label_create(c);
+    lv_label_set_text(title, "扫地机器人");
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad, 14);
+
+    // State (right)
+    lv_obj_t* st = lv_label_create(c);
+    lv_label_set_text(st, card.value.empty() ? "未知" : card.value.c_str());
+    lv_obj_set_style_text_font(st, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(st, lv_color_hex(card.is_on ? C_GREEN : C_TEXT2), 0);
+    lv_obj_align(st, LV_ALIGN_TOP_RIGHT, -pad, 18);
+
+    // Divider
+    lv_obj_t* dv = lv_obj_create(c);
+    lv_obj_set_size(dv, w - pad * 2, 1);
+    lv_obj_set_style_bg_color(dv, lv_color_hex(0x1C3E62), 0);
+    lv_obj_set_style_border_width(dv, 0, 0);
+    lv_obj_align(dv, LV_ALIGN_TOP_LEFT, pad, 62);
+    lv_obj_clear_flag(dv, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 2×2 control buttons: 开始 / 暂停 / 回充 / 定位
+    struct VBtn { const char* lbl; const char* action; };
+    static const VBtn vbtns[4] = {
+        {"开始", "vac_start"}, {"暂停", "vac_pause"},
+        {"回充", "vac_dock"},  {"定位", "vac_locate"},
+    };
+    int gap = 8, btn_h = 56;
+    int btn_w = (w - pad * 2 - gap) / 2;
+    int start_y = 78;
+    for (int i = 0; i < 4; i++) {
+        int bx = pad + (i % 2) * (btn_w + gap);
+        int by = start_y + (i / 2) * (btn_h + gap);
+        bool hi = (i == 0 && card.is_on);  // highlight 开始 while cleaning
+        lv_obj_t* b = _make_card(c, bx, by, btn_w, btn_h, hi ? C_CARD_ON : 0x16304C, 10);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(0x2A5080), 0);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* bl = lv_label_create(b);
+        lv_label_set_text(bl, vbtns[i].lbl);
+        lv_obj_set_style_text_font(bl, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(bl, lv_color_hex(hi ? 0xFFFFFF : C_TEXT), 0);
+        lv_obj_center(bl);
+        auto* d = new CardData{view, card.entity_id, vbtns[i].action, ""};
+        _bind_action(b, d);
+    }
+}
+
+// ─── Washer card (洗衣机, read-only status) ──────────────────────────────────────
+static void _build_washer_card(lv_obj_t* parent, int x, int y, int w,
+                                const DeviceCard& card, HaView* /*view*/)
+{
+    int pad = 14;
+    lv_obj_t* c = _make_card(parent, x, y, w, WASHER_H, C_CARD);
+    _add_shadow(c);
+
+    // Title
+    lv_obj_t* title = lv_label_create(c);
+    lv_label_set_text(title, "洗衣机");
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad, 14);
+
+    // Divider
+    lv_obj_t* dv = lv_obj_create(c);
+    lv_obj_set_size(dv, w - pad * 2, 1);
+    lv_obj_set_style_bg_color(dv, lv_color_hex(0x1C3E62), 0);
+    lv_obj_set_style_border_width(dv, 0, 0);
+    lv_obj_align(dv, LV_ALIGN_TOP_LEFT, pad, 50);
+    lv_obj_clear_flag(dv, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (card.is_offline) {
+        lv_obj_t* off = lv_label_create(c);
+        lv_label_set_text(off, "未连接");
+        lv_obj_set_style_text_font(off, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(off, lv_color_hex(C_TEXT2), 0);
+        lv_obj_align(off, LV_ALIGN_CENTER, 0, 20);
+        return;
+    }
+
+    // Running state (big)
+    lv_obj_t* state = lv_label_create(c);
+    lv_label_set_text(state, card.value.empty() ? "待机" : card.value.c_str());
+    lv_obj_set_style_text_font(state, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(state, lv_color_hex(C_ACCENT), 0);
+    lv_obj_align(state, LV_ALIGN_TOP_LEFT, pad, 66);
+
+    // Secondary line (remaining time / program)
+    if (!card.value2.empty()) {
+        lv_obj_t* sub = lv_label_create(c);
+        lv_label_set_text(sub, card.value2.c_str());
+        lv_obj_set_style_text_font(sub, zh_font_sm(), 0);
+        lv_obj_set_style_text_color(sub, lv_color_hex(C_TEXT2), 0);
+        lv_obj_set_width(sub, w - pad * 2);
+        lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
+        lv_obj_align(sub, LV_ALIGN_TOP_LEFT, pad, 116);
+    }
+}
+
+// ─── Printer card (拓竹 X1C, detailed status) ────────────────────────────────────
+static void _build_printer_card(lv_obj_t* parent, int x, int y, int w,
+                                 const DeviceCard& card)
+{
+    int pad = 14;
+    lv_obj_t* c = _make_card(parent, x, y, w, PRINTER_H, C_CARD);
+    _add_shadow(c);
+
+    // Title
+    lv_obj_t* title = lv_label_create(c);
+    lv_label_set_text(title, "拓竹3D打印机-X1CC");
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad, 14);
+
+    // Status (top-right, colored)
+    lv_obj_t* st = lv_label_create(c);
+    lv_label_set_text(st, card.value.empty() ? "--" : card.value.c_str());
+    lv_obj_set_style_text_font(st, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(st, lv_color_hex(card.is_offline ? C_RED : C_ACCENT), 0);
+    lv_obj_align(st, LV_ALIGN_TOP_RIGHT, -pad, 14);
+
+    // Divider
+    lv_obj_t* dv = lv_obj_create(c);
+    lv_obj_set_size(dv, w - pad * 2, 1);
+    lv_obj_set_style_bg_color(dv, lv_color_hex(0x1C3E62), 0);
+    lv_obj_set_style_border_width(dv, 0, 0);
+    lv_obj_align(dv, LV_ALIGN_TOP_LEFT, pad, 50);
+    lv_obj_clear_flag(dv, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (card.is_offline) {
+        lv_obj_t* off = lv_label_create(c);
+        lv_label_set_text(off, "未连接");
+        lv_obj_set_style_text_font(off, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(off, lv_color_hex(C_TEXT2), 0);
+        lv_obj_align(off, LV_ALIGN_CENTER, 0, 20);
+        return;
+    }
+
+    // Progress bar + percentage
+    int bar_w = w - pad * 2 - 80;
+    lv_obj_t* bar = lv_bar_create(c);
+    lv_obj_set_size(bar, bar_w, 16);
+    lv_obj_align(bar, LV_ALIGN_TOP_LEFT, pad, 70);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x1A3A5C), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(C_GREEN), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(bar, 8, LV_PART_MAIN);
+    lv_obj_set_style_radius(bar, 8, LV_PART_INDICATOR);
+    lv_bar_set_value(bar, card.percentage, LV_ANIM_OFF);
+
+    lv_obj_t* pct = lv_label_create(c);
+    char pbuf[16];
+    snprintf(pbuf, sizeof(pbuf), "%d%%", card.percentage);
+    lv_label_set_text(pct, pbuf);
+    lv_obj_set_style_text_font(pct, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(pct, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(pct, LV_ALIGN_TOP_RIGHT, -pad, 68);
+
+    // Multi-line detail (temps / layer / remaining)
+    if (!card.value2.empty()) {
+        lv_obj_t* det = lv_label_create(c);
+        lv_label_set_text(det, card.value2.c_str());
+        lv_obj_set_style_text_font(det, zh_font_sm(), 0);
+        lv_obj_set_style_text_color(det, lv_color_hex(C_TEXT2), 0);
+        lv_obj_set_style_text_line_space(det, 8, 0);
+        lv_obj_set_width(det, w - pad * 2);
+        lv_label_set_long_mode(det, LV_LABEL_LONG_WRAP);
+        lv_obj_align(det, LV_ALIGN_TOP_LEFT, pad, 104);
+    }
+}
+
 // ─── Fan card ─────────────────────────────────────────────────────────────────
 static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
                               const DeviceCard& card, HaView* view)
@@ -566,7 +774,7 @@ static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
     // Title row (no separate power button — power lives in right column row 0)
     lv_obj_t* name_lbl = lv_label_create(c);
     lv_label_set_text(name_lbl, card.label.c_str());
-    lv_obj_set_style_text_font(name_lbl, &font_zh_36, 0);
+    lv_obj_set_style_text_font(name_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(name_lbl, lv_color_hex(C_TEXT), 0);
     lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 14, 12);
 
@@ -601,7 +809,7 @@ static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_t* bl = lv_label_create(b);
         lv_label_set_text(bl, GEARS[i].lbl);
-        lv_obj_set_style_text_font(bl, &font_zh_36, 0);
+        lv_obj_set_style_text_font(bl, zh_font_lg(), 0);
         lv_obj_set_style_text_color(bl, lv_color_hex(hi ? 0xFFFFFF : C_TEXT2), 0);
         lv_obj_center(bl);
         auto* dg = new CardData{view, card.entity_id, "set_percentage",
@@ -618,7 +826,7 @@ static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
         lv_obj_t* pl = lv_label_create(pw);
         // Show current state (not the action): running → highlighted "ON".
         lv_label_set_text(pl, card.is_on ? "ON" : "OFF");
-        lv_obj_set_style_text_font(pl, &font_zh_36, 0);
+        lv_obj_set_style_text_font(pl, zh_font_lg(), 0);
         lv_obj_set_style_text_color(pl, lv_color_hex(card.is_on ? 0xFFFFFF : C_TEXT2), 0);
         lv_obj_center(pl);
         auto* dpower = new CardData{view, card.entity_id, "toggle", ""};
@@ -635,7 +843,7 @@ static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
         lv_obj_add_flag(mb, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_t* ml = lv_label_create(mb);
         lv_label_set_text(ml, "自然风");
-        lv_obj_set_style_text_font(ml, &font_zh_36, 0);
+        lv_obj_set_style_text_font(ml, zh_font_lg(), 0);
         lv_obj_set_style_text_color(ml, lv_color_hex(hi ? 0xFFFFFF : C_TEXT2), 0);
         lv_obj_center(ml);
         // Toggle: if already in 自然风, switch back to 直吹风
@@ -655,7 +863,7 @@ static void _build_fan_card(lv_obj_t* parent, int x, int y, int w,
         lv_obj_add_flag(ob, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_t* ol = lv_label_create(ob);
         lv_label_set_text(ol, card.oscillating ? "摇头  ●" : "摇头  ○");
-        lv_obj_set_style_text_font(ol, &font_zh_36, 0);
+        lv_obj_set_style_text_font(ol, zh_font_lg(), 0);
         lv_obj_set_style_text_color(ol, lv_color_hex(card.oscillating ? 0xFFFFFF : C_TEXT2), 0);
         lv_obj_center(ol);
         std::string new_osc = card.oscillating ? "false" : "true";
@@ -693,7 +901,7 @@ static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
     // Title
     lv_obj_t* title = lv_label_create(c);
     lv_label_set_text(title, "SONOS 客厅");
-    lv_obj_set_style_text_font(title, &font_zh_36, 0);
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad + ref_w + 12, 18);
 
@@ -742,7 +950,7 @@ static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
     lv_obj_t* pill = _make_card(c, pad, 70, pill_w, pill_h, pill_bg, pill_h / 2);
     lv_obj_t* pill_text = lv_label_create(pill);
     lv_label_set_text(pill_text, state_lbl);
-    lv_obj_set_style_text_font(pill_text, &font_zh_18, 0);
+    lv_obj_set_style_text_font(pill_text, zh_font_sm(), 0);
     lv_obj_set_style_text_color(pill_text, lv_color_hex(pill_fg), 0);
     lv_obj_center(pill_text);
 
@@ -764,7 +972,7 @@ static void _build_sonos_card(lv_obj_t* parent, int x, int y, int w,
     if (!content.empty()) {
         lv_obj_t* cl = lv_label_create(c);
         lv_label_set_text(cl, content.c_str());
-        lv_obj_set_style_text_font(cl, &font_zh_18, 0);
+        lv_obj_set_style_text_font(cl, zh_font_sm(), 0);
         lv_obj_set_style_text_color(cl, lv_color_hex(C_TEXT), 0);
         lv_obj_set_width(cl, w - pad * 2 - pill_w - 12);
         lv_label_set_long_mode(cl, LV_LABEL_LONG_CLIP);
@@ -859,7 +1067,7 @@ static void _build_tv_card(lv_obj_t* parent, int x, int y, int w,
 
     lv_obj_t* title = lv_label_create(c);
     lv_label_set_text(title, "电视");
-    lv_obj_set_style_text_font(title, &font_zh_36, 0);
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad + ic_size + 12, 18);
 
@@ -876,14 +1084,14 @@ static void _build_tv_card(lv_obj_t* parent, int x, int y, int w,
     lv_obj_t* pill = _make_card(c, pad, 70, 70, 26, pill_bg, 13);
     lv_obj_t* pill_text = lv_label_create(pill);
     lv_label_set_text(pill_text, card.is_on ? "开" : "关");
-    lv_obj_set_style_text_font(pill_text, &font_zh_18, 0);
+    lv_obj_set_style_text_font(pill_text, zh_font_sm(), 0);
     lv_obj_set_style_text_color(pill_text, lv_color_hex(pill_fg), 0);
     lv_obj_center(pill_text);
 
     std::string source = card.value.empty() ? "未选择输入源" : ("输入: " + card.value);
     lv_obj_t* source_lbl = lv_label_create(c);
     lv_label_set_text(source_lbl, source.c_str());
-    lv_obj_set_style_text_font(source_lbl, &font_zh_18, 0);
+    lv_obj_set_style_text_font(source_lbl, zh_font_sm(), 0);
     lv_obj_set_style_text_color(source_lbl, lv_color_hex(C_TEXT), 0);
     lv_obj_set_width(source_lbl, w - pad * 2 - 90);
     lv_label_set_long_mode(source_lbl, LV_LABEL_LONG_CLIP);
@@ -1002,8 +1210,21 @@ static void _layout_cards(lv_obj_t* cont, const std::vector<DeviceCard>& cards,
         if (col > 0) { y += small_card_h + GAP; col = 0; }
         y += 4; // small separator gap
         for (auto& s : sensors) {
+            if (s.is_printer) {
+                // Printer detail card: two columns wide, on its own row.
+                if (col > 0) { y += small_card_h + GAP; col = 0; }
+                int pw = (cols >= 2) ? (2 * card_w + GAP) : card_w;
+                _build_printer_card(cont, PAD, y, pw, s);
+                y += PRINTER_H + GAP;
+                continue;
+            }
             int x = PAD + col * (card_w + GAP);
-            _build_sensor_card(cont, x, y, card_w, small_card_h, s);
+            if (s.is_sensor) {
+                _build_sensor_card(cont, x, y, card_w, small_card_h, s);
+            } else {
+                // Controllable switch (e.g. 插排) mixed into the grid.
+                _build_device_card(cont, x, y, card_w, small_card_h, s, view);
+            }
             col++;
             if (col >= cols) { col = 0; y += small_card_h + GAP; }
         }
@@ -1104,6 +1325,33 @@ static void _device_page_scroll_cb(lv_event_t* e)
     int page = (int)((sx + W / 2) / W);
     self->_device_tab_page = page;
     self->_set_dot_page(page);
+}
+
+// ─── Appliance tab (家电): 2×2 — 鱼缸 | 门锁 / 扫地机 | 洗衣机 ────────────────────
+static void _layout_appliance(lv_obj_t* cont, const std::vector<DeviceCard>& cards,
+                               HaView* view)
+{
+    int avail_w = W - 2 * PAD;
+    int half_w  = (avail_w - GAP) / 2;
+    int row_h   = FISHTANK_H;            // all four cards share this height
+    int y0 = GAP, y1 = GAP + row_h + GAP;
+
+    const DeviceCard* fishtank = nullptr;
+    const DeviceCard* lock     = nullptr;
+    const DeviceCard* vacuum   = nullptr;
+    const DeviceCard* washer   = nullptr;
+    for (const auto& c : cards) {
+        if      (c.is_fishtank) fishtank = &c;
+        else if (c.is_lock)     lock     = &c;
+        else if (c.is_vacuum)   vacuum   = &c;
+        else if (c.is_washer)   washer   = &c;
+    }
+
+    int lx = PAD, rx = PAD + half_w + GAP;
+    if (fishtank) _build_fishtank_card(cont, lx, y0, half_w, *fishtank, view);
+    if (lock)     _build_lock_card(cont, rx, y0, half_w, row_h, *lock, nullptr);
+    if (vacuum)   _build_vacuum_card(cont, lx, y1, half_w, *vacuum, view);
+    if (washer)   _build_washer_card(cont, rx, y1, half_w, *washer, view);
 }
 
 void HaView::_create_page_dots(int n_pages)
@@ -1259,7 +1507,7 @@ void HaView::_build_header()
     // Date — to the right of the time, same 36px height as time, black
     _lbl_date = lv_label_create(hdr);
     lv_label_set_text(_lbl_date, "");
-    lv_obj_set_style_text_font(_lbl_date, &font_zh_36, 0);
+    lv_obj_set_style_text_font(_lbl_date, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_lbl_date, lv_color_hex(C_TEXT2), 0);
     lv_obj_align(_lbl_date, LV_ALIGN_LEFT_MID, PAD + 4 + 110, 0);
 
@@ -1271,7 +1519,7 @@ void HaView::_build_header()
 
     _lbl_weather = lv_label_create(hdr);
     lv_label_set_text(_lbl_weather, "");
-    lv_obj_set_style_text_font(_lbl_weather, &font_zh_36, 0);
+    lv_obj_set_style_text_font(_lbl_weather, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_lbl_weather, lv_color_hex(C_TEXT2), 0);
     lv_obj_set_width(_lbl_weather, 360);
     lv_label_set_long_mode(_lbl_weather, LV_LABEL_LONG_CLIP);
@@ -1289,10 +1537,10 @@ void HaView::_build_tab_bar()
     lv_obj_t* bar = _make_card(_scr, 0, H - TAB_H, W, TAB_H, C_TAB_BG, 0);
     _tab_bar = bar;
 
-    static const char* TAB_LABELS[3] = {"灯光", "设备", "影音"};
-    int tab_w = W / 3;
+    static const char* TAB_LABELS[4] = {"灯光", "设备", "影音", "家电"};
+    int tab_w = W / 4;
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         lv_obj_t* btn = _make_card(bar, i * tab_w + 8, 8,
                                     tab_w - 16, TAB_H - 16,
                                     i == 0 ? C_TAB_ACTIVE : C_TAB_BG, 14);
@@ -1301,7 +1549,7 @@ void HaView::_build_tab_bar()
 
         lv_obj_t* lbl = lv_label_create(btn);
         lv_label_set_text(lbl, TAB_LABELS[i]);
-        lv_obj_set_style_text_font(lbl, &font_zh_36, 0);
+        lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(i == 0 ? C_ACCENT : C_TEXT2), 0);
         lv_obj_center(lbl);
 
@@ -1317,7 +1565,7 @@ void HaView::_switch_tab(TabPage tab)
     if (_active_tab == tab) return;
 
     // Update tab button styles
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         bool active = (i == (int)tab);
         lv_obj_set_style_bg_color(_tab_btns[i],
             lv_color_hex(active ? C_TAB_ACTIVE : C_TAB_BG), 0);
@@ -1346,7 +1594,8 @@ void HaView::_switch_tab(TabPage tab)
     // _switch_tab is called from an LVGL event handler which holds the LVGL
     // lock, so no LvglLockGuard is needed here.
     _update_tab(_active_tab,
-                _living_cache, _kitchen_cache, _media_cache, _sensors_cache);
+                _living_cache, _kitchen_cache, _media_cache, _sensors_cache,
+                _appliance_cache);
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────
@@ -1393,7 +1642,8 @@ void HaView::_update_tab(TabPage tab,
                           const std::vector<DeviceCard>& living,
                           const std::vector<DeviceCard>& kitchen,
                           const std::vector<DeviceCard>& media,
-                          const std::vector<DeviceCard>& sensors)
+                          const std::vector<DeviceCard>& sensors,
+                          const std::vector<DeviceCard>& appliance)
 {
     if (_active_tab != tab) return;
 
@@ -1478,6 +1728,11 @@ void HaView::_update_tab(TabPage tab,
             _layout_cards(_tab_content, media, this, {}, 4, CARD_H, media_gap, media_gap);
             break;
         }
+        case TabPage::APPLIANCE: {
+            lv_obj_set_scroll_dir(_tab_content, LV_DIR_VER);
+            _layout_appliance(_tab_content, appliance, this);
+            break;
+        }
     }
 }
 
@@ -1485,6 +1740,7 @@ void HaView::update(const std::vector<DeviceCard>& living,
                     const std::vector<DeviceCard>& kitchen,
                     const std::vector<DeviceCard>& media,
                     const std::vector<DeviceCard>& sensors,
+                    const std::vector<DeviceCard>& appliance,
                     const WeatherInfo& weather,
                     const BatteryInfo& battery,
                     bool connected,
@@ -1506,14 +1762,18 @@ void HaView::update(const std::vector<DeviceCard>& living,
         case TabPage::MEDIA:
             data_changed = (media != _media_cache);
             break;
+        case TabPage::APPLIANCE:
+            data_changed = (appliance != _appliance_cache);
+            break;
     }
 
     // Refresh the cache so a tab tap between updates can rebuild synchronously
     // using the latest known data instead of stale or empty content.
-    _living_cache  = living;
-    _kitchen_cache = kitchen;
-    _media_cache   = media;
-    _sensors_cache = sensors;
+    _living_cache    = living;
+    _kitchen_cache   = kitchen;
+    _media_cache     = media;
+    _sensors_cache   = sensors;
+    _appliance_cache = appliance;
 
     // App::Update() already holds the LVGL lock while running Mooncake apps.
     // Taking it again here deadlocks on the desktop simulator because the
@@ -1528,7 +1788,7 @@ void HaView::update(const std::vector<DeviceCard>& living,
     uint32_t now = _get_millis();
     bool should_rebuild = _force_rebuild || _last_tab_rebuild_ms == 0 || data_changed;
     if (should_rebuild && !_any_pointer_active()) {
-        _update_tab(_active_tab, living, kitchen, media, sensors);
+        _update_tab(_active_tab, living, kitchen, media, sensors, appliance);
         _last_tab_rebuild_ms = now;
         _force_rebuild = false;
     }

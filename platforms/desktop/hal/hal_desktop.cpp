@@ -9,6 +9,7 @@
 #include <random>
 #include <filesystem>
 #include <thread>
+#include <curl/curl.h>
 
 static const std::string _tag = "hal";
 
@@ -211,4 +212,83 @@ void HalDesktop::uartMonitorSend(std::string msg, bool newLine)
         }
         is_test_thread_running = false;
     }).detach();
+}
+
+// ── HTTP (libcurl) ────────────────────────────────────────────────────────────
+
+static size_t curl_write_cb(char* ptr, size_t size, size_t nmemb, void* userdata)
+{
+    auto* body = static_cast<std::string*>(userdata);
+    body->append(ptr, size * nmemb);
+    return size * nmemb;
+}
+
+hal::HalBase::HttpResponse_t HalDesktop::httpGet(
+    const std::string& url,
+    const std::vector<std::pair<std::string, std::string>>& headers)
+{
+    HttpResponse_t resp;
+    CURL* curl = curl_easy_init();
+    if (!curl) return resp;
+
+    std::string body;
+    struct curl_slist* hdr_list = nullptr;
+    for (auto& [k, v] : headers)
+        hdr_list = curl_slist_append(hdr_list, (k + ": " + v).c_str());
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdr_list);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res == CURLE_OK) {
+        long code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+        resp.status = (int)code;
+        resp.ok     = (resp.status >= 200 && resp.status < 300);
+        resp.body   = std::move(body);
+    }
+
+    curl_slist_free_all(hdr_list);
+    curl_easy_cleanup(curl);
+    return resp;
+}
+
+hal::HalBase::HttpResponse_t HalDesktop::httpPost(
+    const std::string& url,
+    const std::string& post_data,
+    const std::vector<std::pair<std::string, std::string>>& headers)
+{
+    HttpResponse_t resp;
+    CURL* curl = curl_easy_init();
+    if (!curl) return resp;
+
+    std::string body;
+    struct curl_slist* hdr_list = nullptr;
+    for (auto& [k, v] : headers)
+        hdr_list = curl_slist_append(hdr_list, (k + ": " + v).c_str());
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdr_list);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)post_data.size());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 240L);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res == CURLE_OK) {
+        long code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+        resp.status = (int)code;
+        resp.ok     = (resp.status >= 200 && resp.status < 300);
+        resp.body   = std::move(body);
+    }
+
+    curl_slist_free_all(hdr_list);
+    curl_easy_cleanup(curl);
+    return resp;
 }

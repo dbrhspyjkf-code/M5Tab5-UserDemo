@@ -8,15 +8,34 @@
 #include <atomic>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#ifndef PLATFORM_BUILD_DESKTOP
+#include <cbin_font.h>
+#else
+extern "C" const lv_font_t font_puhui_20_4;
+#endif
 
 static const std::string _tag = "app-tools";
+
+// Xiaozhi's puhui common 30px cbin font — GB2312 ~3500 glyphs, XIP from flash.
+static const lv_font_t* zh_font_30()
+{
+#ifndef PLATFORM_BUILD_DESKTOP
+    extern const uint8_t font_puhui_common_30_4_bin_start[] asm("_binary_font_puhui_common_30_4_bin_start");
+    static lv_font_t* f = nullptr;
+    if (!f) f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
+    return f;
+#else
+    return &font_puhui_20_4;
+#endif
+}
 
 // Chinese font defined in app_ha/view/font_zh_36.c (now includes 工具计算器).
 extern lv_font_t font_zh_36;
 
-// Tool tile icons (ARGB8888) defined in app_settings/calc_icon.c & fx_icon.c.
+// Tool tile icons (ARGB8888) defined in app_settings/calc_icon.c & fx_icon.c & unit_icon.c.
 extern const lv_image_dsc_t calc_icon;  // 80x112
 extern const lv_image_dsc_t fx_icon;    // 100x100
+extern const lv_image_dsc_t unit_icon;  // 200x200
 
 // Calculator fonts (Arial Unicode subsets) defined in this app's font_calc_*.c.
 extern const lv_font_t font_calc_big;   // 80px result line
@@ -101,9 +120,10 @@ void AppSettings::onClose()
         lv_obj_delete(_scr);
         _scr = nullptr;
     }
-    _tools_page = _calc_page = _fx_page = nullptr;
+    _tools_page = _calc_page = _fx_page = _unit_page = nullptr;
     _calc_expr_lbl = _calc_res_lbl = nullptr;
     _fx_from_dd = _fx_to_dd = _fx_amt_lbl = _fx_res_lbl = _fx_rate_lbl = nullptr;
+    _unit_cat_dd = _unit_from_dd = _unit_to_dd = _unit_amt_lbl = _unit_res_lbl = _unit_eq_lbl = nullptr;
     if (_close_cb) _close_cb();
 }
 
@@ -119,7 +139,12 @@ void AppSettings::_installSwipeGesture()
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
                     lv_async_call([](void* udata) {
                         auto* app = static_cast<AppSettings*>(udata);
-                        if (app) app->close();
+                        if (!app) return;
+                        // Back out of the deepest open sub-page first.
+                        if (app->_unit_page)   app->_closeUnit();
+                        else if (app->_fx_page) app->_closeFx();
+                        else if (app->_calc_page) app->_closeCalculator();
+                        else                     app->close();
                     }, lv_event_get_user_data(e));
                 }
             }, LV_EVENT_GESTURE, this);
@@ -160,7 +185,9 @@ void AppSettings::_buildToolsPage()
     // Tool card — same style as the HA "灯光" device cards: dark-blue rounded
     // card with a soft shadow, icon on the left, name on the right.
     auto make_tile = [&](int x, const lv_image_dsc_t* img, int img_w,
-                         const char* label, lv_event_cb_t cb) {
+                         const char* label, lv_event_cb_t cb,
+                         int img_scale = 256, int icon_x = 12,
+                         int img_scale_y = -1) {
         lv_obj_t* tile = lv_obj_create(_tools_page);
         lv_obj_set_size(tile, 380, 140);
         lv_obj_align(tile, LV_ALIGN_TOP_LEFT, x, 140);
@@ -179,17 +206,29 @@ void AppSettings::_buildToolsPage()
 
         lv_obj_t* icon = lv_image_create(tile);
         lv_image_set_src(icon, img);
-        lv_obj_align(icon, LV_ALIGN_LEFT_MID, 22, 0);
+        if (img_scale_y > 0) {
+            // Non-uniform scale (e.g. stretch a portrait icon to a square box).
+            lv_image_set_scale_x(icon, img_scale);
+            lv_image_set_scale_y(icon, img_scale_y);
+        } else if (img_scale != 256) {
+            lv_image_set_scale(icon, img_scale);
+        }
+        lv_obj_align(icon, LV_ALIGN_LEFT_MID, icon_x, 0);
 
         lv_obj_t* name = lv_label_create(tile);
         lv_label_set_text(name, label);
         lv_obj_set_style_text_font(name, &font_zh_36, 0);
         lv_obj_set_style_text_color(name, lv_color_hex(C_TEXT), 0);
-        lv_obj_align(name, LV_ALIGN_LEFT_MID, 22 + img_w + 20, 0);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, icon_x + img_w + 16, 0);
     };
 
-    make_tile(80,  &calc_icon, 80,  "计算器", _toolBtn_cb);
-    make_tile(490, &fx_icon,   100, "汇率",   _toolFx_cb);
+    // All three tool icons render at 130×130 to match the 汇率 (fx) icon.
+    //   fx_icon  : 100×100 native × 1.30 (scale 333) → 130×130
+    //   unit_icon: 130×130 native × 1.00             → 130×130
+    //   calc_icon: 130×130 native × 1.00             → 130×130
+    make_tile(35,  &calc_icon, 130, "计算器",  _toolBtn_cb);
+    make_tile(450, &fx_icon,   150, "汇率",    _toolFx_cb,   384);  // 384 = 256 × 1.5x → 150×150
+    make_tile(865, &unit_icon, 130, "单位换算", _toolUnit_cb);
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)
@@ -200,6 +239,11 @@ void AppSettings::_toolBtn_cb(lv_event_t* e)
 void AppSettings::_toolFx_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->_openFx();
+}
+
+void AppSettings::_toolUnit_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->_openUnit();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -217,21 +261,6 @@ void AppSettings::_openCalculator()
     lv_obj_set_style_radius(_calc_page, 0, 0);
     lv_obj_set_style_pad_all(_calc_page, 0, 0);
     lv_obj_clear_flag(_calc_page, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Back button (top-left): returns to the tools page.
-    lv_obj_t* back = lv_obj_create(_calc_page);
-    lv_obj_set_size(back, 64, 56);
-    lv_obj_align(back, LV_ALIGN_TOP_LEFT, 16, 16);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0x2C2C2E), 0);
-    lv_obj_set_style_radius(back, 14, 0);
-    lv_obj_set_style_border_width(back, 0, 0);
-    lv_obj_clear_flag(back, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(back, _back_cb, LV_EVENT_CLICKED, this);
-    lv_obj_t* back_lbl = lv_label_create(back);
-    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
-    lv_obj_center(back_lbl);
-    lv_obj_set_style_text_color(back_lbl, lv_color_hex(0xFFFFFF), 0);
 
     // ── Display: expression (small, grey) over result (big, white), right-aligned.
     _calc_expr_lbl = lv_label_create(_calc_page);
@@ -514,26 +543,12 @@ void AppSettings::_openFx()
     lv_obj_set_style_pad_all(_fx_page, 0, 0);
     lv_obj_clear_flag(_fx_page, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Back button + title.
-    lv_obj_t* back = lv_obj_create(_fx_page);
-    lv_obj_set_size(back, 64, 56);
-    lv_obj_align(back, LV_ALIGN_TOP_LEFT, 16, 16);
-    lv_obj_set_style_bg_color(back, lv_color_hex(C_CARD), 0);
-    lv_obj_set_style_radius(back, 14, 0);
-    lv_obj_set_style_border_width(back, 0, 0);
-    lv_obj_clear_flag(back, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(back, _fxBack_cb, LV_EVENT_CLICKED, this);
-    lv_obj_t* back_lbl = lv_label_create(back);
-    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
-    lv_obj_center(back_lbl);
-    lv_obj_set_style_text_color(back_lbl, lv_color_hex(0xFFFFFF), 0);
-
+    // Title.
     lv_obj_t* title = lv_label_create(_fx_page);
     lv_label_set_text(title, "汇率");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
     lv_obj_set_style_text_color(title, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_text_font(title, &font_zh_36, 0);
+    lv_obj_set_style_text_font(title, zh_font_30(), 0);
 
     // Currency code options for the dropdowns (ASCII → renders in montserrat).
     std::string opts;
@@ -557,15 +572,17 @@ void AppSettings::_openFx()
         lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t* dd = lv_dropdown_create(c);
-        lv_obj_set_size(dd, 168, 60);
+        lv_obj_set_size(dd, 130, 60);
         lv_obj_align(dd, LV_ALIGN_LEFT_MID, 16, 0);
         lv_dropdown_set_options(dd, opts.c_str());
-        lv_obj_set_style_text_font(dd, &lv_font_montserrat_28, 0);
+        lv_obj_set_style_text_font(dd, &lv_font_montserrat_30, 0);
+        lv_obj_t* dd_list = lv_dropdown_get_list(dd);
+        lv_obj_set_style_text_font(dd_list, &lv_font_montserrat_30, 0);
         lv_obj_add_event_cb(dd, _fxDd_cb, LV_EVENT_VALUE_CHANGED, this);
 
         lv_obj_t* val = lv_label_create(c);
         lv_label_set_text(val, "0");
-        lv_obj_set_style_text_font(val, &font_calc_big, 0);
+        lv_obj_set_style_text_font(val, &font_calc_op, 0);
         lv_obj_set_style_text_color(val,
             lv_color_hex(is_from ? CALC_TXT : C_ACCENT), 0);
         lv_obj_align(val, LV_ALIGN_RIGHT_MID, -20, 0);
@@ -600,7 +617,7 @@ void AppSettings::_openFx()
     lv_label_set_text(_fx_rate_lbl, "");
     lv_obj_set_pos(_fx_rate_lbl, CARD_X + 6, 480);
     lv_obj_set_style_text_color(_fx_rate_lbl, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_style_text_font(_fx_rate_lbl, &font_zh_36, 0);
+    lv_obj_set_style_text_font(_fx_rate_lbl, zh_font_30(), 0);
 
     // ── Keypad (right) ───────────────────────────────────────────────────────
     const int KX = 700, KW = 540, GAP = 16, COLS = 3, ROWS = 4;
@@ -785,4 +802,430 @@ void AppSettings::_fxSwap_cb(lv_event_t* e)
     lv_dropdown_set_selected(self->_fx_from_dd, ti);
     lv_dropdown_set_selected(self->_fx_to_dd, fi);
     self->_fxRecompute();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Unit converter (单位换算)
+// ════════════════════════════════════════════════════════════════════════════
+
+struct UnitCat {
+    const char* name;
+    struct Unit {
+        const char* code;       // abbreviation shown in dropdown
+        const char* label;      // full name for the equation line
+        double to_base;         // multiply to get base-unit value
+    };
+    const Unit* units;
+    int n_units;
+};
+
+// Conversion factors relative to the base unit of each category.
+// Temperature is handled separately (not a linear factor).
+
+static const UnitCat::Unit UNITS_LENGTH[] = {
+    {"mm",  "毫米",  0.001},
+    {"cm",  "厘米",  0.01},
+    {"m",   "米",    1.0},
+    {"km",  "千米",  1000.0},
+    {"in",  "英寸",  0.0254},
+    {"ft",  "英尺",  0.3048},
+    {"yd",  "码",    0.9144},
+    {"mi",  "英里",  1609.344},
+};
+static const UnitCat::Unit UNITS_WEIGHT[] = {
+    {"mg",  "毫克",  0.001},
+    {"g",   "克",    1.0},
+    {"kg",  "千克",  1000.0},
+    {"t",   "吨",    1e6},
+    {"oz",  "盎司",  28.3495},
+    {"lb",  "磅",    453.592},
+};
+static const UnitCat::Unit UNITS_TEMP[] = {
+    {"°C",  "摄氏度", 0},
+    {"°F",  "华氏度", 0},
+    {"K",   "开尔文", 0},
+};
+static const UnitCat::Unit UNITS_AREA[] = {
+    {"mm²", "平方毫米", 1e-6},
+    {"cm²", "平方厘米", 0.0001},
+    {"m²",  "平方米",   1.0},
+    {"km²", "平方公里",  1e6},
+    {"ha",  "公顷",     10000.0},
+    {"亩",  "亩",       666.6667},
+    {"acre","英亩",     4046.86},
+    {"ft²", "平方英尺", 0.092903},
+};
+static const UnitCat::Unit UNITS_VOLUME[] = {
+    {"mL",  "毫升",   0.001},
+    {"L",   "升",     1.0},
+    {"m³",  "立方米", 1000.0},
+    {"gal", "加仑",   3.78541},
+    {"cup", "杯",     0.236588},
+};
+static const UnitCat::Unit UNITS_SPEED[] = {
+    {"m/s",  "米/秒",    1.0},
+    {"km/h", "千米/时",  0.277778},
+    {"mph",  "英里/时",  0.44704},
+    {"kn",   "节",       0.514444},
+};
+static const UnitCat::Unit UNITS_DATA[] = {
+    {"B",   "字节", 1.0},
+    {"KB",  "千字节", 1024.0},
+    {"MB",  "兆字节", 1048576.0},
+    {"GB",  "吉字节", 1073741824.0},
+    {"TB",  "太字节", 1099511627776.0},
+};
+
+static const UnitCat UNIT_CATS[] = {
+    {"长度", UNITS_LENGTH, 8},
+    {"重量", UNITS_WEIGHT, 6},
+    {"温度", UNITS_TEMP,   3},
+    {"面积", UNITS_AREA,   8},
+    {"体积", UNITS_VOLUME, 5},
+    {"速度", UNITS_SPEED,  4},
+    {"数据", UNITS_DATA,   5},
+};
+static constexpr int UNIT_CAT_N = sizeof(UNIT_CATS) / sizeof(UNIT_CATS[0]);
+
+static std::string unitFmt(double v)
+{
+    if (fabs(v) < 1e-12) return "0";
+    char buf[32];
+    if (fabs(v) >= 1e9)
+        snprintf(buf, sizeof(buf), "%.8g", v);
+    else if (fabs(v) < 0.001 && v != 0)
+        snprintf(buf, sizeof(buf), "%.8g", v);
+    else
+        snprintf(buf, sizeof(buf), "%.3f", v);
+    // Trim trailing zeros after decimal (but keep at least one decimal)
+    std::string s = buf;
+    if (s.find('.') != std::string::npos) {
+        while (s.size() > 2 && s.back() == '0') s.pop_back();
+        if (s.back() == '.') s.pop_back();
+    }
+    return s;
+}
+
+void AppSettings::_openUnit()
+{
+    if (_tools_page) lv_obj_add_flag(_tools_page, LV_OBJ_FLAG_HIDDEN);
+
+    _unit_page = lv_obj_create(_scr);
+    lv_obj_set_size(_unit_page, 1280, 720);
+    lv_obj_set_pos(_unit_page, 0, 0);
+    lv_obj_set_style_bg_color(_unit_page, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_border_width(_unit_page, 0, 0);
+    lv_obj_set_style_radius(_unit_page, 0, 0);
+    lv_obj_set_style_pad_all(_unit_page, 0, 0);
+    lv_obj_clear_flag(_unit_page, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Title.
+    lv_obj_t* title = lv_label_create(_unit_page);
+    lv_label_set_text(title, "单位换算");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_text_font(title, zh_font_30(), 0);
+
+    // Category dropdown — left-aligned so it doesn't overlap the AC bar.
+    std::string cat_opts;
+    for (int i = 0; i < UNIT_CAT_N; i++) {
+        if (i) cat_opts += "\n";
+        cat_opts += UNIT_CATS[i].name;
+    }
+    _unit_cat_dd = lv_dropdown_create(_unit_page);
+    lv_obj_set_size(_unit_cat_dd, 420, 60);
+    lv_obj_set_pos(_unit_cat_dd, 40, 76);
+    lv_dropdown_set_options(_unit_cat_dd, cat_opts.c_str());
+    lv_obj_set_style_text_font(_unit_cat_dd, zh_font_30(), 0);
+    lv_dropdown_set_selected(_unit_cat_dd, 0);
+    _unit_cat_idx = 0;
+    // The dropdown list is a separate object — must set its font too.
+    lv_obj_t* cat_list = lv_dropdown_get_list(_unit_cat_dd);
+    lv_obj_set_style_text_font(cat_list, zh_font_30(), 0);
+    lv_obj_add_event_cb(_unit_cat_dd, _unitCatDd_cb, LV_EVENT_VALUE_CHANGED, this);
+
+    // ── Conversion panel (left) ──────────────────────────────────────────────
+    const int CARD_X = 40, CARD_W = 580, CARD_H = 120;
+    const int KEY_X = 660, KEY_W = 580;
+
+    _unit_from_dd = nullptr;
+    _unit_to_dd   = nullptr;
+    _unit_amt_lbl = nullptr;
+    _unit_res_lbl = nullptr;
+
+    auto make_card = [&](int y, bool is_from) -> lv_obj_t* {
+        lv_obj_t* c = lv_obj_create(_unit_page);
+        lv_obj_set_size(c, CARD_W, CARD_H);
+        lv_obj_set_pos(c, CARD_X, y);
+        lv_obj_set_style_bg_color(c, lv_color_hex(C_CARD), 0);
+        lv_obj_set_style_radius(c, 20, 0);
+        lv_obj_set_style_border_width(c, 0, 0);
+        lv_obj_set_style_pad_all(c, 0, 0);
+        lv_obj_set_style_shadow_width(c, 18, 0);
+        lv_obj_set_style_shadow_color(c, lv_color_hex(0x5A7A9C), 0);
+        lv_obj_set_style_shadow_opa(c, LV_OPA_30, 0);
+        lv_obj_set_style_shadow_ofs_y(c, 4, 0);
+        lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* dd = lv_dropdown_create(c);
+        lv_obj_set_size(dd, 140, 60);
+        lv_obj_align(dd, LV_ALIGN_LEFT_MID, 16, 0);
+        lv_obj_set_style_text_font(dd, &lv_font_montserrat_30, 0);
+        // Dropdown list needs its own font (otherwise defaults to montserrat).
+        lv_obj_t* dd_list = lv_dropdown_get_list(dd);
+        lv_obj_set_style_text_font(dd_list, &lv_font_montserrat_30, 0);
+
+        lv_obj_t* val = lv_label_create(c);
+        lv_label_set_text(val, "0");
+        lv_obj_set_style_text_font(val, &font_calc_op, 0);
+        lv_obj_set_style_text_color(val,
+            lv_color_hex(is_from ? CALC_TXT : C_ACCENT), 0);
+        lv_obj_align(val, LV_ALIGN_RIGHT_MID, -20, 0);
+
+        if (is_from) {
+            _unit_from_dd = dd;
+            _unit_amt_lbl = val;
+            lv_obj_add_event_cb(dd, _unitFromDd_cb, LV_EVENT_VALUE_CHANGED, this);
+        } else {
+            _unit_to_dd = dd;
+            _unit_res_lbl = val;
+            lv_obj_add_event_cb(dd, _unitToDd_cb, LV_EVENT_VALUE_CHANGED, this);
+        }
+        return c;
+    };
+
+    make_card(180, true);
+    make_card(400, false);
+
+    // Swap button. FROM card bottom = 180+120=300, TO card top = 400.
+    // Gap centre = (300+400)/2 = 350.  64 px button centred at y=318.
+    lv_obj_t* swap = lv_obj_create(_unit_page);
+    lv_obj_set_size(swap, 64, 64);
+    lv_obj_set_pos(swap, CARD_X + CARD_W / 2 - 32, 318);
+    lv_obj_set_style_bg_color(swap, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_radius(swap, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(swap, 3, 0);
+    lv_obj_set_style_border_color(swap, lv_color_hex(C_BG), 0);
+    lv_obj_clear_flag(swap, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(swap, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(swap, _unitSwap_cb, LV_EVENT_CLICKED, this);
+    lv_obj_t* swap_lbl = lv_label_create(swap);
+    lv_label_set_text(swap_lbl, LV_SYMBOL_LOOP);
+    lv_obj_center(swap_lbl);
+    lv_obj_set_style_text_color(swap_lbl, lv_color_hex(0xFFFFFF), 0);
+
+    // Equivalence line.
+    _unit_eq_lbl = lv_label_create(_unit_page);
+    lv_label_set_text(_unit_eq_lbl, "");
+    lv_obj_set_pos(_unit_eq_lbl, CARD_X + 6, 555);
+    lv_obj_set_style_text_color(_unit_eq_lbl, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_font(_unit_eq_lbl, zh_font_30(), 0);
+
+    // ── Keypad (right) ───────────────────────────────────────────────────────
+    const int GAP = 16, COLS = 3, ROWS = 4;
+
+    lv_obj_t* ac = lv_obj_create(_unit_page);
+    lv_obj_set_size(ac, KEY_W, 60);
+    lv_obj_set_pos(ac, KEY_X, 76);
+    lv_obj_set_style_bg_color(ac, lv_color_hex(CALC_FUNC), 0);
+    lv_obj_set_style_radius(ac, 16, 0);
+    lv_obj_set_style_border_width(ac, 0, 0);
+    lv_obj_set_style_bg_color(ac, lv_color_hex(0x6E6E70), LV_STATE_PRESSED);
+    lv_obj_clear_flag(ac, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ac, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_user_data(ac, (void*)"AC");
+    lv_obj_add_event_cb(ac, _unitKey_cb, LV_EVENT_CLICKED, this);
+    lv_obj_t* ac_lbl = lv_label_create(ac);
+    lv_label_set_text(ac_lbl, "AC");
+    lv_obj_center(ac_lbl);
+    lv_obj_set_style_text_color(ac_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(ac_lbl, &font_calc_op, 0);
+
+    struct UKey { const char* label; const char* code; bool sym; };
+    static const UKey UKEYS[4][3] = {
+        {{"7","7",false},{"8","8",false},{"9","9",false}},
+        {{"4","4",false},{"5","5",false},{"6","6",false}},
+        {{"1","1",false},{"2","2",false},{"3","3",false}},
+        {{".",".",false},{"0","0",false},{LV_SYMBOL_BACKSPACE,"DEL",true}},
+    };
+    const int ktop = 150;
+    const int bw = (KEY_W - (COLS - 1) * GAP) / COLS;
+    const int bh = (720 - ktop - 30 - (ROWS - 1) * GAP) / ROWS;
+    for (int r = 0; r < ROWS; r++) {
+        for (int col = 0; col < COLS; col++) {
+            const UKey& k = UKEYS[r][col];
+            lv_obj_t* b = lv_obj_create(_unit_page);
+            lv_obj_set_size(b, bw, bh);
+            lv_obj_set_pos(b, KEY_X + col * (bw + GAP), ktop + r * (bh + GAP));
+            lv_obj_set_style_bg_color(b, lv_color_hex(CALC_NUM), 0);
+            lv_obj_set_style_radius(b, bh / 2, 0);
+            lv_obj_set_style_border_width(b, 0, 0);
+            lv_obj_set_style_bg_color(b, lv_color_hex(0x5A5A5C), LV_STATE_PRESSED);
+            lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_user_data(b, (void*)k.code);
+            lv_obj_add_event_cb(b, _unitKey_cb, LV_EVENT_CLICKED, this);
+            lv_obj_t* l = lv_label_create(b);
+            lv_label_set_text(l, k.label);
+            lv_obj_center(l);
+            lv_obj_set_style_text_color(l, lv_color_hex(CALC_TXT), 0);
+            lv_obj_set_style_text_font(l, k.sym ? &lv_font_montserrat_28 : &font_calc_op, 0);
+        }
+    }
+
+    // Populate unit dropdowns for the initial category.
+    _unitPopulateUnits();
+    _unit_entry = "1";
+    _unitRecompute();
+}
+
+void AppSettings::_unitPopulateUnits()
+{
+    int ci = _unit_cat_idx;
+    if (ci < 0 || ci >= UNIT_CAT_N) ci = 0;
+    const UnitCat& cat = UNIT_CATS[ci];
+
+    std::string opts;
+    for (int i = 0; i < cat.n_units; i++) {
+        if (i) opts += "\n";
+        opts += cat.units[i].code;
+    }
+
+    if (_unit_from_dd) {
+        lv_dropdown_set_options(_unit_from_dd, opts.c_str());
+        lv_dropdown_set_selected(_unit_from_dd, 0);
+    }
+    if (_unit_to_dd) {
+        lv_dropdown_set_options(_unit_to_dd, opts.c_str());
+        lv_dropdown_set_selected(_unit_to_dd, cat.n_units > 1 ? 1 : 0);
+    }
+}
+
+void AppSettings::_unitRecompute()
+{
+    if (!_unit_from_dd || !_unit_to_dd) return;
+    int ci = _unit_cat_idx;
+    if (ci < 0 || ci >= UNIT_CAT_N) ci = 0;
+    const UnitCat& cat = UNIT_CATS[ci];
+
+    int fi = lv_dropdown_get_selected(_unit_from_dd);
+    int ti = lv_dropdown_get_selected(_unit_to_dd);
+    if (fi < 0 || fi >= cat.n_units) fi = 0;
+    if (ti < 0 || ti >= cat.n_units) ti = 0;
+
+    double amt = atof(_unit_entry.c_str());
+
+    double res;
+    if (ci == 2) {
+        // Temperature — special handling
+        // Convert from unit fi to °C, then to unit ti.
+        double celsius;
+        if (fi == 0)      celsius = amt;              // °C → °C
+        else if (fi == 1) celsius = (amt - 32) / 1.8; // °F → °C
+        else              celsius = amt - 273.15;       // K → °C
+
+        if (ti == 0)      res = celsius;
+        else if (ti == 1) res = celsius * 1.8 + 32;
+        else              res = celsius + 273.15;
+    } else {
+        // Linear conversion: value × to_base / from_to_base
+        double f_factor = cat.units[fi].to_base;
+        double t_factor = cat.units[ti].to_base;
+        if (f_factor <= 0) f_factor = 1;
+        res = amt * f_factor / t_factor;
+    }
+
+    if (_unit_amt_lbl) lv_label_set_text(_unit_amt_lbl, group(_unit_entry).c_str());
+    if (_unit_res_lbl) lv_label_set_text(_unit_res_lbl, unitFmt(res).c_str());
+    if (_unit_eq_lbl) {
+        if (ci == 2) {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "%s %s = %s %s",
+                group(_unit_entry).c_str(), cat.units[fi].label,
+                unitFmt(res).c_str(), cat.units[ti].label);
+            lv_label_set_text(_unit_eq_lbl, buf);
+        } else {
+            double f_factor = cat.units[fi].to_base;
+            double t_factor = cat.units[ti].to_base;
+            if (f_factor <= 0) f_factor = 1;
+            double one = f_factor / t_factor;
+            char buf[96];
+            snprintf(buf, sizeof(buf), "1 %s = %s %s",
+                cat.units[fi].label, unitFmt(one).c_str(), cat.units[ti].label);
+            lv_label_set_text(_unit_eq_lbl, buf);
+        }
+    }
+}
+
+void AppSettings::_unitInput(const char* key)
+{
+    std::string k = key;
+    if (k == "AC") {
+        _unit_entry = "0";
+    } else if (k == "DEL") {
+        if (!_unit_entry.empty()) _unit_entry.pop_back();
+        if (_unit_entry.empty()) _unit_entry = "0";
+    } else if (k == ".") {
+        if (_unit_entry.find('.') == std::string::npos) _unit_entry += ".";
+    } else {  // digit
+        if (_unit_entry == "0") _unit_entry = k;
+        else if (_unit_entry.size() < 14) _unit_entry += k;
+    }
+    _unitRecompute();
+}
+
+void AppSettings::_closeUnit()
+{
+    if (_unit_page) {
+        lv_obj_delete(_unit_page);
+        _unit_page = nullptr;
+        _unit_cat_dd = _unit_from_dd = _unit_to_dd = nullptr;
+        _unit_amt_lbl = _unit_res_lbl = _unit_eq_lbl = nullptr;
+    }
+    if (_tools_page) lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ── Static callbacks ───────────────────────────────────────────────────────
+
+void AppSettings::_unitKey_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    lv_obj_t* b = (lv_obj_t*)lv_event_get_target(e);
+    const char* code = (const char*)lv_obj_get_user_data(b);
+    if (code) self->_unitInput(code);
+}
+
+void AppSettings::_unitCatDd_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    self->_unit_cat_idx = lv_dropdown_get_selected(self->_unit_cat_dd);
+    self->_unitPopulateUnits();
+    self->_unit_entry = "1";
+    self->_unitRecompute();
+}
+
+void AppSettings::_unitFromDd_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->_unitRecompute();
+}
+
+void AppSettings::_unitToDd_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->_unitRecompute();
+}
+
+void AppSettings::_unitSwap_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self->_unit_from_dd || !self->_unit_to_dd) return;
+    int fi = lv_dropdown_get_selected(self->_unit_from_dd);
+    int ti = lv_dropdown_get_selected(self->_unit_to_dd);
+    lv_dropdown_set_selected(self->_unit_from_dd, ti);
+    lv_dropdown_set_selected(self->_unit_to_dd, fi);
+    self->_unitRecompute();
+}
+
+void AppSettings::_unitBack_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->_closeUnit();
 }

@@ -6,6 +6,7 @@ static int s_batt_pct = -1;
 static int s_volume   = 60;
 
 void xiaozhi_start_task(void) {}
+bool xiaozhi_is_initialized(void) { return true; }
 void xiaozhi_activate_screen(void) {}
 void xiaozhi_suspend(void) {}
 void xiaozhi_resume(void) {}

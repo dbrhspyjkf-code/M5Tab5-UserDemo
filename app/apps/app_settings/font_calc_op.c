@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 40 px
  * Bpp: 4
- * Opts: --font /Library/Fonts/Arial Unicode.ttf --size 40 --format lvgl --bpp 4 --no-compress --symbols 0123456789.+-=%×÷AC/ -o app/apps/app_settings/font_calc_op.c
+ * Opts: --font /Library/Fonts/Arial Unicode.ttf --size 40 --format lvgl --bpp 4 --no-compress --symbols 0123456789.,+-=%×÷AC/ -o font_calc_op.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
@@ -108,6 +108,12 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xf5,
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
     0xff, 0xf5, 0x0, 0x0, 0x0, 0x0,
+
+    /* U+002C "," */
+    0x6f, 0xff, 0x96, 0xff, 0xf9, 0x6f, 0xff, 0x96,
+    0xff, 0xf9, 0x0, 0x7f, 0x90, 0xa, 0xf7, 0x0,
+    0xef, 0x31, 0xbf, 0xc0, 0x6f, 0xd1, 0x0, 0x60,
+    0x0,
 
     /* U+002D "-" */
     0x58, 0x88, 0x88, 0x88, 0x88, 0x80, 0xbf, 0xff,
@@ -671,24 +677,25 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 0, .adv_w = 0, .box_w = 0, .box_h = 0, .ofs_x = 0, .ofs_y = 0} /* id = 0 reserved */,
     {.bitmap_index = 0, .adv_w = 569, .box_w = 31, .box_h = 30, .ofs_x = 2, .ofs_y = -2},
     {.bitmap_index = 465, .adv_w = 374, .box_w = 20, .box_h = 19, .ofs_x = 2, .ofs_y = 5},
-    {.bitmap_index = 655, .adv_w = 213, .box_w = 12, .box_h = 4, .ofs_x = 1, .ofs_y = 9},
-    {.bitmap_index = 679, .adv_w = 178, .box_w = 5, .box_h = 4, .ofs_x = 3, .ofs_y = 0},
-    {.bitmap_index = 689, .adv_w = 178, .box_w = 12, .box_h = 30, .ofs_x = 0, .ofs_y = -2},
-    {.bitmap_index = 869, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 1149, .adv_w = 356, .box_w = 11, .box_h = 28, .ofs_x = 4, .ofs_y = 0},
-    {.bitmap_index = 1303, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 1583, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 1863, .adv_w = 356, .box_w = 21, .box_h = 28, .ofs_x = 0, .ofs_y = 0},
-    {.bitmap_index = 2157, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 2437, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 2717, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 2997, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 3277, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 3557, .adv_w = 374, .box_w = 20, .box_h = 12, .ofs_x = 2, .ofs_y = 8},
-    {.bitmap_index = 3677, .adv_w = 427, .box_w = 28, .box_h = 28, .ofs_x = -1, .ofs_y = 0},
-    {.bitmap_index = 4069, .adv_w = 462, .box_w = 26, .box_h = 28, .ofs_x = 2, .ofs_y = 0},
-    {.bitmap_index = 4433, .adv_w = 374, .box_w = 18, .box_h = 18, .ofs_x = 3, .ofs_y = 5},
-    {.bitmap_index = 4595, .adv_w = 374, .box_w = 20, .box_h = 16, .ofs_x = 2, .ofs_y = 6}
+    {.bitmap_index = 655, .adv_w = 178, .box_w = 5, .box_h = 10, .ofs_x = 3, .ofs_y = -6},
+    {.bitmap_index = 680, .adv_w = 213, .box_w = 12, .box_h = 4, .ofs_x = 1, .ofs_y = 9},
+    {.bitmap_index = 704, .adv_w = 178, .box_w = 5, .box_h = 4, .ofs_x = 3, .ofs_y = 0},
+    {.bitmap_index = 714, .adv_w = 178, .box_w = 12, .box_h = 30, .ofs_x = 0, .ofs_y = -2},
+    {.bitmap_index = 894, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 1174, .adv_w = 356, .box_w = 11, .box_h = 28, .ofs_x = 4, .ofs_y = 0},
+    {.bitmap_index = 1328, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 1608, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 1888, .adv_w = 356, .box_w = 21, .box_h = 28, .ofs_x = 0, .ofs_y = 0},
+    {.bitmap_index = 2182, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 2462, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 2742, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 3022, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 3302, .adv_w = 356, .box_w = 20, .box_h = 28, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 3582, .adv_w = 374, .box_w = 20, .box_h = 12, .ofs_x = 2, .ofs_y = 8},
+    {.bitmap_index = 3702, .adv_w = 427, .box_w = 28, .box_h = 28, .ofs_x = -1, .ofs_y = 0},
+    {.bitmap_index = 4094, .adv_w = 462, .box_w = 26, .box_h = 28, .ofs_x = 2, .ofs_y = 0},
+    {.bitmap_index = 4458, .adv_w = 374, .box_w = 18, .box_h = 18, .ofs_x = 3, .ofs_y = 5},
+    {.bitmap_index = 4620, .adv_w = 374, .box_w = 20, .box_h = 16, .ofs_x = 2, .ofs_y = 6}
 };
 
 /*---------------------
@@ -696,9 +703,9 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
  *--------------------*/
 
 static const uint16_t unicode_list_0[] = {
-    0x0, 0x6, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd,
-    0xe, 0xf, 0x10, 0x11, 0x12, 0x13, 0x14, 0x18,
-    0x1c, 0x1e, 0xb2, 0xd2
+    0x0, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc,
+    0xd, 0xe, 0xf, 0x10, 0x11, 0x12, 0x13, 0x14,
+    0x18, 0x1c, 0x1e, 0xb2, 0xd2
 };
 
 /*Collect the unicode lists and glyph_id offsets*/
@@ -706,7 +713,7 @@ static const lv_font_fmt_txt_cmap_t cmaps[] =
 {
     {
         .range_start = 37, .range_length = 211, .glyph_id_start = 1,
-        .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 20, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
+        .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 21, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
     }
 };
 
@@ -754,8 +761,8 @@ lv_font_t font_calc_op = {
 #endif
     .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt,    /*Function pointer to get glyph's data*/
     .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,    /*Function pointer to get glyph's bitmap*/
-    .line_height = 30,          /*The maximum line height required by the font*/
-    .base_line = 2,             /*Baseline measured from the bottom of the line*/
+    .line_height = 34,          /*The maximum line height required by the font*/
+    .base_line = 6,             /*Baseline measured from the bottom of the line*/
 #if !(LVGL_VERSION_MAJOR == 6 && LVGL_VERSION_MINOR == 0)
     .subpx = LV_FONT_SUBPX_NONE,
 #endif

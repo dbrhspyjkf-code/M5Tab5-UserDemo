@@ -9,11 +9,28 @@
 #include <nlohmann/json.hpp>
 #include <xiaozhi_ctl.h>
 #include "../app_voice_input/app_voice_input.h"
+#include "../app_ha/ha_weather.h"
 
 static const std::string _tag = "app-home";
 
-// Chinese font defined in app_ha/view/font_zh_36.c
-extern lv_font_t font_zh_36;
+// Full-coverage Chinese font (same as the Claude/HA apps) — GB2312 common
+// ~3500 glyphs, so dialog labels never render as tofu boxes. Replaces the old
+// subset font_zh_36 (~135 chars, which boxed e.g. 其/他). On device it's a cbin
+// blob used in-place from flash; on the desktop sim we fall back to the linked
+// 20px C-array font.
+#ifndef PLATFORM_BUILD_DESKTOP
+#include <cbin_font.h>
+extern const uint8_t font_puhui_common_30_4_bin_start[]
+    asm("_binary_font_puhui_common_30_4_bin_start");
+static const lv_font_t* zh_font_lg()
+{
+    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
+    return f;
+}
+#else
+extern "C" const lv_font_t font_puhui_20_4;
+static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
+#endif
 
 // 28px Chinese font (same visual size as lv_font_montserrat_28) for the status bar.
 extern lv_font_t font_zh_28;
@@ -165,13 +182,17 @@ void AppHome::onOpen()
     lv_label_set_text(_status_wcond, "");
 
     // Helper: make a status-bar item tappable. tag routes the click:
-    // 1 = battery → power dialog, 2 = wifi → network dialog, 3 = gear → quick settings.
+    // 1 = battery → power dialog, 2 = wifi → network dialog,
+    // 3 = gear → quick settings, 4 = weather → weather detail.
     auto make_tappable = [&](lv_obj_t* item, int tag) {
         lv_obj_add_flag(item, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_ext_click_area(item, 18);  // enlarge touch target
         lv_obj_set_user_data(item, (void*)(intptr_t)tag);
         lv_obj_add_event_cb(item, _statusClick_cb, LV_EVENT_CLICKED, this);
     };
+
+    // Tap the center weather block → detailed weather card.
+    make_tappable(wbox, 4);
 
     _status_wifi = lv_label_create(sbar);
     lv_obj_set_style_text_font(_status_wifi, &lv_font_montserrat_28, 0);
@@ -268,26 +289,40 @@ void AppHome::onRunning()
         if (!_weather_temp.empty()) lv_label_set_text(_status_wtemp, _weather_temp.c_str());
         if (!_weather_cond.empty()) lv_label_set_text(_status_wcond, _weather_cond.c_str());
     }
+
+    // Weather-detail popup: worker finished → drop the text into its label.
+    if (_wx_body && _wx_ready.exchange(false)) {
+        std::lock_guard<std::mutex> lk(_weather_mutex);
+        lv_label_set_text(_wx_body, _wx_text.c_str());
+    }
 }
 
 void AppHome::_fetch_weather()
 {
-    // Home has no HA client; pull the weather endpoint directly. ha_host comes
-    // from NVS (same key the HA app uses). The worker only writes strings — it
-    // must not touch LVGL — and onRunning copies them to the labels.
-    std::string host = GetHAL()->getConfig("ha_host", "192.168.1.142");
-    std::string url  = "http://" + host + ":8766/weather?city=Guangzhou";
+    // Home has no HA client, so read the HA weather entity directly via the REST
+    // API (GET /api/states/<entity> with the shared token). The worker only
+    // writes strings — it must not touch LVGL — onRunning copies them to labels.
+    std::string url = "http://" + GetHAL()->getConfig("ha_host", "192.168.1.133")
+                    + ":8123/api/states/" + ha_weather::ENTITY;
     GetHAL()->tryRunDetached([this, url]() {
-        auto resp = GetHAL()->httpGet(url);
+        auto resp = GetHAL()->httpGet(url, {{"Authorization", std::string("Bearer ") + ha_weather::TOKEN}});
         if (!resp.ok) return;
         try {
             auto j = nlohmann::json::parse(resp.body);
-            if (!j.value("ok", false)) return;
-            std::string temp = j.value("temp_c", "");
-            std::string cond = j.value("condition", "");
+            std::string st = j.value("state", "");
+            if (st.empty() || st == "unavailable" || st == "unknown") return;
+            auto attrs = j.value("attributes", nlohmann::json::object());
+            std::string temp;
+            if (attrs.contains("temperature")) {
+                // temperature may be a JSON number (e.g. 28.1) — render whole degrees.
+                double t = attrs["temperature"].is_number()
+                         ? attrs["temperature"].get<double>()
+                         : std::atof(attrs["temperature"].get<std::string>().c_str());
+                temp = std::to_string((int)(t + (t >= 0 ? 0.5 : -0.5)));
+            }
             std::lock_guard<std::mutex> lk(_weather_mutex);
             if (!temp.empty()) _weather_temp = temp + "°C";
-            _weather_cond = cond;
+            _weather_cond = ha_weather::condZh(st);
         } catch (...) {}
     });
 }
@@ -352,7 +387,7 @@ lv_obj_t* mk_btn(lv_obj_t* parent, const char* text, uint32_t color, int w, int 
     lv_label_set_text(l, text);
     lv_obj_center(l);
     lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(l, &font_zh_36, 0);
+    lv_obj_set_style_text_font(l, zh_font_lg(), 0);
     return b;
 }
 }  // namespace
@@ -363,7 +398,8 @@ void AppHome::_closeModal()
     lv_obj_delete_async(_modal);  // safe to call from within the modal's own event
     _modal      = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
-    _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
+    _net_ssid = _net_pass = _net_host = _net_svc = _net_ssid_dd = _net_kb = _net_status = nullptr;
+    _wx_body  = nullptr;
 }
 
 lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
@@ -398,8 +434,109 @@ lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
     lv_label_set_text(t, title);
     lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 22);
     lv_obj_set_style_text_color(t, lv_color_hex(M_ACCENT), 0);
-    lv_obj_set_style_text_font(t, &font_zh_36, 0);
+    lv_obj_set_style_text_font(t, zh_font_lg(), 0);
     return card;
+}
+
+// ─── Weather detail popup (weather tap) ─────────────────────────────────────
+void AppHome::_openWeatherDialog()
+{
+    lv_obj_t* card = _openModal(680, 500, "天气详情");
+    // Slightly translucent so the home wallpaper shows through.
+    lv_obj_set_style_bg_opa(card, LV_OPA_80, 0);
+    // Anchor near the top, just under the 56px status bar (not vertically centered).
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 64);
+
+    _wx_body = lv_label_create(card);
+    lv_obj_set_pos(_wx_body, 32, 74);
+    lv_obj_set_width(_wx_body, 616);
+    lv_obj_set_style_text_color(_wx_body, lv_color_hex(M_LBL), 0);
+    lv_obj_set_style_text_font(_wx_body, zh_font_lg(), 0);
+    lv_obj_set_style_text_line_space(_wx_body, 12, 0);
+    lv_label_set_text(_wx_body, "加载中…");
+
+    _wx_ready = false;
+    _fetchWeatherDetail();
+}
+
+void AppHome::_fetchWeatherDetail()
+{
+    std::string base = "http://" + GetHAL()->getConfig("ha_host", "192.168.1.133") + ":8123";
+    std::string tok  = std::string("Bearer ") + ha_weather::TOKEN;
+    GetHAL()->tryRunDetached([this, base, tok]() {
+        auto dir8 = [](double b) -> const char* {
+            static const char* D[] = {"北","东北","东","东南","南","西南","西","西北"};
+            int i = (int)((b + 22.5) / 45.0) & 7;
+            return D[i];
+        };
+        std::string out;
+        // ── Current conditions ──
+        try {
+            auto resp = GetHAL()->httpGet(base + "/api/states/" + ha_weather::ENTITY,
+                                          {{"Authorization", tok}});
+            if (resp.ok) {
+                auto j = nlohmann::json::parse(resp.body);
+                std::string st = j.value("state", "");
+                auto a = j.value("attributes", nlohmann::json::object());
+                auto num = [&](const char* k, double def = 0) {
+                    return a.contains(k) && a[k].is_number() ? a[k].get<double>() : def;
+                };
+                char line[160];
+                out += ha_weather::condZh(st) + "   " +
+                       std::to_string((int)(num("temperature") + 0.5)) + "°C\n";
+                // Pack three fields per line to keep the card short. met.no via HA
+                // reports wind in mph / pressure in inHg — convert to km/h / hPa.
+                snprintf(line, sizeof(line), "湿度 %d%%   露点 %d°C   紫外线 %.1f\n",
+                         (int)num("humidity"), (int)(num("dew_point") + 0.5), num("uv_index"));
+                out += line;
+                snprintf(line, sizeof(line), "云量 %d%%   风 %s%dkm/h   气压 %dhPa\n",
+                         (int)num("cloud_coverage"), dir8(num("wind_bearing")),
+                         (int)(num("wind_speed") * 1.60934 + 0.5),
+                         (int)(num("pressure") * 33.8639 + 0.5));
+                out += line;
+            }
+        } catch (...) {}
+
+        // ── Daily forecast ──
+        try {
+            auto resp = GetHAL()->httpPost(
+                base + "/api/services/weather/get_forecasts?return_response",
+                std::string("{\"entity_id\":\"") + ha_weather::ENTITY + "\",\"type\":\"daily\"}",
+                {{"Authorization", tok}, {"Content-Type", "application/json"}});
+            if (resp.ok) {
+                auto j = nlohmann::json::parse(resp.body);
+                auto fc = j["service_response"][ha_weather::ENTITY]["forecast"];
+                if (fc.is_array() && !fc.empty()) {
+                    out += "未来几天\n";
+                    int n = 0;
+                    for (auto& f : fc) {
+                        if (n >= 6) break;
+                        std::string dt = f.value("datetime", "");      // YYYY-MM-DD...
+                        std::string md = dt.size() >= 10 ? dt.substr(5, 2) + "/" + dt.substr(8, 2) : dt;
+                        std::string cond = ha_weather::condZh(f.value("condition", ""));
+                        int hi = f.contains("temperature") && f["temperature"].is_number()
+                                 ? (int)(f["temperature"].get<double>() + 0.5) : 0;
+                        int lo = f.contains("templow") && f["templow"].is_number()
+                                 ? (int)(f["templow"].get<double>() + 0.5) : 0;
+                        char cell[64];
+                        snprintf(cell, sizeof(cell), "%s %s %d~%d°", md.c_str(), cond.c_str(), lo, hi);
+                        out += cell;
+                        // Two days per line.
+                        out += (n % 2 == 1) ? "\n" : "    ";
+                        n++;
+                    }
+                    if (n % 2 == 1) out += "\n";
+                }
+            }
+        } catch (...) {}
+
+        if (out.empty()) out = "天气获取失败";
+        {
+            std::lock_guard<std::mutex> lk(_weather_mutex);
+            _wx_text = out;
+        }
+        _wx_ready = true;
+    });
 }
 
 // ─── Power dialog (battery tap) ─────────────────────────────────────────────
@@ -411,7 +548,7 @@ void AppHome::_openPowerDialog()
     lv_label_set_text(q, "是否关机？");
     lv_obj_align(q, LV_ALIGN_TOP_MID, 0, 96);
     lv_obj_set_style_text_color(q, lv_color_hex(M_LBL), 0);
-    lv_obj_set_style_text_font(q, &font_zh_36, 0);
+    lv_obj_set_style_text_font(q, zh_font_lg(), 0);
 
     const int BW = 150, BH = 64, GAP = 24;
     int total = BW * 3 + GAP * 2;
@@ -454,7 +591,7 @@ void AppHome::_openQuickSettings()
         lv_label_set_text(l, name);
         lv_obj_set_pos(l, LBL_X, yy + 6);
         lv_obj_set_style_text_color(l, lv_color_hex(M_LBL), 0);
-        lv_obj_set_style_text_font(l, &font_zh_36, 0);
+        lv_obj_set_style_text_font(l, zh_font_lg(), 0);
 
         lv_obj_t* sl = lv_slider_create(card);
         lv_obj_set_pos(sl, SLD_X, yy + 6);
@@ -514,7 +651,7 @@ void AppHome::_qsBrt_cb(lv_event_t* e)
 void AppHome::_openNetworkDialog()
 {
     auto* hal = GetHAL();
-    lv_obj_t* card = _openModal(820, 540, "网络设置");
+    lv_obj_t* card = _openModal(820, 606, "网络设置");
 
     const int LBL_X = 36, FLD_X = 250, FLD_W = 520, ROW_H = 66;
     int y = 86;
@@ -524,7 +661,7 @@ void AppHome::_openNetworkDialog()
         lv_label_set_text(l, text);
         lv_obj_set_pos(l, LBL_X, yy + 12);
         lv_obj_set_style_text_color(l, lv_color_hex(M_LBL), 0);
-        lv_obj_set_style_text_font(l, &font_zh_36, 0);
+        lv_obj_set_style_text_font(l, zh_font_lg(), 0);
     };
     auto mk_ta = [&](int yy, int w, bool password) -> lv_obj_t* {
         lv_obj_t* ta = lv_textarea_create(card);
@@ -532,7 +669,7 @@ void AppHome::_openNetworkDialog()
         lv_obj_set_size(ta, w, ROW_H - 10);
         lv_textarea_set_one_line(ta, true);
         lv_textarea_set_password_mode(ta, password);
-        lv_obj_set_style_text_font(ta, &font_zh_36, 0);
+        lv_obj_set_style_text_font(ta, zh_font_lg(), 0);
         lv_obj_add_event_cb(ta, _netTa_cb, LV_EVENT_ALL, this);
         return ta;
     };
@@ -554,7 +691,7 @@ void AppHome::_openNetworkDialog()
     lv_obj_set_pos(_net_ssid_dd, FLD_X, y);
     lv_obj_set_size(_net_ssid_dd, FLD_W, ROW_H - 10);
     lv_dropdown_set_options(_net_ssid_dd, "(点扫描)");
-    lv_obj_set_style_text_font(_net_ssid_dd, &font_zh_36, 0);
+    lv_obj_set_style_text_font(_net_ssid_dd, zh_font_lg(), 0);
     lv_obj_add_event_cb(_net_ssid_dd, [](lv_event_t* e) {
         auto* s = static_cast<AppHome*>(lv_event_get_user_data(e));
         char buf[64] = {0};
@@ -569,10 +706,16 @@ void AppHome::_openNetworkDialog()
     lv_textarea_set_text(_net_pass, hal->getConfig("wifi_pass", "").c_str());
     y += ROW_H;
 
-    // HA server host
+    // HA server host (smart-home devices, :8123)
     mk_label("HA 服务器", y);
     _net_host = mk_ta(y, FLD_W, false);
-    lv_textarea_set_text(_net_host, hal->getConfig("ha_host", "192.168.1.142").c_str());
+    lv_textarea_set_text(_net_host, hal->getConfig("ha_host", "192.168.1.133").c_str());
+    y += ROW_H;
+
+    // Other services host (weather :8766 + Claude bridge :8770), runs on the Mac
+    mk_label("其他服务器", y);
+    _net_svc = mk_ta(y, FLD_W, false);
+    lv_textarea_set_text(_net_svc, hal->getConfig("svc_host", "192.168.1.142").c_str());
     y += ROW_H + 6;
 
     // Save + status
@@ -586,7 +729,7 @@ void AppHome::_openNetworkDialog()
     lv_label_set_text(_net_status, "");
     lv_obj_set_pos(_net_status, FLD_X + 280, y + 16);
     lv_obj_set_style_text_color(_net_status, lv_color_hex(0xFFD166), 0);
-    lv_obj_set_style_text_font(_net_status, &font_zh_36, 0);
+    lv_obj_set_style_text_font(_net_status, zh_font_lg(), 0);
 
     // On-screen keyboard — child of the backdrop so it floats above the card.
     _net_kb = lv_keyboard_create(_modal);
@@ -623,6 +766,7 @@ void AppHome::_doNetworkSave()
     std::string ssid = lv_textarea_get_text(_net_ssid);
     std::string pass = lv_textarea_get_text(_net_pass);
     std::string host = lv_textarea_get_text(_net_host);
+    std::string svc  = lv_textarea_get_text(_net_svc);
     if (ssid.empty()) {
         lv_label_set_text(_net_status, "请填写 WiFi 名称");
         return;
@@ -630,8 +774,9 @@ void AppHome::_doNetworkSave()
     hal->setConfig("wifi_ssid", ssid);
     hal->setConfig("wifi_pass", pass);
     if (!host.empty()) hal->setConfig("ha_host", host);
+    if (!svc.empty())  hal->setConfig("svc_host", svc);
     lv_label_set_text(_net_status, "已保存，正在重启…");
-    mclog::tagInfo(_tag, "network saved ssid={} host={}, rebooting", ssid, host);
+    mclog::tagInfo(_tag, "network saved ssid={} ha_host={} svc_host={}, rebooting", ssid, host, svc);
     hal->delay(800);
     hal->reboot();
 }
@@ -671,6 +816,7 @@ void AppHome::_statusClick_cb(lv_event_t* e)
     if      (tag == 1) self->_openPowerDialog();
     else if (tag == 2) self->_openNetworkDialog();
     else if (tag == 3) self->_openQuickSettings();
+    else if (tag == 4) self->_openWeatherDialog();
 }
 
 void AppHome::_modalBg_cb(lv_event_t* e)

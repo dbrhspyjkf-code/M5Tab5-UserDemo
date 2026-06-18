@@ -1,4 +1,5 @@
 #include "app_ha.h"
+#include "ha_weather.h"
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <nlohmann/json.hpp>
@@ -24,25 +25,45 @@ static int _safe_stoi(const std::string& s, int def = 0)
     }
 }
 
+static double _safe_stod(const std::string& s, double def = 0.0)
+{
+    if (s.empty()) return def;
+    try {
+        return std::stod(s);
+    } catch (...) {
+        return def;
+    }
+}
+
 // ─── Server address ───────────────────────────────────────────────────────────
-// Host running HA / Sonos bridge / weather service. Configurable on-screen via
-// the Settings app (stored in NVS key "ha_host"); falls back to this default.
-static const char* HA_HOST_DEFAULT = "192.168.1.142";
+// Home Assistant host (:8123). Everything in this app — lights, switches, fan,
+// climate, TV, Sonos AND weather — now talks directly to HA. Configurable
+// on-screen via the Settings app (NVS key "ha_host"). The Mac-side Hermes
+// services (weather used to be there, Claude bridge still is) live on a separate
+// host stored in NVS "svc_host"; this app no longer needs it.
+static const char* HA_HOST_DEFAULT = "192.168.1.133";
 
 static std::string ha_host()
 {
     return GetHAL()->getConfig("ha_host", HA_HOST_DEFAULT);
 }
-static std::string ha_url()    { return "http://" + ha_host() + ":8123"; }
-static std::string sonos_url() { return "http://" + ha_host() + ":8900"; }
+static std::string ha_url()    { return "http://" + ha_host()  + ":8123"; }
 
 // ─── Entity config ────────────────────────────────────────────────────────────
-static const char* HA_TOKEN =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-    ".eyJpc3MiOiJhZGY3Y2Q0Y2YxNDg0OTQxYjhhNWE1NjRjM2RmZGZiYSIsImlhdCI6MTc4MTIzND"
-    "I2MSwiZXhwIjoyMDk2NTk0MjYxfQ"
-    ".wI-2PpOXyGUUDYSeCZleq_AUNJ0uPyyIOHxnkcFbJYk";
-static const char* TV_EID = "media_player.xiaomi_cn_629973618_esprh1";
+// HA long-lived token — shared with app_home via ha_weather.h (single source).
+static const char* HA_TOKEN = ha_weather::TOKEN;
+// 客厅电视机（2026-06 HA 重新集成，实体名变更）。
+//   播放控制（音量/静音/音源）走 media_player，开关按钮映射到"是否为音箱模式"开关。
+static const char* TV_EID        = "media_player.xiaomi_esprh1_0bc4_play_control";
+static const char* TV_SWITCH_EID = "switch.xiaomi_esprh1_0bc4_is_on";
+// Sonos 客厅音响 — 直连 HA 的 media_player 实体（不再经 hermes :8900 桥）。
+static const char* SONOS_EID = "media_player.ke_ting_ke_ting";
+
+// 家电 tab
+static const char* VACUUM_EID        = "vacuum.yun_jing_xiao_yao_002_max_cx7_vacuum";
+static const char* WASHER_STATE_EID  = "select.04e2297c8113_runningmode";       // 运行状态
+static const char* WASHER_REMAIN_EID = "sensor.04e2297c8113_remainingtimehh";   // 剩余/预约时间(小时)
+static const char* WASHER_PROG_EID   = "select.04e2297c8113_laundrycycle";      // 洗衣程序
 
 // Lights: entity_id → display label
 static const std::pair<const char*, const char*> LIGHTS[] = {
@@ -102,20 +123,16 @@ void AppHA::onOpen()
 {
     _closing = false;
 
-    // (Re)create the clients each time the app opens. Reading ha_url()/sonos_url()
-    // here also means a HA address changed in Settings takes effect on next open.
+    // (Re)create the HA client each time the app opens. Reading ha_url() here
+    // also means a HA address changed in Settings takes effect on next open.
+    // Sonos is now controlled through this same HA client (media_player.*),
+    // so there's no separate Sonos client anymore.
     if (!_ha) {
         _ha = std::make_shared<HaClient>();
         HaClient::Config cfg;
         cfg.url   = ha_url();
         cfg.token = HA_TOKEN;
         _ha->init(cfg);
-    }
-    if (!_sonos) {
-        _sonos = std::make_unique<SonosClient>();
-        SonosClient::Config scfg;
-        scfg.baseUrl = sonos_url();
-        _sonos->init(scfg);
     }
 
     _view = std::make_unique<ha_view::HaView>();
@@ -136,10 +153,9 @@ void AppHA::onOpen()
             _ha->setFanPresetMode(entity_id, value);
         } else if (entity_id == TV_EID) {
             if (action == "tv_power") {
-                std::string st = _ha->getEntityState(entity_id);
-                _ha->callService("media_player",
-                    (st == "on" || st == "playing" || st == "idle") ? "turn_off" : "turn_on",
-                    entity_id);
+                // Power button toggles the "是否为音箱模式" switch.
+                bool on = (_ha->getEntityState(TV_SWITCH_EID) == "on");
+                _ha->callService("switch", on ? "turn_off" : "turn_on", TV_SWITCH_EID);
             } else if (action == "tv_vol_down") {
                 _ha->callService("media_player", "volume_down", entity_id);
             } else if (action == "tv_vol_up") {
@@ -151,36 +167,46 @@ void AppHA::onOpen()
                 _ha->callService("media_player", "select_source", entity_id,
                     "\"source\":\"" + value + "\"");
             }
-        } else if (entity_id == "sonos" && _sonos) {
-            // Sonos transport / volume / mode controls
+        } else if (entity_id == "sonos") {
+            // Sonos transport / volume controls — direct HA media_player calls
+            // (faster than the old hermes :8900 bridge round-trip).
             //   sonos_play | sonos_pause | sonos_prev | sonos_next |
             //   sonos_vol_up | sonos_vol_down | sonos_mute | sonos_tv |
             //   sonos_refresh
-            static const std::pair<const char*, const char*> SONOS_ACTIONS[] = {
-                {"sonos_play",      "play"},
-                {"sonos_pause",     "pause"},
-                {"sonos_prev",      "prev"},
-                {"sonos_next",      "next"},
-                {"sonos_vol_up",    "volume_up"},
-                {"sonos_vol_down",  "volume_down"},
-                {"sonos_mute",      "mute"},
-                {"sonos_tv",        "tv"},
-            };
-            bool handled = false;
-            for (auto& kv : SONOS_ACTIONS) {
-                if (action == kv.first) {
-                    _sonos->sendCommand(kv.second);
-                    handled = true;
-                    break;
-                }
-            }
-            if (action == "sonos_refresh") {
-                _refresh_sonos_async();
-                handled = true;
-            }
-            if (!handled) {
+            if (action == "sonos_play") {
+                _ha->callService("media_player", "media_play", SONOS_EID);
+            } else if (action == "sonos_pause") {
+                _ha->callService("media_player", "media_pause", SONOS_EID);
+            } else if (action == "sonos_prev") {
+                _ha->callService("media_player", "media_previous_track", SONOS_EID);
+            } else if (action == "sonos_next") {
+                _ha->callService("media_player", "media_next_track", SONOS_EID);
+            } else if (action == "sonos_vol_up" || action == "sonos_vol_down") {
+                double cur = _safe_stod(_ha->getEntityAttr(SONOS_EID, "volume_level", "0"), 0.0);
+                double nv  = (action == "sonos_vol_up") ? cur + 0.05 : cur - 0.05;
+                if (nv < 0.0) nv = 0.0;
+                if (nv > 1.0) nv = 1.0;
+                char buf[48];
+                snprintf(buf, sizeof(buf), "\"volume_level\":%.2f", nv);
+                _ha->callService("media_player", "volume_set", SONOS_EID, buf);
+            } else if (action == "sonos_mute") {
+                bool muted = (_ha->getEntityAttr(SONOS_EID, "is_volume_muted", "false") == "true");
+                _ha->callService("media_player", "volume_mute", SONOS_EID,
+                    std::string("\"is_volume_muted\":") + (muted ? "false" : "true"));
+            } else if (action == "sonos_tv") {
+                _ha->callService("media_player", "select_source", SONOS_EID, "\"source\":\"TV\"");
+            } else if (action == "sonos_refresh") {
+                if (_ha) _ha->requestRefresh();
+            } else {
                 mclog::tagWarn(_tag, "unknown sonos action: {}", action);
             }
+        } else if (entity_id == VACUUM_EID) {
+            // 扫地机器人：开始/暂停/回充/定位
+            if      (action == "vac_start")  _ha->callService("vacuum", "start", VACUUM_EID);
+            else if (action == "vac_pause")  _ha->callService("vacuum", "pause", VACUUM_EID);
+            else if (action == "vac_dock")   _ha->callService("vacuum", "return_to_base", VACUUM_EID);
+            else if (action == "vac_locate") _ha->callService("vacuum", "locate", VACUUM_EID);
+            else mclog::tagWarn(_tag, "unknown vacuum action: {}", action);
         }
         _last_ui_update = 0;
     });
@@ -330,8 +356,9 @@ static ha_view::DeviceCard _make_tv_card(HaClient& ha)
     c.entity_id    = TV_EID;
     c.label        = "电视";
     c.is_tv_player = true;
-    std::string st = ha.getEntityState(TV_EID);
-    c.is_on        = (st == "on" || st == "playing" || st == "idle");
+    // Power on/off reflects the "是否为音箱模式" switch (per user mapping).
+    c.is_on        = (ha.getEntityState(TV_SWITCH_EID) == "on");
+    // Source / volume / mute come from the play-control media_player.
     c.value        = ha.getEntityAttr(TV_EID, "source", "");
     c.percentage   = _parse_tv_volume_percent(ha.getEntityAttr(TV_EID, "volume_level", "0"));
     c.muted        = (ha.getEntityAttr(TV_EID, "is_volume_muted", "false") == "true");
@@ -368,7 +395,12 @@ void AppHA::onRunning()
         _ha->getEntityState("switch.zimi_cn_1067292111_dhkg02_on_p_3_1"), "lightbulb"));
 
     // ── Tab: 设备 ───────────────────────────────────────────────────────────
+    // 插排 moved to page 1 (next to 燃气探测) — see sensors vector below.
     std::vector<ha_view::DeviceCard> kitchen;
+    kitchen.push_back(_make_fan_card("fan.dmaker_cn_740412216_p5c_s_2_fan", "落地扇", *_ha));
+
+    // ── Tab: 家电 (鱼缸 / 门锁 / 扫地机 / 洗衣机) ─────────────────────────────────
+    std::vector<ha_view::DeviceCard> appliance;
     // 鱼缸综合卡片（电源+水泵+水温+滤芯）
     {
         ha_view::DeviceCard fc;
@@ -379,11 +411,9 @@ void AppHA::onRunning()
         fc.pump_on     = (_ha->getEntityState("switch.xiaomi_cn_931286672_m200_water_pump_p_2_2") == "on");
         fc.water_temp  = _ha->getEntityState("sensor.xiaomi_cn_931286672_m200_temperature_p_2_6");
         fc.filter_life = _ha->getEntityState("sensor.xiaomi_cn_931286672_m200_filter_life_level_p_6_1");
-        kitchen.push_back(std::move(fc));
+        appliance.push_back(std::move(fc));
     }
-    kitchen.push_back(_make_card("switch.zimi_cn_62879818_v2_on_p_2_1", "插排",
-        _ha->getEntityState("switch.zimi_cn_62879818_v2_on_p_2_1"), LV_SYMBOL_POWER));
-    // Fetch lock history every 60 s
+    // 智能门锁（开锁记录每 60 s 拉一次）
     if (_last_lock_history_ms == 0 || now - _last_lock_history_ms > 60000) {
         _last_lock_history_ms = now;
         _fetch_lock_history_async();
@@ -393,7 +423,6 @@ void AppHA::onRunning()
         {
             std::lock_guard<std::mutex> lk(_lock_records_mutex);
             if (_lock_records.size() >= 1) {
-                // value = pre-formatted "HH:MM 描述" for record 1
                 lock_card.value     = _lock_records[0].display_time;
                 lock_card.lock_user = _lock_records[0].description;
             }
@@ -402,32 +431,79 @@ void AppHA::onRunning()
                                       + "  " + _lock_records[1].description;
             }
         }
-        kitchen.push_back(std::move(lock_card));
+        appliance.push_back(std::move(lock_card));
     }
-    kitchen.push_back(_make_fan_card("fan.dmaker_cn_740412216_p5c_s_2_fan", "落地扇", *_ha));
+    // 扫地机器人
+    {
+        ha_view::DeviceCard vc;
+        vc.entity_id = VACUUM_EID;
+        vc.label     = "扫地机器人";
+        vc.is_vacuum = true;
+        std::string vs = _ha->getEntityState(VACUUM_EID);
+        vc.is_on = (vs == "cleaning");
+        static const std::pair<const char*, const char*> VAC_ST[] = {
+            {"docked", "在充电座"}, {"cleaning", "清扫中"}, {"paused", "已暂停"},
+            {"returning", "返回充电"}, {"idle", "空闲"}, {"error", "故障"},
+        };
+        vc.value = vs;
+        for (auto& kv : VAC_ST) if (vs == kv.first) { vc.value = kv.second; break; }
+        if (vs.empty() || vs == "unavailable" || vs == "unknown") vc.value = "未连接";
+        appliance.push_back(std::move(vc));
+    }
+    // 洗衣机（只读状态）
+    {
+        ha_view::DeviceCard wc;
+        wc.entity_id = WASHER_STATE_EID;
+        wc.label     = "洗衣机";
+        wc.is_washer = true;
+        std::string ws = _ha->getEntityState(WASHER_STATE_EID);
+        wc.is_offline = (ws.empty() || ws == "unavailable" || ws == "unknown");
+        if (!wc.is_offline) {
+            wc.value = ws;
+            std::string remain = _ha->getEntityState(WASHER_REMAIN_EID);
+            std::string prog   = _ha->getEntityState(WASHER_PROG_EID);
+            std::string line;
+            if (!prog.empty() && prog != "unavailable")   line += prog;
+            if (!remain.empty() && remain != "unavailable") {
+                if (!line.empty()) line += "  ";
+                line += "剩余 " + remain + "h";
+            }
+            wc.value2 = line;
+        }
+        appliance.push_back(std::move(wc));
+    }
 
     // ── Tab: 影音 (Sonos + 电视) ──────────────────────────────────────────────
     std::vector<ha_view::DeviceCard> media;
 
-    // Sonos card (always first on media tab)
-    if (_sonos) {
-        SonosClient::State ss = _sonos->getState();
+    // Sonos card (always first on media tab) — read straight from HA state.
+    {
+        std::string st     = _ha->getEntityState(SONOS_EID);
+        std::string source = _ha->getEntityAttr(SONOS_EID, "source", "");
+        std::string cid    = _ha->getEntityAttr(SONOS_EID, "media_content_id", "");
+        bool is_tv = (source == "TV") ||
+                     cid.find("htastream") != std::string::npos ||
+                     cid.find("spdif") != std::string::npos ||
+                     cid.find("linein") != std::string::npos;
+        double vol = _safe_stod(_ha->getEntityAttr(SONOS_EID, "volume_level", "0"), 0.0);
+
         ha_view::DeviceCard sc;
         sc.entity_id    = "sonos";
         sc.label        = "SONOS 客厅";
         sc.is_sonos     = true;
-        sc.is_on        = (ss.raw_state == "PLAYING");
-        sc.percentage   = ss.volume;
-        sc.muted        = ss.muted;
-        sc.is_tv        = ss.is_tv;
-        sc.value2       = ss.artist;
-        sc.battery      = ss.title;     // reuse: card title
-        sc.lock_user    = ss.album;     // reuse: card album subtitle
-        if      (ss.raw_state == "PLAYING")         sc.sonos_state = "播放中";
-        else if (ss.raw_state == "PAUSED_PLAYBACK") sc.sonos_state = "已暂停";
-        else if (ss.raw_state == "STOPPED")         sc.sonos_state = "已停止";
-        else if (ss.raw_state == "TRANSITIONING")   sc.sonos_state = "切换中";
-        else if (!ss.ok)                            sc.sonos_state = "未连接";
+        sc.is_on        = (st == "playing");
+        sc.percentage   = (int)(vol * 100 + 0.5);
+        sc.muted        = (_ha->getEntityAttr(SONOS_EID, "is_volume_muted", "false") == "true");
+        sc.is_tv        = is_tv;
+        sc.value2       = _ha->getEntityAttr(SONOS_EID, "media_artist", "");
+        sc.battery      = _ha->getEntityAttr(SONOS_EID, "media_title", "");      // reuse: card title
+        sc.lock_user    = _ha->getEntityAttr(SONOS_EID, "media_album_name", ""); // reuse: card album subtitle
+        if      (st == "playing")      sc.sonos_state = "播放中";
+        else if (st == "paused")       sc.sonos_state = "已暂停";
+        else if (st == "idle")         sc.sonos_state = "已停止";
+        else if (st == "buffering")    sc.sonos_state = "切换中";
+        else if (st.empty() || st == "unavailable" || st == "unknown")
+                                       sc.sonos_state = "未连接";
         media.push_back(std::move(sc));
     }
 
@@ -467,16 +543,44 @@ void AppHA::onRunning()
         sensors.push_back(std::move(c));
     }
 
-    // 拓竹打印机
+    // 插排（可控开关，放在燃气探测右边）
+    sensors.push_back(_make_card("switch.zimi_cn_62879818_v2_on_p_2_1", "插排",
+        _ha->getEntityState("switch.zimi_cn_62879818_v2_on_p_2_1"), LV_SYMBOL_POWER));
+
+    // 拓竹 3D 打印机 X1C（详细卡片）
     {
+        const char* P = "sensor.x1c_00m09d561500470_";
         ha_view::DeviceCard c;
-        c.entity_id = "sensor.x1c_00m09d561500470_print_status";
-        c.label     = "打印机";
-        c.is_sensor = true;
-        std::string status   = _ha->getEntityState("sensor.x1c_00m09d561500470_print_status");
-        std::string progress = _ha->getEntityState("sensor.x1c_00m09d561500470_print_progress");
-        c.value  = (progress.empty() ? "--" : progress) + "%";
-        c.value2 = status.empty() ? "--" : status;
+        c.entity_id  = "sensor.x1c_00m09d561500470_print_status";
+        c.label      = "拓竹3D打印机-X1CC";
+        c.is_printer = true;
+
+        bool online = (_ha->getEntityState("binary_sensor.x1c_00m09d561500470_online") == "on");
+        std::string status = _ha->getEntityState(std::string(P) + "print_status");
+        c.is_offline = !online || status.empty() || status == "unavailable" || status == "unknown";
+
+        // 状态英文 → 中文
+        static const std::pair<const char*, const char*> ST[] = {
+            {"finish", "完成"}, {"running", "打印中"}, {"printing", "打印中"},
+            {"prepare", "准备中"}, {"slicing", "切片中"}, {"pause", "已暂停"},
+            {"paused", "已暂停"}, {"idle", "空闲"}, {"failed", "失败"}, {"offline", "离线"},
+        };
+        c.value = status;
+        for (auto& kv : ST) if (status == kv.first) { c.value = kv.second; break; }
+
+        c.percentage = _safe_stoi(_ha->getEntityState(std::string(P) + "print_progress"), 0);
+
+        // 多行详情：喷嘴/热床/打印仓温度，剩余时间，层数
+        std::string nozzle  = _ha->getEntityState(std::string(P) + "nozzle_temperature");
+        std::string bed     = _ha->getEntityState(std::string(P) + "bed_temperature");
+        std::string chamber = _ha->getEntityState(std::string(P) + "chamber_temperature");
+        std::string remain  = _ha->getEntityState(std::string(P) + "remaining_time");
+        std::string cur_l   = _ha->getEntityState(std::string(P) + "current_layer");
+        std::string tot_l   = _ha->getEntityState(std::string(P) + "total_layer_count");
+        auto na = [](const std::string& s){ return s.empty() ? "--" : s; };
+        c.value2 = "喷嘴 " + na(nozzle) + "°C   热床 " + na(bed) + "°C   打印仓 " + na(chamber) + "°C\n"
+                 + "剩余 " + na(remain) + "h   层 " + na(cur_l) + "/" + na(tot_l);
+
         sensors.push_back(std::move(c));
     }
 
@@ -492,8 +596,9 @@ void AppHA::onRunning()
     // ── Weather: fetch every 10 minutes ─────────────────────────────────────
     uint32_t now_ms = GetHAL()->millis();
     if (_last_weather_ms == 0 || now_ms - _last_weather_ms > 600000) {
-        _last_weather_ms = now_ms;
-        _fetch_weather_async();
+        // Only advance the timer once HA actually has weather data, so the very
+        // first reads (before the initial /api/states poll lands) keep retrying.
+        if (_fetch_weather_async()) _last_weather_ms = now_ms;
     }
 
     ha_view::WeatherInfo weather;
@@ -503,7 +608,7 @@ void AppHA::onRunning()
     }
     ha_view::BatteryInfo battery = _tab5_battery_from_power();
 
-    _view->update(living, kitchen, media, sensors,
+    _view->update(living, kitchen, media, sensors, appliance,
                   weather, battery, _ha->isConnected(), tbuf, date_str);
 }
 
@@ -521,14 +626,6 @@ static std::string _lookup_user(uint32_t op_id)
     for (auto& u : LOCK_USERS)
         if (u.name && u.id == op_id && u.name[0]) return u.name;
     return "";
-}
-
-void AppHA::_refresh_sonos_async()
-{
-    // The card refresh button nudges the Sonos poll thread to fetch
-    // immediately, regardless of its current interval. The next frame
-    // (~500 ms later) will pick up the new state.
-    if (_sonos) _sonos->requestRefresh();
 }
 
 void AppHA::_fetch_lock_history_async()
@@ -553,32 +650,28 @@ void AppHA::_fetch_lock_history_async()
     });
 }
 
-void AppHA::_fetch_weather_async()
+bool AppHA::_fetch_weather_async()
 {
-    _start_worker([this]() {
-        auto resp = GetHAL()->httpGet("http://" + ha_host() + ":8766/weather?city=Guangzhou");
-        if (!resp.ok) {
-            mclog::tagWarn(_tag, "weather fetch failed: {}", resp.status);
-            return;
-        }
-        try {
-            auto j = json::parse(resp.body);
-            if (!j.value("ok", false)) return;
+    // Weather now comes straight from HA's weather entity, which the HaClient
+    // already polls as part of /api/states — no separate HTTP request needed.
+    if (!_ha) return false;
+    std::string st  = _ha->getEntityState(ha_weather::ENTITY);
+    if (st.empty() || st == "unavailable" || st == "unknown")
+        return false;  // not fetched yet; retry next tick
+    std::string tc  = _ha->getEntityAttr(ha_weather::ENTITY, "temperature", "--");
+    std::string hum = _ha->getEntityAttr(ha_weather::ENTITY, "humidity", "--");
+    // met.no gives temperature like "28.1"; show whole degrees to match the old UI.
+    if (auto dot = tc.find('.'); dot != std::string::npos) tc = tc.substr(0, dot);
 
-            ha_view::WeatherInfo w;
-            std::string tc = j.value("temp_c", "--");
-            w.temp        = tc + "°C";
-            w.humidity    = j.value("humidity", "--") + "%";
-            w.description = j.value("condition", "");
-            std::string fl = j.value("feels_like_c", "");
-            if (!fl.empty()) w.description += "  体感" + fl + "°C";
+    ha_view::WeatherInfo w;
+    w.condition   = st;
+    w.temp        = tc + "°C";
+    w.humidity    = hum + "%";
+    w.description = ha_weather::condZh(st);
 
-            if (_closing.load()) return;
-
-            std::lock_guard<std::mutex> lock(_weather_mutex);
-            _weather = w;
-        } catch (...) {}
-    });
+    std::lock_guard<std::mutex> lock(_weather_mutex);
+    _weather = w;
+    return true;
 }
 
 void AppHA::_start_worker(std::function<void()> fn)
@@ -623,7 +716,6 @@ void AppHA::onClose()
 {
     _closing = true;
     if (_ha)    _ha->destroy();
-    if (_sonos) _sonos->destroy();
     _join_workers();
     // Restore launcher screen BEFORE destroying LVGL objects so there is always
     // an active screen — deleting the current active screen would leave LVGL in
@@ -634,5 +726,4 @@ void AppHA::onClose()
     // SRAM) is fully freed while the app is closed. Recreated in onOpen. This is
     // what lets xiaozhi allocate its I2S DMA after the user has been in HA.
     _ha.reset();
-    _sonos.reset();
 }

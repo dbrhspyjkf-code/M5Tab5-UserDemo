@@ -41,6 +41,14 @@ struct DeviceCard {
     bool   is_tv     = false;  // true → show "电视输入" instead of title
     std::string sonos_state;  // "播放中" / "已暂停" / "已停止"
 
+    // Vacuum (扫地机器人): value = state text (Chinese), is_on = cleaning.
+    bool is_vacuum = false;
+    // Washing machine (洗衣机): value = 运行状态, value2 = 剩余/程序; read-only.
+    bool is_washer = false;
+    // 3D printer detail (拓竹 X1C): percentage = progress %, value = status
+    // (Chinese), value2 = multi-line detail (temps / layer / remaining).
+    bool is_printer = false;
+
     // Equality over every rendered field, so update() can skip rebuilding a tab
     // whose data hasn't changed (avoids destroying/recreating ~30–50 LVGL
     // objects every frame, which fragments PSRAM and opens crash windows).
@@ -58,7 +66,9 @@ struct DeviceCard {
             && pump_on == o.pump_on && water_temp == o.water_temp
             && filter_life == o.filter_life && is_sonos == o.is_sonos
             && muted == o.muted && is_tv == o.is_tv
-            && sonos_state == o.sonos_state;
+            && sonos_state == o.sonos_state
+            && is_vacuum == o.is_vacuum && is_washer == o.is_washer
+            && is_printer == o.is_printer;
     }
     bool operator!=(const DeviceCard& o) const { return !(*this == o); }
 };
@@ -76,7 +86,7 @@ struct BatteryInfo {
 };
 
 // Tab pages
-enum class TabPage { LIVING = 0, KITCHEN_BATH, MEDIA };
+enum class TabPage { LIVING = 0, KITCHEN_BATH, MEDIA, APPLIANCE };
 
 class HaView {
 public:
@@ -101,10 +111,11 @@ public:
     void requestRebuild() { _force_rebuild = true; }
 
     // Called every frame by AppHA::onRunning()
-    void update(const std::vector<DeviceCard>& living,   // 灯光
-                const std::vector<DeviceCard>& kitchen,  // 设备
-                const std::vector<DeviceCard>& media,    // 影音
-                const std::vector<DeviceCard>& sensors,  // 传感器（所有房间）
+    void update(const std::vector<DeviceCard>& living,    // 灯光
+                const std::vector<DeviceCard>& kitchen,   // 设备
+                const std::vector<DeviceCard>& media,     // 影音
+                const std::vector<DeviceCard>& sensors,   // 传感器（所有房间）
+                const std::vector<DeviceCard>& appliance, // 家电（鱼缸/门锁/扫地机/洗衣机）
                 const WeatherInfo& weather,
                 const BatteryInfo& battery,
                 bool connected,
@@ -136,6 +147,7 @@ private:
     std::vector<DeviceCard> _kitchen_cache;
     std::vector<DeviceCard> _media_cache;
     std::vector<DeviceCard> _sensors_cache;
+    std::vector<DeviceCard> _appliance_cache;
 
     // Indev for swipe-up-to-exit gesture
     lv_indev_t* _gesture_indev = nullptr;
@@ -149,7 +161,7 @@ private:
     lv_obj_t* _lbl_battery  = nullptr;
     lv_obj_t* _content_area = nullptr;
     lv_obj_t* _tab_bar      = nullptr;
-    lv_obj_t* _tab_btns[3]  = {};
+    lv_obj_t* _tab_btns[4]  = {};
 
     // Per-tab content containers (recreated on tab switch)
     lv_obj_t* _tab_content  = nullptr;
@@ -173,7 +185,8 @@ private:
                      const std::vector<DeviceCard>& living,
                      const std::vector<DeviceCard>& kitchen,
                      const std::vector<DeviceCard>& media,
-                     const std::vector<DeviceCard>& sensors);
+                     const std::vector<DeviceCard>& sensors,
+                     const std::vector<DeviceCard>& appliance);
 };
 
 }  // namespace ha_view

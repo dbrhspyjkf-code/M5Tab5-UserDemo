@@ -51,6 +51,17 @@ private:
     lv_obj_t*   _fx_rate_lbl = nullptr; // "1 美元 = 7.25 人民币"
     std::string _fx_entry   = "1";      // amount string
 
+    // ── Unit converter (单位换算) ────────────────────────────────────────────────
+    lv_obj_t*   _unit_page    = nullptr;
+    lv_obj_t*   _unit_cat_dd  = nullptr;  // category dropdown
+    lv_obj_t*   _unit_from_dd = nullptr;  // from unit dropdown
+    lv_obj_t*   _unit_to_dd   = nullptr;  // to unit dropdown
+    lv_obj_t*   _unit_amt_lbl = nullptr;  // amount being entered (FROM)
+    lv_obj_t*   _unit_res_lbl = nullptr;  // converted result (TO)
+    lv_obj_t*   _unit_eq_lbl  = nullptr;  // "1 米 = 100 厘米"
+    std::string _unit_entry   = "1";      // amount string
+    int         _unit_cat_idx = 0;        // current category
+
     void _buildToolsPage();
     void _openCalculator();
     void _closeCalculator();
@@ -64,6 +75,12 @@ private:
     void _fxRecompute();
     void _fxFetch();   // async pull of live rates from the HA server /rate proxy
 
+    void _openUnit();
+    void _closeUnit();
+    void _unitInput(const char* key);
+    void _unitRecompute();
+    void _unitPopulateUnits();  // fill from/to dropdowns when category changes
+
     void _installSwipeGesture();
     void _removeSwipeGesture();
 
@@ -76,4 +93,12 @@ private:
     static void _fxDd_cb(lv_event_t* e);     // currency dropdown changed
     static void _fxSwap_cb(lv_event_t* e);   // swap from/to
     static void _fxBack_cb(lv_event_t* e);   // converter → tools page
+
+    static void _toolUnit_cb(lv_event_t* e); // tools tile → open unit converter
+    static void _unitKey_cb(lv_event_t* e);  // a unit converter keypad key
+    static void _unitCatDd_cb(lv_event_t* e); // category dropdown changed
+    static void _unitFromDd_cb(lv_event_t* e); // from unit dropdown changed
+    static void _unitToDd_cb(lv_event_t* e);   // to unit dropdown changed
+    static void _unitSwap_cb(lv_event_t* e);   // swap from/to
+    static void _unitBack_cb(lv_event_t* e);   // converter → tools page
 };

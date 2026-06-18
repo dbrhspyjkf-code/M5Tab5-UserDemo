@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 void xiaozhi_start_task(void);
+bool xiaozhi_is_initialized(void);
 void xiaozhi_activate_screen(void);
 void xiaozhi_suspend(void);
 void xiaozhi_resume(void);

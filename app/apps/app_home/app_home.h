@@ -5,6 +5,7 @@
 #include <vector>
 #include <functional>
 #include <mutex>
+#include <atomic>
 
 class AppHome : public mooncake::AppAbility {
 public:
@@ -57,6 +58,15 @@ private:
     std::mutex  _weather_mutex;
     void _fetch_weather();
 
+    // Weather detail popup (tap the status-bar weather). A worker fetches the
+    // full HA weather entity + daily forecast into _wx_text; onRunning copies it
+    // into the _wx_body label once _wx_ready flips.
+    lv_obj_t*         _wx_body  = nullptr;
+    std::string       _wx_text;
+    std::atomic<bool> _wx_ready{false};
+    void _openWeatherDialog();
+    void _fetchWeatherDetail();
+
     static void _btn_event_cb(lv_event_t* e);
 
     // ── Status-bar quick-access popups ──────────────────────────────────────────
@@ -68,6 +78,7 @@ private:
     lv_obj_t* _net_ssid   = nullptr;  // network dialog: SSID textarea
     lv_obj_t* _net_pass   = nullptr;  // network dialog: password textarea
     lv_obj_t* _net_host   = nullptr;  // network dialog: HA host textarea
+    lv_obj_t* _net_svc    = nullptr;  // network dialog: 其他服务器 (天气/Claude) textarea
     lv_obj_t* _net_ssid_dd = nullptr; // network dialog: scan-result dropdown
     lv_obj_t* _net_kb     = nullptr;  // network dialog: on-screen keyboard
     lv_obj_t* _net_status = nullptr;  // network dialog: status line
