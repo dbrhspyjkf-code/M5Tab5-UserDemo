@@ -287,6 +287,50 @@ void Tab5BridgeLcdDisplay::BuildStatusBar()
     lv_obj_align(state_text_lbl_, LV_ALIGN_LEFT_MID, 68, 0);
 }
 
+// Strip emoji / symbol code-points that the bundled cbin font (puhui_common)
+// doesn't carry. cbin has NO emoji glyphs at all, so even whitelisted
+// emoji would render as blank + spam 'glyph dsc. not found' warnings. To
+// keep the chat readable and the warning log quiet, EVERY emoji / dingbat
+// / misc-technical code-point is replaced with a space. CJK / Latin /
+// punctuation pass through unchanged. The emoji_table.h whitelist is
+// kept for future use (e.g. when an emoji font is added or bitmap
+// assets are embedded) but the render path no longer consults it.
+#include "emoji_table.h"
+
+static std::string _strip_unsupported_glyphs(const char* in)
+{
+    if (!in) return "";
+    std::string s;
+    const unsigned char* p = (const unsigned char*)in;
+    while (*p) {
+        uint32_t cp = 0;
+        int n = 0;
+        if      ((*p & 0x80) == 0x00) { cp =  *p       & 0x7F;       n = 1; }
+        else if ((*p & 0xE0) == 0xC0) { cp =  *p       & 0x1F;       n = 2; }
+        else if ((*p & 0xF0) == 0xE0) { cp =  *p       & 0x0F;       n = 3; }
+        else if ((*p & 0xF8) == 0xF0) { cp =  *p       & 0x07;       n = 4; }
+        else                           { p++; continue; }
+        bool valid = true;
+        for (int i = 1; i < n; i++) {
+            if ((p[i] & 0xC0) != 0x80) { valid = false; break; }
+            cp = (cp << 6) | (p[i] & 0x3F);
+        }
+        if (!valid) { p++; continue; }
+        // Drop ALL emoji / dingbats / misc-technical code-points. The cbin
+        // font carries no emoji glyphs, so rendering any of them only
+        // produces 'glyph dsc. not found' warnings and risks stack
+        // protection faults on long text (see 2026-06-19 logs).
+        bool drop =
+            (cp >= 0x1F000 && cp < 0x1FFFF) ||  // emoji blocks
+            (cp >= 0x2700  && cp < 0x27BF)  ||  // dingbats
+            (cp >= 0x2300  && cp < 0x24FF);     // misc technical / control pics
+        if (drop) s += ' ';
+        else      s.append((const char*)p, n);
+        p += n;
+    }
+    return s;
+}
+
 // ─── Chat bubble helper ───────────────────────────────────────────────────────
 
 void Tab5BridgeLcdDisplay::AddChatBubble(const char* role, const char* content)
@@ -327,6 +371,12 @@ void Tab5BridgeLcdDisplay::AddChatBubble(const char* role, const char* content)
     lv_obj_set_width(bubble, LV_SIZE_CONTENT);
     lv_obj_set_height(bubble, LV_SIZE_CONTENT);
 
+    // Drop emoji / symbol code-points the font doesn't carry (avoids LVGL
+    // 'glyph dsc. not found' warning storms that tripped Stack protection
+    // fault on 2026-06-19). The emoji_table.h whitelist is preserved but
+    // not consulted — see header comment on _strip_unsupported_glyphs.
+    std::string filtered = _strip_unsupported_glyphs(content);
+
     // Message label
     lv_obj_t* lbl = lv_label_create(bubble);
     lv_obj_set_style_text_font(lbl, zh_font(), 0);
@@ -335,7 +385,7 @@ void Tab5BridgeLcdDisplay::AddChatBubble(const char* role, const char* content)
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(lbl, LV_SIZE_CONTENT);
     lv_obj_set_style_max_width(lbl, bubble_max_w - 36, 0);
-    lv_label_set_text(lbl, content);
+    lv_label_set_text(lbl, filtered.c_str());
 
     // Align bubble within row
     lv_obj_align(bubble, is_user ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID, 0, 0);

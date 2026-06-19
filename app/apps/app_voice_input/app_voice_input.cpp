@@ -22,9 +22,21 @@ static const char* TAG = "AppVoiceInput";
 
 // Unicode glyphs for mic button states
 static const char* MIC_ICON_IDLE      = "\xF0\x9F\x8E\x99";  // studio mic
-static const char* MIC_ICON_RECORDING = "\xF0\x9F\x94\xB4";  // red circle
+// MIC_ICON_RECORDING removed: the big-mic overlay used to show a red circle
+// (U+1F534). Now it shows a live audio-waveform (5 pulsing bars).
 static const char* MIC_ICON_DONE      = "\xE2\x9C\x85";      // green checkmark
 static const char* MIC_ICON_ERROR     = "\xE2\x9D\x8C";      // red X
+
+// Wave bar height/position during the pulse. C function pointer (LVGL 9
+// exec_cb can't capture lambdas) — `var` is the bar pointer, set per-anim
+// in _createBigMicButton.
+static void wave_anim_cb(void* var, int32_t v) {
+    lv_obj_t* bar = (lv_obj_t*)var;
+    lv_bar_set_value(bar, v, LV_ANIM_OFF);
+    int new_h = 16 + (110 - 16) * v / 100;
+    lv_obj_set_size(bar, 16, new_h);
+    lv_obj_set_y(bar, (128 - new_h) / 2);
+}
 
 } // anonymous namespace
 
@@ -255,32 +267,59 @@ void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
     _big_mic_mode = true;
     s_focused_ta = ta;
 
-    // Hint label above the mic — placed first so the mic sits above it visually.
+    // Hint label above the wave — placed first so the wave sits above it visually.
     _status_label = lv_label_create(lv_layer_top());
     lv_obj_set_style_text_color(_status_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(_status_label, &lv_font_montserrat_20, 0);
     lv_label_set_text(_status_label, "Recording... tap anywhere to stop");
     lv_obj_align(_status_label, LV_ALIGN_BOTTOM_MID, 0, -260);
 
-    // Big mic (128 px) — sits where the keyboard would have been.
-    lv_obj_t* btn = lv_btn_create(lv_layer_top());
-    lv_obj_set_size(btn, 128, 128);
-    lv_obj_set_style_radius(btn, 64, 0);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xF44336), 0);  // red
-    lv_obj_set_style_bg_opa(btn, LV_OPA_90, 0);
-    lv_obj_set_style_shadow_width(btn, 24, 0);
-    lv_obj_set_style_shadow_color(btn, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_shadow_opa(btn, LV_OPA_50, 0);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -120);
+    // Audio visualizer: 5 vertical bars that pulse in height via lv_anim.
+    // Each bar has a different period and phase so the pattern looks like
+    // a moving waveform rather than a single synchronized pulse.
+    lv_obj_t* wave = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(wave, 5 * 16 + 4 * 8, 128);  // 5 bars × 16w + 4 × 8 gap
+    lv_obj_set_style_bg_opa(wave, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(wave, 0, 0);
+    lv_obj_set_style_pad_all(wave, 0, 0);
+    lv_obj_clear_flag(wave, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(wave, LV_ALIGN_BOTTOM_MID, 0, -120);
 
-    // Big mic glyph
-    lv_obj_t* label = lv_label_create(btn);
-    lv_label_set_text(label, "\xF0\x8F\x84\x99");
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_center(label);
+    // Per-bar period / phase offsets so they don't pulse in lockstep.
+    const int periods_ms[WAVE_BAR_COUNT]   = { 280, 360, 240, 420, 320 };
+    const int delays_ms[WAVE_BAR_COUNT]   = {   0,  80, 160,  40, 200 };
+    const int min_h = 16;
+    const int max_h = 110;
 
-    _mic_btn = btn;
+    for (int i = 0; i < WAVE_BAR_COUNT; i++) {
+        lv_obj_t* bar = lv_bar_create(wave);
+        lv_obj_set_size(bar, 16, min_h);
+        // Lay out left-to-right inside the wave container.
+        lv_obj_set_pos(bar, i * (16 + 8), (128 - min_h) / 2);
+        lv_obj_set_style_bg_color(bar, lv_color_hex(0x4FC3F7), 0);  // cyan
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(bar, 4, 0);
+        lv_obj_set_style_border_width(bar, 0, 0);
+        lv_obj_set_style_pad_all(bar, 0, 0);
+        lv_bar_set_range(bar, 0, 100);
+        lv_bar_set_value(bar, 50, LV_ANIM_OFF);
+        _wave_bars[i] = bar;
+
+        // Pulse: 0..100 with playback so it bounces back down. Different
+        // period per bar = realistic waveform. var=bar so the C callback
+        // can find its target (LVGL 9 callbacks are C function pointers,
+        // no lambda capture — use a free function defined in this file).
+        lv_anim_init(&_wave_anims[i]);
+        lv_anim_set_var(&_wave_anims[i], bar);
+        lv_anim_set_exec_cb(&_wave_anims[i], wave_anim_cb);
+        lv_anim_set_values(&_wave_anims[i], 0, 100);
+        lv_anim_set_time(&_wave_anims[i], periods_ms[i]);
+        lv_anim_set_playback_time(&_wave_anims[i], periods_ms[i]);
+        lv_anim_set_repeat_count(&_wave_anims[i], LV_ANIM_REPEAT_INFINITE);
+        lv_anim_set_delay(&_wave_anims[i], delays_ms[i]);
+        lv_anim_start(&_wave_anims[i]);
+    }
+    _mic_btn = wave;  // reused field so _removeMicButton deletes the wave
 
     // Full-screen invisible capture layer — any tap while recording ends it.
     _capture_layer = lv_obj_create(lv_layer_top());
@@ -306,8 +345,7 @@ void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
         (void)self;
 #endif
     }, LV_EVENT_CLICKED, this);
-    // Send the capture layer to the back so the mic and hint stay clickable
-    // (the mic is a sibling, the user can still tap it directly).
+    // Send the capture layer to the back so the wave and hint stay clickable.
     lv_obj_move_background(_capture_layer);
     lv_obj_move_foreground(_mic_btn);
     lv_obj_move_foreground(_status_label);
@@ -333,11 +371,13 @@ void AppVoiceInput::_updateMicButton() {
     switch (state) {
     case voice_input::State::Idle:
         if (label) lv_label_set_text(label, MIC_ICON_IDLE);
-        lv_obj_set_style_bg_color(_mic_btn, lv_color_hex(0x2196F3), 0);
+        lv_obj_set_style_bg_color(_mic_btn, lv_color_hex(0x2196F3), 0);  // blue
         break;
     case voice_input::State::Recording:
-        if (label) lv_label_set_text(label, MIC_ICON_RECORDING);
-        lv_obj_set_style_bg_color(_mic_btn, lv_color_hex(0xF44336), 0);
+        // Keep the mic glyph (not a red circle — see comment on
+        // MIC_ICON_RECORDING). Colour shift signals "active".
+        if (label) lv_label_set_text(label, MIC_ICON_IDLE);
+        lv_obj_set_style_bg_color(_mic_btn, lv_color_hex(0x4FC3F7), 0);  // cyan
         break;
     case voice_input::State::Processing:
         lv_obj_set_style_bg_color(_mic_btn, lv_color_hex(0xFF9800), 0);
@@ -358,6 +398,15 @@ void AppVoiceInput::_updateMicButton() {
 void AppVoiceInput::_removeMicButton() {
     ESP_LOGW("AppVoiceInput", "_removeMicButton called from %p (mic=%p capture=%p ta=%p)",
              (void*)__builtin_return_address(0), (void*)_mic_btn, (void*)_capture_layer, (void*)_target_ta);
+    // Stop the wave anims BEFORE deleting their bar objects — otherwise the
+    // anim keeps writing to freed memory. lv_anim_delete takes (var, exec_cb).
+    for (int i = 0; i < WAVE_BAR_COUNT; i++) {
+        if (_wave_bars[i]) {
+            lv_anim_delete(_wave_bars[i], wave_anim_cb);
+        }
+        _wave_bars[i] = nullptr;
+        memset(&_wave_anims[i], 0, sizeof(_wave_anims[i]));
+    }
     if (_capture_layer) {
         lv_obj_delete(_capture_layer);
         _capture_layer = nullptr;

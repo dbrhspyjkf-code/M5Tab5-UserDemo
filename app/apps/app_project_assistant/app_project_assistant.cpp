@@ -14,12 +14,12 @@
 #include <chrono>
 #endif
 #include <esp_timer.h>
-#include <regex>
-
+#include <regex>  // (kept for callers; _stripMarkdown no longer uses it)
 using json = nlohmann::json;
 
 static const std::string TAG = "app-claude";
 LV_IMAGE_DECLARE(key_icon);
+#include "mic_icon.h"
 LV_IMAGE_DECLARE(claude_logo);
 
 namespace {
@@ -197,6 +197,8 @@ void AppProjectAssistant::onClose()
     mclog::tagInfo(TAG, "close");
     _closing = true;
     _saveHistory();
+    // Detach the swipe-up listener before the screen is torn down.
+    _removeSwipeGesture();
     // Release the physical-keyboard "Enter pressed" hook so subsequent
     // apps don't accidentally trigger _sendMessage on their own key events.
     if (GetHAL()) GetHAL()->onEnterPressed = nullptr;
@@ -242,19 +244,8 @@ void AppProjectAssistant::_buildUi()
     lv_obj_set_style_pad_all(hdr, 0, 0);
     lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* back = lv_btn_create(hdr);
-    lv_obj_set_size(back, 72, 48);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 12, 0);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0x1A3A5C), 0);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0x0E2240), LV_STATE_PRESSED);
-    lv_obj_set_style_radius(back, 10, 0);
-    lv_obj_set_style_border_width(back, 0, 0);
-    lv_obj_add_event_cb(back, _back_cb, LV_EVENT_CLICKED, this);
-    lv_obj_t* back_lbl = lv_label_create(back);
-    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_font(back_lbl, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(back_lbl, lv_color_hex(C_TEXT), 0);
-    lv_obj_center(back_lbl);
+    // Back button removed — exit via swipe-up gesture (see _addSwipeGesture).
+    // The header now hosts only the title + Claude logo.
 
     lv_obj_t* title = lv_label_create(hdr);
     lv_label_set_text(title, "Claude");
@@ -338,17 +329,11 @@ void AppProjectAssistant::_buildUi()
     // Layout (keyboard up): [8][input W'][20][mic=80][20][kb=80][32][send=164][8] = 1280 → W'=868
     // The wider gap before Send reduces mis-taps. The 🎤 button only appears
     // when the keyboard is up (voice input is gated through the keyboard UI).
-    constexpr int SIDE_GAP = 8;
-    constexpr int BTN_GAP  = 20;
-    constexpr int SEND_GAP = 32;  // wider gap so Send isn't accidentally hit
-    constexpr int KB_W     = 80;
-    constexpr int SEND_W   = 164;
-    constexpr int MIC_W    = 80;
-    const int input_w = SCREEN_W - 2*SIDE_GAP - KB_W - SEND_W - 2*BTN_GAP - SEND_GAP;
-    const int input_w_with_mic = input_w - MIC_W - BTN_GAP;
+    // All gaps/widths are class constants (see header) so the kb button can be
+    // re-positioned from _showKeyboard / _hideKeyboard too.
 
     _input = lv_textarea_create(_input_row);
-    lv_obj_set_size(_input, input_w, 80);
+    lv_obj_set_size(_input, INPUT_W, 80);
     lv_obj_align(_input, LV_ALIGN_LEFT_MID, 0, 0);
     lv_textarea_set_placeholder_text(_input, "Tap to type or voice...");
     lv_textarea_set_one_line(_input, false);
@@ -366,32 +351,30 @@ void AppProjectAssistant::_buildUi()
     _voice_btn = lv_btn_create(_input_row);
     lv_obj_set_size(_voice_btn, MIC_W, 80);
     // Positioned where it will sit when the keyboard pops up: between input and
-    // keyboard button. When the keyboard is down the input is wider so we
-    // remember the voice-button's "shown" x as a constant for _showKeyboard.
-    const int voice_x       = SIDE_GAP + input_w_with_mic + BTN_GAP;
-    const int kb_x_no_voice = SIDE_GAP + input_w + BTN_GAP;
-    const int kb_x_voice    = voice_x + MIC_W + BTN_GAP;
+    // keyboard button. When the keyboard is down the input is wider.
+    const int voice_x = SIDE_GAP + INPUT_W_MIC + BTN_GAP;
     lv_obj_align(_voice_btn, LV_ALIGN_LEFT_MID, voice_x, 0);
     lv_obj_set_style_bg_color(_voice_btn, lv_color_hex(0xC0392B), 0);
     lv_obj_set_style_bg_color(_voice_btn, lv_color_hex(0x8E2A20), LV_STATE_PRESSED);
     lv_obj_set_style_radius(_voice_btn, 12, 0);
     lv_obj_set_style_border_width(_voice_btn, 0, 0);
     lv_obj_add_event_cb(_voice_btn, _voice_btn_cb, LV_EVENT_CLICKED, this);
-    lv_obj_t* mic_glyph = lv_label_create(_voice_btn);
-    lv_label_set_text(mic_glyph, "\xF0\x8F\x84\x99");  // studio mic
-    lv_obj_set_style_text_font(mic_glyph, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(mic_glyph, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_center(mic_glyph);
+    lv_obj_t* mic_img = lv_image_create(_voice_btn);
+    lv_image_set_src(mic_img, &mic_icon);
+    lv_obj_center(mic_img);
     lv_obj_add_flag(_voice_btn, LV_OBJ_FLAG_HIDDEN);  // shown by _showKeyboard
 
     // Keyboard toggle — left of Send. The voice button is to its left when
     // shown; the wider SEND_GAP reduces mis-taps on Send.
     _keyboard_btn = lv_btn_create(_input_row);
     lv_obj_set_size(_keyboard_btn, KB_W, 80);
-    // Initial position assumes voice button is hidden (kb is right next to input).
-    // _showKeyboard moves it right by (MIC_W + BTN_GAP) to make room for the
-    // voice button, and _hideKeyboard moves it back.
-    lv_obj_align(_keyboard_btn, LV_ALIGN_LEFT_MID, kb_x_no_voice, 0);
+    // Initial position: centred between input's right edge and Send's left
+    // edge, then shifted left by KB_LEFT_BIAS to compensate for the much
+    // wider Send button (see header for the why). _showKeyboard /
+    // _hideKeyboard apply the same shift when the voice button shows/hides.
+    lv_obj_align(_keyboard_btn, LV_ALIGN_LEFT_MID,
+                 (SIDE_GAP + INPUT_W + (SCREEN_W - SIDE_GAP - SEND_W)) / 2 - KB_W / 2
+                 - KB_LEFT_BIAS, 0);
     lv_obj_set_style_bg_color(_keyboard_btn, lv_color_hex(0x1A3A5C), 0);
     lv_obj_set_style_bg_color(_keyboard_btn, lv_color_hex(0x0E2240), LV_STATE_PRESSED);
     lv_obj_set_style_radius(_keyboard_btn, 12, 0);
@@ -437,6 +420,9 @@ void AppProjectAssistant::_buildUi()
     // Events propagate to _scr from children; we filter out clicks inside the
     // keyboard or input row so typing isn't interrupted.
     lv_obj_add_event_cb(_scr, _scr_click_cb, LV_EVENT_CLICKED, this);
+
+    // Swipe-up-from-bottom = exit (replaces the header back button).
+    _addSwipeGesture();
 }
 
 // ── Keyboard helpers ──────────────────────────────────────────────────────
@@ -454,15 +440,56 @@ void AppProjectAssistant::_showKeyboard()
     if (_input_row)
         lv_obj_align(_input_row, LV_ALIGN_BOTTOM_MID, 0, -KEYBOARD_H);
     // Show the voice button and shrink the input + shift the keyboard button
-    // right by (MIC_W + BTN_GAP) to make room. Magic numbers match _buildUi.
-    constexpr int SIDE_GAP = 8, BTN_GAP = 20, MIC_W = 80, KB_W = 80;
-    constexpr int input_w         = 968;  // 8+input_w+20+80+32+164+8 = 1280
-    constexpr int input_w_with_mic = 868;  // input_w - MIC_W - BTN_GAP
+    // right to keep it centred between the voice button and Send. All sizes /
+    // gaps are class constants (see header) so the geometry stays consistent
+    // with _buildUi.
     if (_voice_btn)
         lv_obj_clear_flag(_voice_btn, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_size(_input, input_w_with_mic, 80);
-    if (_keyboard_btn)
-        lv_obj_align(_keyboard_btn, LV_ALIGN_LEFT_MID, SIDE_GAP + input_w_with_mic + BTN_GAP + MIC_W + BTN_GAP, 0);
+    lv_obj_set_size(_input, INPUT_W_MIC, 80);
+    if (_keyboard_btn) {
+        // Centre the keyboard button between the voice button and Send, then
+        // shift left by KB_LEFT_BIAS so the kb reads as visually balanced
+        // (Send is much wider than kb — see header for the why).
+        // voice_end = SIDE_GAP + INPUT_W_MIC + BTN_GAP + MIC_W    → 976
+        // send_x    = SCREEN_W - SIDE_GAP - SEND_W                → 1108
+        int voice_end = SIDE_GAP + INPUT_W_MIC + BTN_GAP + MIC_W;
+        int send_x    = SCREEN_W - SIDE_GAP - SEND_W;
+        int kb_x      = (voice_end + send_x) / 2 - KB_W / 2 - KB_LEFT_BIAS;
+        lv_obj_align(_keyboard_btn, LV_ALIGN_LEFT_MID, kb_x, 0);
+    }
+}
+
+// ─── Swipe-up-to-exit gesture ────────────────────────────────────────────────
+// Replaces the header back button. Register on the pointer indev directly
+// so the gesture fires regardless of which LVGL object the user touches
+// (chat bubble, header, keyboard, etc.) — same pattern as app_xiaozhi.
+void AppProjectAssistant::_addSwipeGesture()
+{
+    lv_indev_t* indev = lv_indev_get_next(nullptr);
+    while (indev) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            lv_indev_add_event_cb(indev, [](lv_event_t* e) {
+                lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+                if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
+                    lv_async_call([](void* ud) {
+                        auto* self = static_cast<AppProjectAssistant*>(ud);
+                        if (self) self->close();
+                    }, lv_event_get_user_data(e));
+                }
+            }, LV_EVENT_GESTURE, this);
+            _gesture_indev = indev;
+            break;
+        }
+        indev = lv_indev_get_next(indev);
+    }
+}
+
+void AppProjectAssistant::_removeSwipeGesture()
+{
+    if (_gesture_indev) {
+        lv_indev_remove_event_cb_with_user_data(_gesture_indev, nullptr, this);
+        _gesture_indev = nullptr;
+    }
 }
 
 void AppProjectAssistant::_hideKeyboard()
@@ -482,14 +509,21 @@ void AppProjectAssistant::_hideKeyboard()
     if (_input_row)
         lv_obj_align(_input_row, LV_ALIGN_BOTTOM_MID, 0, 0);
     // Hide the voice button and restore the wider input + original kb button
-    // position. Same magic numbers as _showKeyboard.
-    constexpr int SIDE_GAP = 8, BTN_GAP = 20, KB_W = 80;
-    constexpr int input_w = 968;
+    // position (centred between the input's right edge and Send's left edge).
     if (_voice_btn)
         lv_obj_add_flag(_voice_btn, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_size(_input, input_w, 80);
-    if (_keyboard_btn)
-        lv_obj_align(_keyboard_btn, LV_ALIGN_LEFT_MID, SIDE_GAP + input_w + BTN_GAP, 0);
+    lv_obj_set_size(_input, INPUT_W, 80);
+    if (_keyboard_btn) {
+        // Centre the kb button between input's right edge and Send's left
+        // edge, then shift left by KB_LEFT_BIAS for visual balance (Send
+        // is much wider than kb — see header for the why).
+        // input_end = SIDE_GAP + INPUT_W          → 976
+        // send_x    = SCREEN_W - SIDE_GAP - SEND_W → 1108
+        int input_end = SIDE_GAP + INPUT_W;
+        int send_x    = SCREEN_W - SIDE_GAP - SEND_W;
+        int kb_x      = (input_end + send_x) / 2 - KB_W / 2 - KB_LEFT_BIAS;
+        lv_obj_align(_keyboard_btn, LV_ALIGN_LEFT_MID, kb_x, 0);
+    }
 }
 
 // ── Chat bubble ────────────────────────────────────────────────────────────
@@ -970,24 +1004,60 @@ std::string AppProjectAssistant::_bridgeUrl(const std::string& path)
 
 std::string AppProjectAssistant::_stripMarkdown(const std::string& s)
 {
-    // Remove **bold**, *em*, `code`, ## headings, > blockquotes
-    static const std::regex re_bold(R"(\*{1,3}([^*]+)\*{1,3})");
-    static const std::regex re_head(R"(^#{1,6}\s+)", std::regex::multiline);
-    static const std::regex re_bq(R"(^>\s*)", std::regex::multiline);
-    static const std::regex re_code(R"(`([^`]+)`)");
-    std::string r = std::regex_replace(s, re_bold, "$1");
-    r = std::regex_replace(r, re_head, "");
-    r = std::regex_replace(r, re_bq, "");
-    r = std::regex_replace(r, re_code, "$1");
-    return r;
+    // Manual markdown stripping. AVOID std::regex here — the 4 chained
+    // regex_replace calls were Stack protection fault'ing on long STT text:
+    // re_bold's `\*{1,3}([^*]+)\*{1,3}` does DFS backtracking even when no
+    // `*` is present (tries each of the 3 prefix lengths × every position)
+    // and the std::pair<sub_match,sub_match> stack frames on each call
+    // overflowed the 4 KB main task stack.
+    std::string r = s;
+    auto strip_paired = [&](const char* delim, size_t dlen) {
+        // Greedy: find first delim, then the next one; erase both, keep content.
+        // If no closing delim found, leave the opening one in place and stop.
+        size_t pos = 0;
+        while (pos + dlen * 2 <= r.size()) {
+            size_t open = r.find(delim, pos);
+            if (open == std::string::npos) break;
+            size_t close = r.find(delim, open + dlen);
+            if (close == std::string::npos) break;
+            r.erase(close, dlen);
+            r.erase(open, dlen);
+            // Don't advance pos — content stays in place, can contain more
+            // paired marks (rare but cheap to handle).
+        }
+    };
+    // Order: longest first so ***…*** doesn't get half-stripped to *…* / *…*.
+    strip_paired("***", 3);
+    strip_paired("**", 2);
+    strip_paired("*", 1);
+    strip_paired("`", 1);
+    // Heading `## ` and blockquote `> ` at line start. Cheap, no stack.
+    std::string out;
+    out.reserve(r.size());
+    size_t i = 0;
+    while (i < r.size()) {
+        bool at_line_start = (i == 0 || r[i-1] == '\n');
+        if (at_line_start) {
+            // Strip leading ## (1-6) + space
+            size_t j = i;
+            int h = 0;
+            while (j < r.size() && r[j] == '#' && h < 6) { j++; h++; }
+            if (h >= 1 && j < r.size() && r[j] == ' ') { i = j + 1; continue; }
+            // Strip leading > + space
+            if (r[i] == '>') {
+                size_t k = i + 1;
+                if (k < r.size() && r[k] == ' ') i = k + 1;
+                else if (k == r.size() || r[k] == '\n') i = k;
+                else { out.push_back(r[i++]); continue; }
+            }
+        }
+        out.push_back(r[i++]);
+    }
+    return out;
 }
 
 // ── Event callbacks ────────────────────────────────────────────────────────
-
-void AppProjectAssistant::_back_cb(lv_event_t* e)
-{
-    static_cast<AppProjectAssistant*>(lv_event_get_user_data(e))->close();
-}
+// (Back button removed — exit via swipe-up gesture, see _addSwipeGesture.)
 
 void AppProjectAssistant::_clear_cb(lv_event_t* e)
 {
@@ -1084,10 +1154,10 @@ void AppProjectAssistant::_voice_btn_cb(lv_event_t* e)
     // button is only visible while the keyboard is up — but be defensive).
     if (lv_obj_has_flag(self->_keyboard, LV_OBJ_FLAG_HIDDEN))
         self->_showKeyboard();
-    // Hide the keyboard before starting recording so the full-screen mic
-    // overlay has a clean stage. The input row slides down over the
-    // (now-hidden) keyboard position.
-    self->_hideKeyboard();
+    // Keep the on-screen keyboard visible while recording. AppVoiceInput
+    // shows a full-screen mic overlay on lv_layer_top() that covers the
+    // keyboard anyway, so hiding the keyboard here would just be
+    // unnecessary churn. The user wanted to see the keyboard stay put.
     AppVoiceInput::requestMicInput(self->_input);
 }
 

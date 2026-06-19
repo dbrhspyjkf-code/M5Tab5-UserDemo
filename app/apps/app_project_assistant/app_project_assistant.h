@@ -84,6 +84,32 @@ private:
     static constexpr int BUBBLE_MAX_W  = 880;
     static constexpr int MAX_HISTORY   = 50;
 
+    // Input-row layout constants (shared by _buildUi / _showKeyboard /
+    // _hideKeyboard so the keyboard button can be re-positioned from
+    // anywhere — the local `constexpr` it used to live in _buildUi was
+    // out of scope in the helpers, hence the linker errors).
+    //
+    //   no keyboard:  [8][input W ][20][kb=80][32][send=164][8]  → W = 968
+    //   keyboard up:  [8][input W'][20][mic=80][20][kb=80][32][send=164][8]  → W' = 868
+    static constexpr int SIDE_GAP      = 8;
+    static constexpr int BTN_GAP       = 20;
+    static constexpr int SEND_GAP      = 32;  // wider gap so Send isn't accidentally hit
+    static constexpr int KB_W          = 80;
+    static constexpr int MIC_W         = 80;
+    static constexpr int SEND_W        = 164;
+    static constexpr int INPUT_W       = SCREEN_W - 2*SIDE_GAP - KB_W - SEND_W
+                                                 - BTN_GAP - SEND_GAP;  // 968
+    static constexpr int INPUT_W_MIC   = INPUT_W - MIC_W - BTN_GAP;       // 868
+
+    // Visual centre bias for the keyboard button. The Send button (164 px) is
+    // much wider than the kb button (80 px), so a geometrically-centred kb
+    // (gaps of 26/26 between kb and its neighbours) looks pulled right of
+    // centre next to the broad Send. Shifting the kb left by this many px
+    // makes the visual gap-to-send bigger than the gap-to-input/voice, which
+    // reads as more balanced. Both _buildUi (initial) and _showKeyboard /
+    // _hideKeyboard use the same bias.
+    static constexpr int KB_LEFT_BIAS  = 12;
+
     // ── Methods ──────────────────────────────────────────────────────────────
     void _buildUi();
     void _showKeyboard();
@@ -118,10 +144,17 @@ private:
     void _showPermissionCard(const std::string& tool_name, const std::string& tool_input);
     void _hidePermissionCard();
 
+    // Swipe-up-to-exit gesture (mirrors app_xiaozhi / app_ha). Pointer-indev
+    // listener so the gesture fires regardless of which LVGL object the user
+    // touches (chat area, header, etc.). The back button in the header was
+    // removed in favour of this gesture.
+    lv_indev_t* _gesture_indev = nullptr;
+    void _addSwipeGesture();
+    void _removeSwipeGesture();
+
     static std::string _bridgeUrl(const std::string& path);
     static std::string _stripMarkdown(const std::string& s);
 
-    static void _back_cb(lv_event_t* e);
     static void _send_cb(lv_event_t* e);
     static void _clear_cb(lv_event_t* e);
     static void _approve_cb(lv_event_t* e);

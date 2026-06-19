@@ -108,4 +108,12 @@ private:
     bool       _big_mic_mode = false;
     int        _keyboard_h = 0;  // height of the on-screen keyboard the mic
                                  // is anchored above (passed by the caller).
+
+    // Big-mic audio visualizer — 5 vertical bars that pulse in height via
+    // independent lv_anim timers. Stored so _removeMicButton can delete the
+    // anims before deleting the bars (otherwise the anim keeps touching
+    // freed memory).
+    static constexpr int WAVE_BAR_COUNT = 5;
+    lv_obj_t* _wave_bars[WAVE_BAR_COUNT] = {nullptr};
+    lv_anim_t  _wave_anims[WAVE_BAR_COUNT] = {};
 };
