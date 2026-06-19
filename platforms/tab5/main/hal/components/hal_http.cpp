@@ -18,6 +18,13 @@ static bool _is_claude_gateway_url(const std::string& url)
         || url.find(":8770/api/") != std::string::npos;
 }
 
+// email-status-server.py 在 8768 端口, 读 /tmp/email-status.json 缓存.
+// 比 hermes IMAP 快 (<10ms), 1s timeout 足够; 给点余量用 3s.
+static bool _is_slow_hermes_url(const std::string& url)
+{
+    return url.find(":8768/api/email/status") != std::string::npos;
+}
+
 static esp_err_t _http_event_handler(esp_http_client_event_t* evt)
 {
     auto* body = static_cast<std::string*>(evt->user_data);
@@ -38,7 +45,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpGet(
     config.url            = url.c_str();
     config.event_handler  = _http_event_handler;
     config.user_data      = &body;
-    config.timeout_ms     = 10000;
+    config.timeout_ms     = _is_slow_hermes_url(url) ? 30000 : 10000;
     config.buffer_size    = 2048;
     config.buffer_size_tx = 512;
 
@@ -54,7 +61,8 @@ hal::HalBase::HttpResponse_t HalEsp32::httpGet(
         resp.ok     = (resp.status >= 200 && resp.status < 300);
         resp.body   = std::move(body);
     } else {
-        mclog::tagWarn(_tag, "GET {} failed: {}", url, esp_err_to_name(err));
+        mclog::tagWarn(_tag, "GET {} failed: {} (status={})", url,
+                       esp_err_to_name(err), esp_http_client_get_status_code(client));
     }
 
     esp_http_client_cleanup(client);
