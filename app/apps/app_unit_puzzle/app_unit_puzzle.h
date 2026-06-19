@@ -3,6 +3,8 @@
 #include <mooncake.h>
 #include <lvgl.h>
 #include <led_strip.h>
+#include <driver/gpio.h>   // gpio_num_t / GPIO_NUM_53 used by DIN_GPIO
+#include <esp_err.h>       // esp_err_t / ESP_OK used by _init_err and _stripInit decl
 #include <atomic>
 #include <functional>
 #include <mutex>
