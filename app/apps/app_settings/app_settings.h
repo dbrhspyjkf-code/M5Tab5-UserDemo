@@ -25,8 +25,13 @@ public:
     // Called when the user backs out, so the launcher can restore its screen.
     void setCloseCallback(std::function<void()> cb) { _close_cb = std::move(cb); }
 
+    // AppUnitPuzzle (灯阵) 的 mooncake app id, 由 app_installer 注入.
+    // _toolPuzzle_cb 用它启动外部 AppUnitPuzzle.
+    void setPuzzleAppId(int id) { _puzzle_id = id; }
+
 private:
     std::function<void()> _close_cb;
+    int _puzzle_id = -1;
 
     lv_indev_t* _gesture_indev = nullptr;
     lv_obj_t*   _scr        = nullptr;
@@ -62,6 +67,12 @@ private:
     std::string _unit_entry   = "1";      // amount string
     int         _unit_cat_idx = 0;        // current category
 
+    // ── Email (邮件) ────────────────────────────────────────────────────────────
+    lv_obj_t*   _email_page   = nullptr;
+    lv_obj_t*   _email_title  = nullptr;  // "邮件 (N 封未读)" — top title
+    lv_obj_t*   _email_status = nullptr;  // "加载中…" / "拉取失败" / empty marker
+    lv_obj_t*   _email_list   = nullptr;  // lv_list 主体
+
     void _buildToolsPage();
     void _openCalculator();
     void _closeCalculator();
@@ -81,12 +92,19 @@ private:
     void _unitRecompute();
     void _unitPopulateUnits();  // fill from/to dropdowns when category changes
 
+    void _openEmail();
+    void _closeEmail();
+    void _emailFetch();    // async pull from hermes :8766/unread_emails
+    void _emailRefresh();  // UI thread: rebuild lv_list from g_emails
+    void _emailShowError();
+
     void _installSwipeGesture();
     void _removeSwipeGesture();
 
     static void _toolBtn_cb(lv_event_t* e);  // tools tile → open calculator
     static void _calcKey_cb(lv_event_t* e);  // a calculator key
     static void _back_cb(lv_event_t* e);     // calculator → tools page
+    static void _toolPuzzle_cb(lv_event_t* e);  // tools 第 2 行 tile → open 灯阵
 
     static void _toolFx_cb(lv_event_t* e);   // tools tile → open converter
     static void _fxKey_cb(lv_event_t* e);    // a converter keypad key
@@ -101,4 +119,7 @@ private:
     static void _unitToDd_cb(lv_event_t* e);   // to unit dropdown changed
     static void _unitSwap_cb(lv_event_t* e);   // swap from/to
     static void _unitBack_cb(lv_event_t* e);   // converter → tools page
+
+    static void _toolMail_cb(lv_event_t* e);   // tools tile → open email page
+    static void _emailRefresh_cb(lv_event_t* e); // 邮件子页刷新按钮 → _emailFetch
 };

@@ -16,6 +16,7 @@
 #include "app_settings/app_settings.h"
 #include "app_project_assistant/app_project_assistant.h"
 #include "app_voice_input/app_voice_input.h"
+#include "app_unit_puzzle/app_unit_puzzle.h"
 /* Header files locator (Don't remove) */
 
 // Start boot anim app and wait for it to finish
@@ -56,18 +57,26 @@ inline void on_install_apps()
     auto pa_uptr = std::make_unique<AppProjectAssistant>();
     AppProjectAssistant* project_assistant = pa_uptr.get();
 
+    auto up_uptr = std::make_unique<AppUnitPuzzle>();
+    AppUnitPuzzle* unit_puzzle = up_uptr.get();
+
     // ── Install (AppHome auto-opens via onCreate → open()) ──
     mooncake::GetMooncake().installApp(std::move(home_uptr));
     int ha_id = mooncake::GetMooncake().installApp(std::move(ha_uptr));
     int xz_id = mooncake::GetMooncake().installApp(std::move(xz_uptr));
     int set_id = mooncake::GetMooncake().installApp(std::move(set_uptr));
     int pa_id = mooncake::GetMooncake().installApp(std::move(pa_uptr));
+    int up_id = mooncake::GetMooncake().installApp(std::move(up_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
     xz->setCloseCallback([home]() { home->restoreScreen(); });
     settings->setCloseCallback([home]() { home->restoreScreen(); });
     project_assistant->setCloseCallback([home]() { home->restoreScreen(); });
+    unit_puzzle->setCloseCallback([home]() { home->restoreScreen(); });
+
+    // 灯阵入口放到「工具」页第 2 行 (由 AppSettings 持有), 不再占 home 一格.
+    settings->setPuzzleAppId(up_id);
 
     // ── Register apps in the home screen ──
     home->addApp("智能家居", ha_id);

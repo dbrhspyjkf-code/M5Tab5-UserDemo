@@ -39,6 +39,7 @@ idf_component_register(SRCS "app_main.cpp" ${APP_LAYER_SRCS} ${MY_HAL_SRCS}
                         usb
                         78__esp-ml307
                         espressif__esp-sr
+                        espressif__led_strip
                     PRIV_REQUIRES
                         xiaozhi_core
                         78__xiaozhi-fonts

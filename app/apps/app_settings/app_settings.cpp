@@ -82,6 +82,19 @@ double            g_fx_rate[FX_N] = {1.00, 7.25, 0.92, 157.0, 0.79, 7.81, 1380.0
 std::atomic<bool> g_fx_updated{false};   // set by worker, consumed in onRunning
 std::atomic<bool> g_fx_fetching{false};
 std::string       g_fx_source = "static";
+
+// ── Email cache (worker thread fills, UI thread reads) ──────────────────────
+// Mirrors the g_fx_* pattern: detached fetch worker writes g_emails under
+// g_email_mutex and flips g_email_updated; the UI loop detects the flag in
+// onRunning() and rebuilds the lv_list via _emailRefresh().
+struct EmailItem { std::string from, subject, date, folder; };
+std::mutex             g_email_mutex;
+std::vector<EmailItem> g_emails;
+std::atomic<int>       g_email_total{0};        // 总未读数, 从 j["count"] 取
+std::atomic<bool>      g_email_updated{false};
+std::atomic<bool>      g_email_fetching{false};
+std::atomic<bool>      g_email_error{false};
+std::string            g_email_error_msg;
 }  // namespace
 
 AppSettings::AppSettings()
@@ -110,6 +123,17 @@ void AppSettings::onRunning()
     if (g_fx_updated.exchange(false) && _fx_page) {
         _fxRecompute();
     }
+    // Same pattern for the email cache: worker fills g_emails + flips
+    // g_email_updated; we rebuild the lv_list on the UI loop.
+    if (g_email_updated.exchange(false) && _email_page) {
+        _emailRefresh();
+    }
+    if (g_email_error.exchange(false) && _email_page) {
+        _emailShowError();
+    }
+    // (移除 500ms 倒计时 — lv_label_set_text 触发 lvgl layer 重新分配 1200x16 横条
+    //  buffer (76.8KB), 在 ESP32-P4 上连续失败, 渲染管线堵塞, onRunning 自己都
+    //  拿不到 LVGL lock, status 文字卡死. worker 完成时改一次 status 即可.)
 }
 
 void AppSettings::onClose()
@@ -124,6 +148,12 @@ void AppSettings::onClose()
     _calc_expr_lbl = _calc_res_lbl = nullptr;
     _fx_from_dd = _fx_to_dd = _fx_amt_lbl = _fx_res_lbl = _fx_rate_lbl = nullptr;
     _unit_cat_dd = _unit_from_dd = _unit_to_dd = _unit_amt_lbl = _unit_res_lbl = _unit_eq_lbl = nullptr;
+    _email_page = _email_title = _email_status = _email_list = nullptr;
+    g_email_total.store(0);
+    g_email_updated.store(false);
+    g_email_error.store(false);
+    g_email_error_msg.clear();
+    g_email_fetching.store(false);  // 防止重入保护卡死
     if (_close_cb) _close_cb();
 }
 
@@ -141,7 +171,8 @@ void AppSettings::_installSwipeGesture()
                         auto* app = static_cast<AppSettings*>(udata);
                         if (!app) return;
                         // Back out of the deepest open sub-page first.
-                        if (app->_unit_page)   app->_closeUnit();
+                        if (app->_email_page)   app->_closeEmail();
+                        else if (app->_unit_page)   app->_closeUnit();
                         else if (app->_fx_page) app->_closeFx();
                         else if (app->_calc_page) app->_closeCalculator();
                         else                     app->close();
@@ -180,17 +211,21 @@ void AppSettings::_buildToolsPage()
     lv_label_set_text(title, "工具");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 28);
     lv_obj_set_style_text_color(title, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_text_font(title, &font_zh_36, 0);
+    lv_obj_set_style_text_font(title, zh_font_30(), 0);
 
     // Tool card — same style as the HA "灯光" device cards: dark-blue rounded
     // card with a soft shadow, icon on the left, name on the right.
+    // img==nullptr 走"点阵分支": 用 LV_SYMBOL_BULLET 拼一个 6x6 的 LED 矩阵缩略图
+    // (象征 8x8 Puzzle), y_pos 默认 140 (第 1 行), 第 2 行 tile 传 310.
+    // kind==0 (默认) 走点阵分支 (灯阵); kind==1 走信封分支 (邮件).
     auto make_tile = [&](int x, const lv_image_dsc_t* img, int img_w,
                          const char* label, lv_event_cb_t cb,
                          int img_scale = 256, int icon_x = 12,
-                         int img_scale_y = -1) {
+                         int img_scale_y = -1, int y_pos = 140,
+                         int kind = 0) {
         lv_obj_t* tile = lv_obj_create(_tools_page);
         lv_obj_set_size(tile, 380, 140);
-        lv_obj_align(tile, LV_ALIGN_TOP_LEFT, x, 140);
+        lv_obj_align(tile, LV_ALIGN_TOP_LEFT, x, y_pos);
         lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD), 0);
         lv_obj_set_style_radius(tile, 20, 0);
         lv_obj_set_style_border_width(tile, 0, 0);
@@ -204,22 +239,92 @@ void AppSettings::_buildToolsPage()
         lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(tile, cb, LV_EVENT_CLICKED, this);
 
-        lv_obj_t* icon = lv_image_create(tile);
-        lv_image_set_src(icon, img);
-        if (img_scale_y > 0) {
-            // Non-uniform scale (e.g. stretch a portrait icon to a square box).
-            lv_image_set_scale_x(icon, img_scale);
-            lv_image_set_scale_y(icon, img_scale_y);
-        } else if (img_scale != 256) {
-            lv_image_set_scale(icon, img_scale);
-        }
-        lv_obj_align(icon, LV_ALIGN_LEFT_MID, icon_x, 0);
-
         lv_obj_t* name = lv_label_create(tile);
         lv_label_set_text(name, label);
-        lv_obj_set_style_text_font(name, &font_zh_36, 0);
+        lv_obj_set_style_text_font(name, zh_font_30(), 0);
         lv_obj_set_style_text_color(name, lv_color_hex(C_TEXT), 0);
-        lv_obj_align(name, LV_ALIGN_LEFT_MID, icon_x + img_w + 16, 0);
+
+        if (img) {
+            lv_obj_t* icon = lv_image_create(tile);
+            lv_image_set_src(icon, img);
+            if (img_scale_y > 0) {
+                // Non-uniform scale (e.g. stretch a portrait icon to a square box).
+                lv_image_set_scale_x(icon, img_scale);
+                lv_image_set_scale_y(icon, img_scale_y);
+            } else if (img_scale != 256) {
+                lv_image_set_scale(icon, img_scale);
+            }
+            lv_obj_align(icon, LV_ALIGN_LEFT_MID, icon_x, 0);
+            lv_obj_align(name, LV_ALIGN_LEFT_MID, icon_x + img_w + 16, 0);
+        } else {
+            // kind 分支: 0=点阵 (灯阵) / 1=信封 (邮件)
+            if (kind == 1) {
+                // 信封 (邮件 tile) — 白色矩形 + 顶上一条横线表示封口.
+                // 跟点阵分支一样完全脱离字体, 用纯 lv_obj 矩形拼.
+                const int EW = 84, EH = 56;
+                const int ex = icon_x + 12;
+                const int ey = (140 - EH) / 2;
+                lv_obj_t* env_body = lv_obj_create(tile);
+                lv_obj_set_size(env_body, EW, EH);
+                lv_obj_set_pos(env_body, ex, ey);
+                lv_obj_set_style_bg_color(env_body, lv_color_hex(C_TEXT), 0);
+                lv_obj_set_style_bg_opa(env_body, LV_OPA_COVER, 0);
+                lv_obj_set_style_radius(env_body, 6, 0);
+                lv_obj_set_style_border_width(env_body, 0, 0);
+                lv_obj_set_style_shadow_width(env_body, 0, 0);
+                lv_obj_set_style_pad_all(env_body, 0, 0);
+                lv_obj_clear_flag(env_body, LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_clear_flag(env_body, LV_OBJ_FLAG_CLICKABLE);
+                // 关键: 让 env_body 不吞 click 事件, 冒泡到父 tile
+                lv_obj_add_flag(env_body, LV_OBJ_FLAG_EVENT_BUBBLE);
+                // 封口横线
+                lv_obj_t* flap = lv_obj_create(tile);
+                lv_obj_set_size(flap, EW - 16, 2);
+                lv_obj_set_pos(flap, ex + 8, ey + 18);
+                lv_obj_set_style_bg_color(flap, lv_color_hex(0x6A8AAA), 0);
+                lv_obj_set_style_bg_opa(flap, LV_OPA_COVER, 0);
+                lv_obj_set_style_border_width(flap, 0, 0);
+                lv_obj_set_style_radius(flap, 0, 0);
+                lv_obj_set_style_shadow_width(flap, 0, 0);
+                lv_obj_set_style_pad_all(flap, 0, 0);
+                lv_obj_clear_flag(flap, LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_clear_flag(flap, LV_OBJ_FLAG_CLICKABLE);
+                // 关键: flap 不吞 click 事件, 冒泡到父 tile
+                lv_obj_add_flag(flap, LV_OBJ_FLAG_EVENT_BUBBLE);
+                // label 右移
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, ex + EW + 16, 0);
+            } else {
+                // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
+                // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
+                // 直接画 9 个圆角矩形, 完全脱离字体. 9 个圆点既省资源也清晰.
+                const int CELL = 24, GAP = 6, COLS = 3, ROWS = 3;
+                const int GRID_W = COLS * CELL + (COLS - 1) * GAP;
+                const int start_x = icon_x + 8;
+                const int start_y = (140 - ROWS * CELL - (ROWS - 1) * GAP) / 2;
+                for (int r = 0; r < ROWS; r++) {
+                    for (int c = 0; c < COLS; c++) {
+                        lv_obj_t* dot = lv_obj_create(tile);
+                        lv_obj_set_size(dot, CELL, CELL);
+                        lv_obj_set_pos(dot,
+                            start_x + c * (CELL + GAP),
+                            start_y + r * (CELL + GAP));
+                        lv_obj_set_style_bg_color(dot, lv_color_hex(C_ACCENT), 0);
+                        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+                        lv_obj_set_style_radius(dot, CELL / 2, 0);  // 圆形
+                        lv_obj_set_style_border_width(dot, 0, 0);
+                        lv_obj_set_style_shadow_width(dot, 0, 0);
+                        lv_obj_set_style_pad_all(dot, 0, 0);
+                        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+                        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+                        // 关键: 9 个 dot 不吞 click, 冒泡到父 tile
+                        // (灯阵 tile 也用同一份 make_tile, 之前不点就是这问题)
+                        lv_obj_add_flag(dot, LV_OBJ_FLAG_EVENT_BUBBLE);
+                    }
+                }
+                // label 整体右移更多, 避免压到点阵
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start_x + GRID_W + 12, 0);
+            }
+        }
     };
 
     // All three tool icons render at 130×130 to match the 汇率 (fx) icon.
@@ -229,11 +334,28 @@ void AppSettings::_buildToolsPage()
     make_tile(35,  &calc_icon, 130, "计算器",  _toolBtn_cb);
     make_tile(450, &fx_icon,   150, "汇率",    _toolFx_cb,   384);  // 384 = 256 × 1.5x → 150×150
     make_tile(865, &unit_icon, 130, "单位换算", _toolUnit_cb);
+
+    // 第 2 行: 灯阵 (Unit-Puzzle 8x8 WS2812 矩阵测试 App)
+    //   y=140 (第 1 行) + 140 (tile 高) + 30 (行间距) = 310
+    //   图标走 make_tile 的 nullptr 分支, 用 LV_SYMBOL_BULLET 拼 6x6 LED 缩略图
+    make_tile(35, nullptr, 130, "灯  阵", _toolPuzzle_cb, 256, 12, -1, 310);
+
+    // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表)
+    //   y=310 + 140 + 30 = 480, 走 kind=1 信封分支
+    make_tile(35, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 480, 1);
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->_openCalculator();
+}
+
+void AppSettings::_toolPuzzle_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (self->_puzzle_id > 0) {
+        mooncake::GetMooncake().openApp(self->_puzzle_id);
+    }
 }
 
 void AppSettings::_toolFx_cb(lv_event_t* e)
@@ -244,6 +366,19 @@ void AppSettings::_toolFx_cb(lv_event_t* e)
 void AppSettings::_toolUnit_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->_openUnit();
+}
+
+void AppSettings::_toolMail_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->_openEmail();
+}
+
+void AppSettings::_emailRefresh_cb(lv_event_t* e)
+{
+    // 邮件子页 "刷新" 按钮 → 重新拉取. _emailFetch 内部 exchange(true) 跳过 in-flight.
+    auto* app = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    mclog::tagInfo(_tag, "email refresh button clicked");
+    app->_emailFetch();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -687,7 +822,7 @@ void AppSettings::_fxFetch()
 {
     if (g_fx_fetching.exchange(true)) return;  // already in flight
 
-    std::string host = GetHAL()->getConfig("ha_host", "192.168.1.142");
+    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.142");
     std::string url  = "http://" + host + ":8766/rate";
 
     bool spawned = GetHAL()->tryRunDetached([url]() {
@@ -1228,4 +1363,205 @@ void AppSettings::_unitSwap_cb(lv_event_t* e)
 void AppSettings::_unitBack_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->_closeUnit();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Email (邮件) — pulls unread emails from hermes :8766/unread_emails
+// ════════════════════════════════════════════════════════════════════════════
+void AppSettings::_openEmail()
+{
+    mclog::tagInfo(_tag, "_openEmail: entered");
+    if (_tools_page) lv_obj_add_flag(_tools_page, LV_OBJ_FLAG_HIDDEN);
+
+    _email_page = lv_obj_create(_scr);
+    lv_obj_set_size(_email_page, 1280, 720);
+    lv_obj_set_pos(_email_page, 0, 0);
+    lv_obj_set_style_bg_color(_email_page, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_border_width(_email_page, 0, 0);
+    lv_obj_set_style_radius(_email_page, 0, 0);
+    lv_obj_set_style_pad_all(_email_page, 0, 0);
+    lv_obj_clear_flag(_email_page, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 顶部 title — "邮件" 或 "邮件 (N 封未读)"
+    _email_title = lv_label_create(_email_page);
+    lv_label_set_text(_email_title, "邮件");
+    lv_obj_set_style_text_color(_email_title, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_text_font(_email_title, zh_font_30(), 0);
+    lv_obj_align(_email_title, LV_ALIGN_TOP_MID, 0, 28);
+
+    // status line — 加载中 / 拉取失败 / 空 提示
+    _email_status = lv_label_create(_email_page);
+    lv_label_set_text(_email_status, "加载中…");
+    lv_obj_set_style_text_color(_email_status, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_font(_email_status, zh_font_30(), 0);
+    lv_obj_align(_email_status, LV_ALIGN_TOP_MID, 0, 76);
+
+    // 刷新按钮 (右上角) — 点击重新拉取, _emailFetch 内部有 in-flight 保护
+    lv_obj_t* refresh = lv_btn_create(_email_page);
+    lv_obj_set_size(refresh, 100, 50);
+    lv_obj_align(refresh, LV_ALIGN_TOP_RIGHT, -30, 30);
+    lv_obj_set_style_bg_color(refresh, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_radius(refresh, 12, 0);
+    lv_obj_set_style_border_width(refresh, 0, 0);
+    lv_obj_add_event_cb(refresh, _emailRefresh_cb, LV_EVENT_CLICKED, this);
+    lv_obj_t* refresh_lbl = lv_label_create(refresh);
+    lv_label_set_text(refresh_lbl, "刷新");
+    lv_obj_set_style_text_font(refresh_lbl, zh_font_30(), 0);
+    lv_obj_set_style_text_color(refresh_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_center(refresh_lbl);
+
+    // 列表区 (手画 lv_obj 容器, 不用 lv_list — lv_list 内部 scroll/clip 渲染会
+    // 触发 1200x16 RGBA8888 layer buffer (76.8KB) 反复分配, LVGL 死循环, 卡 LVGL lock)
+    _email_list = lv_obj_create(_email_page);
+    lv_obj_set_size(_email_list, 1200, 540);
+    lv_obj_align(_email_list, LV_ALIGN_TOP_MID, 0, 130);
+    lv_obj_set_style_bg_color(_email_list, lv_color_hex(C_CARD), 0);
+    lv_obj_set_style_bg_opa(_email_list, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_email_list, 0, 0);
+    lv_obj_set_style_radius(_email_list, 16, 0);
+    lv_obj_set_style_pad_all(_email_list, 12, 0);
+    lv_obj_set_scroll_dir(_email_list, LV_DIR_VER);
+    lv_obj_set_flex_flow(_email_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(_email_list, 8, 0);
+
+    mclog::tagInfo(_tag, "_openEmail: dispatching _emailFetch");
+    _emailFetch();
+    mclog::tagInfo(_tag, "_openEmail: done");
+}
+
+void AppSettings::_closeEmail()
+{
+    if (_email_page) {
+        lv_obj_delete(_email_page);
+        _email_page = _email_title = _email_status = _email_list = nullptr;
+    }
+    if (_tools_page) lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_HIDDEN);
+}
+
+void AppSettings::_emailFetch()
+{
+    if (g_email_fetching.exchange(true)) {
+        mclog::tagWarn(_tag, "emailFetch: already in flight, skip");
+        return;
+    }
+    mclog::tagInfo(_tag, "emailFetch: entered");
+
+    // email-status-server.py 跑在 8768 端口, 直接读 /tmp/email-status.json
+    // 缓存 (由 cron email-led.py 周期更新), <10ms 返回, 不需要 IMAP 同步.
+    // 跟桌面 Übersicht unread-emails.widget 是同一个数据源, 完全同步.
+    // 用 svc_host (默认 192.168.1.142) 而不是 ha_host (默认 192.168.1.133):
+    // ha_host 指向 HA 主机, svc_host 才是 hermes + email-status-server 跑的机器.
+    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.142");
+    std::string url  = "http://" + host + ":8768/api/email/status";
+    mclog::tagInfo(_tag, "emailFetch: url={}", url);
+
+    bool spawned = GetHAL()->tryRunDetached([url]() {
+        mclog::tagInfo(_tag, "emailFetch: worker started");
+        auto resp = GetHAL()->httpGet(url);
+        mclog::tagInfo(_tag, "emailFetch: httpGet done, ok={}, status={}, body_len={}",
+                       resp.ok, resp.status, resp.body.size());
+        if (resp.ok) {
+            try {
+                auto j = nlohmann::json::parse(resp.body);
+                std::lock_guard<std::mutex> lk(g_email_mutex);
+                g_emails.clear();
+                // 8768 schema: {count, folders:[{name, unread, latest_subject,
+                // latest_from, latest_preview}], error, account, time}
+                if (j.contains("folders") && j["folders"].is_array()) {
+                    g_email_total.store(j.value("count", 0));
+                    for (const auto& f : j["folders"]) {
+                        if (!f.is_object()) continue;
+                        // 单条数据只 latest 一封, 用 preview 字段当 subject
+                        g_emails.push_back(EmailItem{
+                            f.value("latest_from", std::string("?")),
+                            f.value("latest_subject", std::string("(无主题)")),
+                            std::string(),  // 8768 不暴露 date
+                            f.value("name", std::string("?")),
+                        });
+                    }
+                    g_email_updated.store(true);
+                    mclog::tagInfo(_tag, "email list updated ({} folders, {} total)",
+                                   g_emails.size(), g_email_total.load());
+                } else {
+                    g_email_error.store(true);
+                    g_email_error_msg = j.value("error", std::string("未知错误"));
+                }
+            } catch (const std::exception& ex) {
+                mclog::tagWarn(_tag, "email parse failed: {}", ex.what());
+                g_email_error.store(true);
+                g_email_error_msg = std::string("JSON 解析失败: ") + ex.what();
+            }
+        } else {
+            // resp.status == 0 通常是 timeout / 连接失败 / DNS 失败
+            mclog::tagWarn(_tag, "email fetch failed (status={}, body={})",
+                           resp.status, resp.body);
+            g_email_error.store(true);
+            if (resp.status == 0) {
+                g_email_error_msg = "网络/timeout (status=0) — 检查 8768 email-status-server";
+            } else {
+                g_email_error_msg = "HTTP " + std::to_string(resp.status);
+            }
+        }
+        g_email_fetching.store(false);
+    });
+    if (!spawned) {
+        // 之前这里只 store(false) 不设 error → UI 永远"加载中". 修.
+        mclog::tagWarn(_tag, "emailFetch: tryRunDetached failed (pthread_create?)");
+        g_email_error.store(true);
+        g_email_error_msg = "本地线程创建失败 (内存不足?)";
+        g_email_fetching.store(false);
+    }
+}
+
+void AppSettings::_emailRefresh()
+{
+    if (!_email_list) return;
+    // lv_list_clean 不存在于本项目 LVGL 版本, 用通用 lv_obj_clean 删子对象
+    lv_obj_clean(_email_list);
+
+    std::vector<EmailItem> copy;
+    {
+        std::lock_guard<std::mutex> lk(g_email_mutex);
+        copy = g_emails;
+    }
+
+    if (copy.empty()) {
+        lv_label_set_text(_email_title, "邮件");
+        lv_label_set_text(_email_status, "没有未读邮件");
+        return;
+    }
+
+    int total = g_email_total.load();
+    char buf[64];
+    snprintf(buf, sizeof(buf), "邮件 (%d 封未读)", total);
+    lv_label_set_text(_email_title, buf);
+    lv_label_set_text(_email_status, "");
+
+    for (const auto& m : copy) {
+        // 一行: "[folder] from — subject" (手画 row, 不用 lv_list_add_button)
+        char row_text[320];
+        snprintf(row_text, sizeof(row_text), "[%s] %s — %s",
+                 m.folder.c_str(), m.from.c_str(), m.subject.c_str());
+        lv_obj_t* row = lv_obj_create(_email_list);
+        lv_obj_set_size(row, LV_PCT(100), 56);
+        lv_obj_set_style_bg_color(row, lv_color_hex(C_CARD_PR), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(row, 10, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t* lbl = lv_label_create(row);
+        lv_label_set_text(lbl, row_text);
+        lv_obj_set_style_text_font(lbl, zh_font_30(), 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(C_TEXT), 0);
+        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 16, 0);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    }
+}
+
+void AppSettings::_emailShowError()
+{
+    if (!_email_status) return;
+    lv_label_set_text(_email_status,
+        ("拉取失败: " + g_email_error_msg).c_str());
 }
