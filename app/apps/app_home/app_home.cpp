@@ -10,6 +10,7 @@
 #include <xiaozhi_ctl.h>
 #include "../app_voice_input/app_voice_input.h"
 #include "../app_ha/ha_weather.h"
+#include "../app_settings/app_settings.h"
 
 static const std::string _tag = "app-home";
 
@@ -201,6 +202,18 @@ void AppHome::onOpen()
     lv_obj_align(_status_wifi, LV_ALIGN_RIGHT_MID, -250, 0);
     make_tappable(_status_wifi, 2);
 
+    // Mail icon — sits to the LEFT of the WiFi icon, hidden by default. Only
+    // shown when AppSettings::email_unread_total > 0 (polled every 60s in
+    // onRunning). Tap → opens the AppSettings email sub-page via the
+    // callback injected from app_installer.h.
+    _status_email = lv_label_create(sbar);
+    lv_obj_set_style_text_font(_status_email, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(_status_email, lv_color_hex(0x4FA3FF), 0);
+    lv_label_set_text(_status_email, LV_SYMBOL_ENVELOPE);
+    lv_obj_align(_status_email, LV_ALIGN_RIGHT_MID, -300, 0);
+    lv_obj_add_flag(_status_email, LV_OBJ_FLAG_HIDDEN);
+    make_tappable(_status_email, 5);
+
     // Quick-settings gear — to the left of the battery (volume + brightness).
     _status_tools = lv_label_create(sbar);
     lv_obj_set_style_text_font(_status_tools, &lv_font_montserrat_28, 0);
@@ -295,6 +308,32 @@ void AppHome::onRunning()
         std::lock_guard<std::mutex> lk(_weather_mutex);
         lv_label_set_text(_wx_body, _wx_text.c_str());
     }
+
+    // Email — poll the shared cache every 60s. AppSettings::fetchEmail() is
+    // in-flight safe (the second call while one is running is a no-op), so
+    // it's fine to call it from the UI loop. The actual httpGet runs on a
+    // detached worker thread.
+    if (_last_email_ms == 0 || now - _last_email_ms > 60 * 1000) {
+        _last_email_ms = now;
+        AppSettings::fetchEmail();
+    }
+    // Reflect current unread count in the status-bar mail icon: hidden when 0,
+    // visible (and turns red for high count) when there's mail to read.
+    if (_status_email) {
+        int unread = AppSettings::email_unread_total.load();
+        bool should_show = (unread > 0);
+        bool is_shown = !lv_obj_has_flag(_status_email, LV_OBJ_FLAG_HIDDEN);
+        if (should_show != is_shown) {
+            if (should_show) lv_obj_clear_flag(_status_email, LV_OBJ_FLAG_HIDDEN);
+            else             lv_obj_add_flag(_status_email, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (should_show) {
+            // Subtle visual cue: blue normally, warm orange when there's a
+            // lot of mail to read.
+            uint32_t c = unread >= 10 ? 0xF39C12 : 0x4FA3FF;
+            lv_obj_set_style_text_color(_status_email, lv_color_hex(c), 0);
+        }
+    }
 }
 
 void AppHome::_fetch_weather()
@@ -346,6 +385,7 @@ void AppHome::onClose()
     _status_wifi  = nullptr;
     _status_batt  = nullptr;
     _status_tools = nullptr;
+    _status_email = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
     _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
     _btn_data.clear();
@@ -817,6 +857,7 @@ void AppHome::_statusClick_cb(lv_event_t* e)
     else if (tag == 2) self->_openNetworkDialog();
     else if (tag == 3) self->_openQuickSettings();
     else if (tag == 4) self->_openWeatherDialog();
+    else if (tag == 5 && self->_open_email) self->_open_email();
 }
 
 void AppHome::_modalBg_cb(lv_event_t* e)

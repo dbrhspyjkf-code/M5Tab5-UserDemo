@@ -87,15 +87,20 @@ std::string       g_fx_source = "static";
 // Mirrors the g_fx_* pattern: detached fetch worker writes g_emails under
 // g_email_mutex and flips g_email_updated; the UI loop detects the flag in
 // onRunning() and rebuilds the lv_list via _emailRefresh().
-struct EmailItem { std::string from, subject, date, folder; };
-std::mutex             g_email_mutex;
-std::vector<EmailItem> g_emails;
-std::atomic<int>       g_email_total{0};        // 总未读数, 从 j["count"] 取
-std::atomic<bool>      g_email_updated{false};
-std::atomic<bool>      g_email_fetching{false};
-std::atomic<bool>      g_email_error{false};
-std::string            g_email_error_msg;
 }  // namespace
+
+// Static-member definitions for the shared email cache (declared in
+// app_settings.h). Mirrors the g_fx_* pattern above: detached fetch worker
+// writes email_list under email_list_mutex and flips email_updated; the UI
+// loop detects the flag in onRunning() and rebuilds the lv_list. AppHome's
+// status-bar icon polls fetchEmail() every 60s and reads email_unread_total.
+std::atomic<int>        AppSettings::email_unread_total{0};  // total, from j["count"]
+std::atomic<bool>       AppSettings::email_updated{false};
+std::atomic<bool>       AppSettings::email_fetching{false};
+std::atomic<bool>       AppSettings::email_error{false};
+std::string             AppSettings::email_error_msg;
+std::mutex              AppSettings::email_list_mutex;
+std::vector<EmailItem>  AppSettings::email_list;
 
 AppSettings::AppSettings()
 {
@@ -125,10 +130,10 @@ void AppSettings::onRunning()
     }
     // Same pattern for the email cache: worker fills g_emails + flips
     // g_email_updated; we rebuild the lv_list on the UI loop.
-    if (g_email_updated.exchange(false) && _email_page) {
+    if (email_updated.exchange(false) && _email_page) {
         _emailRefresh();
     }
-    if (g_email_error.exchange(false) && _email_page) {
+    if (email_error.exchange(false) && _email_page) {
         _emailShowError();
     }
     // (移除 500ms 倒计时 — lv_label_set_text 触发 lvgl layer 重新分配 1200x16 横条
@@ -149,11 +154,11 @@ void AppSettings::onClose()
     _fx_from_dd = _fx_to_dd = _fx_amt_lbl = _fx_res_lbl = _fx_rate_lbl = nullptr;
     _unit_cat_dd = _unit_from_dd = _unit_to_dd = _unit_amt_lbl = _unit_res_lbl = _unit_eq_lbl = nullptr;
     _email_page = _email_title = _email_status = _email_list = nullptr;
-    g_email_total.store(0);
-    g_email_updated.store(false);
-    g_email_error.store(false);
-    g_email_error_msg.clear();
-    g_email_fetching.store(false);  // 防止重入保护卡死
+    email_unread_total.store(0);
+    email_updated.store(false);
+    email_error.store(false);
+    email_error_msg.clear();
+    email_fetching.store(false);  // 防止重入保护卡死
     if (_close_cb) _close_cb();
 }
 
@@ -378,7 +383,8 @@ void AppSettings::_emailRefresh_cb(lv_event_t* e)
     // 邮件子页 "刷新" 按钮 → 重新拉取. _emailFetch 内部 exchange(true) 跳过 in-flight.
     auto* app = static_cast<AppSettings*>(lv_event_get_user_data(e));
     mclog::tagInfo(_tag, "email refresh button clicked");
-    app->_emailFetch();
+    app->fetchEmail();  // (also static; the explicit instance call keeps the
+                       //  refresh-button event handler readable)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1368,6 +1374,15 @@ void AppSettings::_unitBack_cb(lv_event_t* e)
 // ════════════════════════════════════════════════════════════════════════════
 //  Email (邮件) — pulls unread emails from hermes :8766/unread_emails
 // ════════════════════════════════════════════════════════════════════════════
+void AppSettings::openEmailPage()
+{
+    // Public entry used by the home status-bar mail icon. Same as the user
+    // tapping the "邮件" tool tile — build the sub-page and kick off a fetch.
+    // No-op if the app hasn't been opened yet (no _scr).
+    if (!_scr) return;
+    _openEmail();
+}
+
 void AppSettings::_openEmail()
 {
     mclog::tagInfo(_tag, "_openEmail: entered");
@@ -1424,8 +1439,8 @@ void AppSettings::_openEmail()
     lv_obj_set_flex_flow(_email_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(_email_list, 8, 0);
 
-    mclog::tagInfo(_tag, "_openEmail: dispatching _emailFetch");
-    _emailFetch();
+    mclog::tagInfo(_tag, "_openEmail: dispatching fetchEmail");
+    fetchEmail();
     mclog::tagInfo(_tag, "_openEmail: done");
 }
 
@@ -1438,13 +1453,13 @@ void AppSettings::_closeEmail()
     if (_tools_page) lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_HIDDEN);
 }
 
-void AppSettings::_emailFetch()
+void AppSettings::fetchEmail()
 {
-    if (g_email_fetching.exchange(true)) {
-        mclog::tagWarn(_tag, "emailFetch: already in flight, skip");
+    if (email_fetching.exchange(true)) {
+        mclog::tagWarn(_tag, "fetchEmail: already in flight, skip");
         return;
     }
-    mclog::tagInfo(_tag, "emailFetch: entered");
+    mclog::tagInfo(_tag, "fetchEmail: entered");
 
     // email-status-server.py 跑在 8768 端口, 直接读 /tmp/email-status.json
     // 缓存 (由 cron email-led.py 周期更新), <10ms 返回, 不需要 IMAP 同步.
@@ -1463,53 +1478,53 @@ void AppSettings::_emailFetch()
         if (resp.ok) {
             try {
                 auto j = nlohmann::json::parse(resp.body);
-                std::lock_guard<std::mutex> lk(g_email_mutex);
-                g_emails.clear();
+                std::lock_guard<std::mutex> lk(email_list_mutex);
+                email_list.clear();
                 // 8768 schema: {count, folders:[{name, unread, latest_subject,
                 // latest_from, latest_preview}], error, account, time}
                 if (j.contains("folders") && j["folders"].is_array()) {
-                    g_email_total.store(j.value("count", 0));
+                    email_unread_total.store(j.value("count", 0));
                     for (const auto& f : j["folders"]) {
                         if (!f.is_object()) continue;
                         // 单条数据只 latest 一封, 用 preview 字段当 subject
-                        g_emails.push_back(EmailItem{
+                        email_list.push_back(EmailItem{
                             f.value("latest_from", std::string("?")),
                             f.value("latest_subject", std::string("(无主题)")),
                             std::string(),  // 8768 不暴露 date
                             f.value("name", std::string("?")),
                         });
                     }
-                    g_email_updated.store(true);
+                    email_updated.store(true);
                     mclog::tagInfo(_tag, "email list updated ({} folders, {} total)",
-                                   g_emails.size(), g_email_total.load());
+                                   email_list.size(), email_unread_total.load());
                 } else {
-                    g_email_error.store(true);
-                    g_email_error_msg = j.value("error", std::string("未知错误"));
+                    email_error.store(true);
+                    email_error_msg = j.value("error", std::string("未知错误"));
                 }
             } catch (const std::exception& ex) {
                 mclog::tagWarn(_tag, "email parse failed: {}", ex.what());
-                g_email_error.store(true);
-                g_email_error_msg = std::string("JSON 解析失败: ") + ex.what();
+                email_error.store(true);
+                email_error_msg = std::string("JSON 解析失败: ") + ex.what();
             }
         } else {
             // resp.status == 0 通常是 timeout / 连接失败 / DNS 失败
             mclog::tagWarn(_tag, "email fetch failed (status={}, body={})",
                            resp.status, resp.body);
-            g_email_error.store(true);
+            email_error.store(true);
             if (resp.status == 0) {
-                g_email_error_msg = "网络/timeout (status=0) — 检查 8768 email-status-server";
+                email_error_msg = "网络/timeout (status=0) — 检查 8768 email-status-server";
             } else {
-                g_email_error_msg = "HTTP " + std::to_string(resp.status);
+                email_error_msg = "HTTP " + std::to_string(resp.status);
             }
         }
-        g_email_fetching.store(false);
+        email_fetching.store(false);
     });
     if (!spawned) {
         // 之前这里只 store(false) 不设 error → UI 永远"加载中". 修.
         mclog::tagWarn(_tag, "emailFetch: tryRunDetached failed (pthread_create?)");
-        g_email_error.store(true);
-        g_email_error_msg = "本地线程创建失败 (内存不足?)";
-        g_email_fetching.store(false);
+        email_error.store(true);
+        email_error_msg = "本地线程创建失败 (内存不足?)";
+        email_fetching.store(false);
     }
 }
 
@@ -1521,8 +1536,8 @@ void AppSettings::_emailRefresh()
 
     std::vector<EmailItem> copy;
     {
-        std::lock_guard<std::mutex> lk(g_email_mutex);
-        copy = g_emails;
+        std::lock_guard<std::mutex> lk(email_list_mutex);
+        copy = email_list;
     }
 
     if (copy.empty()) {
@@ -1531,7 +1546,7 @@ void AppSettings::_emailRefresh()
         return;
     }
 
-    int total = g_email_total.load();
+    int total = email_unread_total.load();
     char buf[64];
     snprintf(buf, sizeof(buf), "邮件 (%d 封未读)", total);
     lv_label_set_text(_email_title, buf);
@@ -1563,5 +1578,5 @@ void AppSettings::_emailShowError()
 {
     if (!_email_status) return;
     lv_label_set_text(_email_status,
-        ("拉取失败: " + g_email_error_msg).c_str());
+        ("拉取失败: " + email_error_msg).c_str());
 }

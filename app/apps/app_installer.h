@@ -78,6 +78,16 @@ inline void on_install_apps()
     // 灯阵入口放到「工具」页第 2 行 (由 AppSettings 持有), 不再占 home 一格.
     settings->setPuzzleAppId(up_id);
 
+    // Status-bar mail icon → open the AppSettings email sub-page. The handler
+    // (1) brings the AppSettings app to the foreground (its onOpen builds the
+    // tools page) and (2) jumps straight to the email list. openApp() returns
+    // false if the app is already the active one — that's fine, openEmailPage
+    // is idempotent and will just stack the sub-page on the existing screen.
+    home->setOpenEmailHandler([settings, set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+        settings->openEmailPage();
+    });
+
     // ── Register apps in the home screen ──
     home->addApp("智能家居", ha_id);
     home->addApp("小  智", xz_id);

@@ -12,6 +12,15 @@
 #include <smooth_lvgl.h>
 #include <functional>
 #include <string>
+#include <atomic>
+#include <mutex>
+#include <vector>
+
+// Single shared email cache, populated by the worker in
+// AppSettings::fetchEmail() and read by both the email sub-page and the
+// AppHome status-bar icon. Lives at file scope so the static keyword isn't
+// required on each declaration; definitions are in app_settings.cpp.
+struct EmailItem { std::string from, subject, date, folder; };
 
 class AppSettings : public mooncake::AppAbility {
 public:
@@ -28,6 +37,28 @@ public:
     // AppUnitPuzzle (灯阵) 的 mooncake app id, 由 app_installer 注入.
     // _toolPuzzle_cb 用它启动外部 AppUnitPuzzle.
     void setPuzzleAppId(int id) { _puzzle_id = id; }
+
+    // ── Shared email cache (status-bar poll + sub-page both read these) ──
+    // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
+    // and reads email_unread_total to decide whether to show the icon.
+    static std::atomic<int>  email_unread_total;   // total, from j["count"]
+    static std::atomic<bool> email_updated;        // list changed → UI rebuild
+    static std::atomic<bool> email_fetching;       // in-flight guard
+    static std::atomic<bool> email_error;          // last fetch failed
+    static std::string       email_error_msg;
+    static std::mutex        email_list_mutex;     // guards email_list
+    static std::vector<EmailItem> email_list;      // parsed folder entries
+
+    // Kick off an async fetch from hermes :8768. In-flight safe (the second
+    // call while one is running is a no-op). Safe to call from anywhere —
+    // AppHome's status bar calls it on a 60s timer. Static (no instance state
+    // — the worker only touches the static cache above).
+    static void fetchEmail();
+
+    // Public entry: jump straight to the email sub-page (used by the home
+    // status-bar mail icon). No-op if the app hasn't been opened yet — caller
+    // should mooncake::openApp(settings_id) first if needed.
+    void openEmailPage();
 
 private:
     std::function<void()> _close_cb;
@@ -94,8 +125,7 @@ private:
 
     void _openEmail();
     void _closeEmail();
-    void _emailFetch();    // async pull from hermes :8766/unread_emails
-    void _emailRefresh();  // UI thread: rebuild lv_list from g_emails
+    void _emailRefresh();  // UI thread: rebuild lv_list from email_list
     void _emailShowError();
 
     void _installSwipeGesture();

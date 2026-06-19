@@ -23,6 +23,13 @@ public:
     // child app destroys its own screen objects.
     void restoreScreen();
 
+    // Inject the "open email page" callback. The status-bar mail icon needs
+    // to (1) open the AppSettings app (if not yet open) and (2) jump straight
+    // to its email sub-page — coupling that to AppSettings would create a
+    // circular header dependency, so the installer wires the lambda here.
+    using OpenEmailCb = std::function<void()>;
+    void setOpenEmailHandler(OpenEmailCb cb) { _open_email = std::move(cb); }
+
     void onCreate()  override;
     void onOpen()    override;
     void onRunning() override;
@@ -50,6 +57,9 @@ private:
     uint32_t  _last_weather_ms = 0;
 
     lv_obj_t* _status_tools   = nullptr;  // gear/quick-settings icon (left of battery)
+    lv_obj_t* _status_email   = nullptr;  // mail icon (left of wifi), only visible when unread>0
+    OpenEmailCb _open_email;              // tap handler: jump into settings email sub-page
+    uint32_t  _last_email_ms  = 0;        // throttle for the 60s email poll
 
     // Weather is fetched asynchronously (home has no HA client of its own), so a
     // worker thread only writes these strings; onRunning copies them to labels.
