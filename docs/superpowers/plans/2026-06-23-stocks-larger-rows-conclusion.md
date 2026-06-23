@@ -14,7 +14,8 @@
 - Tab5 仍只请求 `GET /api/stocks/portfolio`，不直接连接 `daily_stock_analysis:8000` 获取结论。
 - 脚本失败不得让行情接口失败；无结论时返回空字段并在设备显示“暂无分析结论”。
 - 股票代码按六位数字字符串匹配，保留前导零。
-- 数据行使用现有 30px 全覆盖中文字体，行高固定为 54px；十行必须继续完整显示。
+- 顶部标题约 36px、列表列标题 30px、数据行约 34px，行高固定为 54px；十行必须继续完整显示。
+- 工具页自选股图标使用 `/Users/leenzhou/Downloads/ICONS/stock.png` 转换的 130×130 ARGB8888 资源。
 - 点击详情不再显示价格、涨跌幅、涨跌额、换手率或量比。
 - 不修改一分钟交易时段刷新规则和 LED ticker 内容。
 - 不覆盖或提交用户现有 LoRa 改动，不提交 `platforms/tab5/sdkconfig`。
