@@ -24,6 +24,7 @@ private:
     static constexpr int HEADER_H    = 72;
     static constexpr int INPUT_ROW_H = 120;
     static constexpr int BUBBLE_MAX_W = 800;
+    static constexpr int KB_H = 340;   // 屏幕虚拟键盘高度
 
     // ── Palette ───────────────────────────────────────────────────────────
     static constexpr uint32_t C_BG        = 0x081522;
@@ -52,7 +53,9 @@ private:
     lv_obj_t*   _chat_scroll = nullptr;
     lv_obj_t*   _chat_panel  = nullptr;
     lv_obj_t*   _input       = nullptr;
+    lv_obj_t*   _input_row   = nullptr;   // 输入框+发送键所在行 (弹键盘时整体上移)
     lv_obj_t*   _send_btn    = nullptr;
+    lv_obj_t*   _keyboard    = nullptr;   // 屏幕虚拟键盘 (无实体键盘时弹出)
     lv_indev_t* _gesture_indev = nullptr;
 
     // UART / RX queue
@@ -66,6 +69,8 @@ private:
     void _addBubble(bool is_user, const std::string& text);
     void _sendMessage();
     void _setStatus(const std::string& text, uint32_t color);
+    void _showKeyboard();   // 无实体键盘时: 弹虚拟键盘 + 输入行上移
+    void _hideKeyboard();   // 收起键盘 + 输入行复位
 
     void _uartInit();
     void _uartDeinit();

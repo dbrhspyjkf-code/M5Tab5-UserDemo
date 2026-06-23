@@ -12,6 +12,7 @@
 #else
 #include <thread>
 #include <chrono>
+extern "C" const lv_font_t font_puhui_20_4;
 #endif
 
 static const char* TAG = "app-lora-chat";
@@ -26,7 +27,6 @@ const lv_font_t* AppLoraChat::_font()
     if (!f) f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
     return f;
 #else
-    extern "C" const lv_font_t font_puhui_20_4;
     return &font_puhui_20_4;
 #endif
 }
@@ -113,6 +113,7 @@ void AppLoraChat::onClose()
         _scr = nullptr;
     }
     _status_lbl = _chat_scroll = _chat_panel = _input = _send_btn = nullptr;
+    _input_row = _keyboard = nullptr;
 }
 
 // ── UI ────────────────────────────────────────────────────────────────────
@@ -167,6 +168,7 @@ void AppLoraChat::_buildUi()
 
     // Input row
     lv_obj_t* input_row = lv_obj_create(_scr);
+    _input_row = input_row;
     lv_obj_set_size(input_row, SCREEN_W, INPUT_ROW_H);
     lv_obj_align(input_row, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(input_row, lv_color_hex(C_INPUT_BG), 0);
@@ -192,6 +194,11 @@ void AppLoraChat::_buildUi()
     lv_obj_set_style_pad_hor(_input, 16, 0);
     lv_obj_set_flex_grow(_input, 1);
 
+    // 点输入框: 没接实体键盘才弹屏幕虚拟键盘 (接了实体键盘直接打字, 不挡屏).
+    lv_obj_add_event_cb(_input, [](lv_event_t* e) {
+        static_cast<AppLoraChat*>(lv_event_get_user_data(e))->_showKeyboard();
+    }, LV_EVENT_CLICKED, this);
+
     // Send button
     _send_btn = lv_button_create(input_row);
     lv_obj_set_size(_send_btn, 140, 90);
@@ -206,6 +213,20 @@ void AppLoraChat::_buildUi()
     lv_obj_set_style_text_font(send_lbl, _font(), 0);
     lv_obj_set_style_text_color(send_lbl, lv_color_hex(C_TEXT), 0);
     lv_obj_center(send_lbl);
+
+    // 屏幕虚拟键盘 (默认隐藏, 点输入框且无实体键盘时弹出). 绑定到 _input.
+    _keyboard = lv_keyboard_create(_scr);
+    lv_obj_set_size(_keyboard, SCREEN_W, KB_H);
+    lv_obj_align(_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_keyboard_set_textarea(_keyboard, _input);
+    lv_obj_add_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+    // 键盘自带 ✓ (READY) / ✗ (CANCEL) → 收起键盘 + 输入行复位.
+    lv_obj_add_event_cb(_keyboard, [](lv_event_t* e) {
+        static_cast<AppLoraChat*>(lv_event_get_user_data(e))->_hideKeyboard();
+    }, LV_EVENT_READY, this);
+    lv_obj_add_event_cb(_keyboard, [](lv_event_t* e) {
+        static_cast<AppLoraChat*>(lv_event_get_user_data(e))->_hideKeyboard();
+    }, LV_EVENT_CANCEL, this);
 
     // Hint
     _addBubble(false, "等待连接 C6L 模块...\n" \
@@ -255,6 +276,24 @@ void AppLoraChat::_setStatus(const std::string& text, uint32_t color)
     if (!_status_lbl) return;
     lv_label_set_text(_status_lbl, text.c_str());
     lv_obj_set_style_text_color(_status_lbl, lv_color_hex(color), 0);
+}
+
+// 点输入框: 接了 USB 实体键盘就直接打字 (不弹屏幕键盘, 不挡屏); 没接才弹虚拟键盘
+// 并把输入行 (输入框+发送键) 整体上移到键盘上方, 这样输入框可见、发送键也能点.
+void AppLoraChat::_showKeyboard()
+{
+    if (!_keyboard || !_input_row) return;
+    if (GetHAL()->usbKeyboardDetect()) return;  // 有实体键盘, 无需屏幕键盘
+    lv_obj_clear_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_keyboard);
+    lv_obj_align(_input_row, LV_ALIGN_BOTTOM_MID, 0, -KB_H);  // 抬到键盘正上方
+}
+
+void AppLoraChat::_hideKeyboard()
+{
+    if (!_keyboard || !_input_row) return;
+    lv_obj_add_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(_input_row, LV_ALIGN_BOTTOM_MID, 0, 0);       // 复位到底部
 }
 
 void AppLoraChat::_sendMessage()
