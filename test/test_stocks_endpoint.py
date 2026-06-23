@@ -86,31 +86,102 @@ def test_cache_hit_skips_upstream():
     asyncio.run(run())
 
 
-def test_missing_apikey_returns_500():
-    """No MX_APIKEY → 500 with empty items."""
+def test_mx_quota_exhausted_uses_daily_stock_fallback():
+    """MX quota error must fall back to daily_stock_analysis watchlist quotes."""
     async def run():
         _reset_cache()
-        with patch.dict(os.environ, {}, clear=True):
+        quota_payload = {
+            "success": False,
+            "status": 113,
+            "code": 113,
+            "message": "daily quota exhausted",
+            "data": None,
+        }
+        watchlist_payload = {"stock_codes": ["688018", "601985"]}
+        quote_payloads = {
+            "688018": {
+                "stock_code": "688018", "stock_name": "乐鑫科技",
+                "current_price": 122.5, "change": -0.61,
+                "change_percent": -0.5,
+            },
+            "601985": {
+                "stock_code": "601985", "stock_name": "中国核电",
+                "current_price": 9.03, "change": -0.05,
+                "change_percent": -0.55,
+            },
+        }
+
+        def response_cm(payload):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json = AsyncMock(return_value=payload)
+            cm = MagicMock()
+            cm.__aenter__ = AsyncMock(return_value=response)
+            cm.__aexit__ = AsyncMock(return_value=False)
+            return cm
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.post.return_value = response_cm(quota_payload)
+
+        def mock_get(url, **kwargs):
+            if url.endswith("/api/v1/stocks/watchlist"):
+                return response_cm(watchlist_payload)
+            code = url.rsplit("/", 2)[-2]
+            return response_cm(quote_payloads[code])
+
+        mock_session.get.side_effect = mock_get
+
+        with patch.dict(os.environ, {"MX_APIKEY": "test_key"}), \
+             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session):
             resp = await hermes_main.handle_stocks_portfolio(MagicMock())
-            assert resp.status == 500
+            body = json.loads(resp.body)
+            assert resp.status == 200
+            assert body["count"] == 2
+            assert body["source"] == "daily_stock_analysis"
+            assert body["items"][0] == {
+                "code": "688018", "name": "乐鑫科技", "price": 122.5,
+                "chg": -0.5, "pchg": -0.61, "turnover": 0.0, "liangbi": 0.0,
+            }
+    asyncio.run(run())
+
+
+def test_missing_apikey_and_fallback_error_returns_502():
+    """If MX is unconfigured and fallback is down, report both failures."""
+    async def run():
+        _reset_cache()
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.side_effect = Exception("fallback connection refused")
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session):
+            resp = await hermes_main.handle_stocks_portfolio(MagicMock())
+            assert resp.status == 502
             body = json.loads(resp.body)
             assert "MX_APIKEY" in body["error"]
+            assert "fallback connection refused" in body["error"]
             assert body["items"] == []
     asyncio.run(run())
 
 
 def test_upstream_error_returns_502():
-    """aiohttp raises → 502 with empty items."""
+    """Both sources unavailable → 502 with empty items."""
     async def run():
         _reset_cache()
         mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
         mock_session.post.side_effect = Exception("connection refused")
+        mock_session.get.side_effect = Exception("fallback connection refused")
         with patch.dict(os.environ, {"MX_APIKEY": "test_key"}), \
              patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session):
             resp = await hermes_main.handle_stocks_portfolio(MagicMock())
             assert resp.status == 502
             body = json.loads(resp.body)
-            assert "upstream" in body["error"]
+            assert "mx: connection refused" in body["error"]
+            assert "daily_stock_analysis: fallback connection refused" in body["error"]
     asyncio.run(run())
 
 
@@ -119,9 +190,10 @@ if __name__ == "__main__":
     print("test_normalize_two_rows OK")
     test_cache_hit_skips_upstream()
     print("test_cache_hit_skips_upstream OK")
-    test_missing_apikey_returns_500()
-    print("test_missing_apikey_returns_500 OK")
+    test_mx_quota_exhausted_uses_daily_stock_fallback()
+    print("test_mx_quota_exhausted_uses_daily_stock_fallback OK")
+    test_missing_apikey_and_fallback_error_returns_502()
+    print("test_missing_apikey_and_fallback_error_returns_502 OK")
     test_upstream_error_returns_502()
     print("test_upstream_error_returns_502 OK")
-    print("\nAll 4 tests passed.")
-
+    print("\nAll 5 tests passed.")

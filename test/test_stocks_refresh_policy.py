@@ -26,6 +26,12 @@ class StocksRefreshPolicyTests(unittest.TestCase):
         interval_gate = on_running.index("FETCH_INTERVAL_MS")
         self.assertLess(market_gate, interval_gate)
 
+    def test_periodic_fetch_interval_is_one_minute(self):
+        self.assertRegex(
+            self.header,
+            r"FETCH_INTERVAL_MS\s*=\s*60\s*\*\s*1000",
+        )
+
     def test_async_fetch_has_atomic_in_flight_guard(self):
         self.assertRegex(
             self.header,

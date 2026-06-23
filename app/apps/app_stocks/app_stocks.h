@@ -78,9 +78,9 @@ private:
     // app 是否在前台. 退出时先置 false, 防止在途的 fetch worker 完成后
     // 又去 _startTicker() 抢回已交还给邮件通知器的 PORT A.
     std::atomic<bool>      _app_open {false};
-    // 同一时间只允许一个 HTTP 请求，避免 30 秒边界上重复创建 worker。
+    // 同一时间只允许一个 HTTP 请求，避免刷新边界上重复创建 worker。
     std::atomic<bool>      _fetch_in_flight {false};
-    static constexpr int   FETCH_INTERVAL_MS = 30 * 1000;
+    static constexpr int   FETCH_INTERVAL_MS = 60 * 1000;
     static constexpr int   FETCH_TIMEOUT_MS  = 5 * 1000;
 
     // ── LVGL handles ───────────────────────────────────────────────────
