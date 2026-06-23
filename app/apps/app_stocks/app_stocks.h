@@ -32,6 +32,8 @@ private:
         float pchg    {0};   // 涨跌额
         float turnover{0};
         float liangbi {0};
+        std::string one_sentence;
+        std::string analysis_date;
     };
 
     // ── Layout ─────────────────────────────────────────────────────────
@@ -39,7 +41,7 @@ private:
     static constexpr int SCREEN_H    = 720;
     static constexpr int HEADER_H    = 72;
     static constexpr int STATUS_H    = 60;
-    static constexpr int ROW_H       = 52;
+    static constexpr int ROW_H       = 54;
     static constexpr int N_ROWS      = 10;
 
     // ── Color palette (must match app_home / app_ha) ──────────────────

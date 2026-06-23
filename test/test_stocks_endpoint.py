@@ -42,6 +42,15 @@ def _reset_cache():
     hermes_main._STOCKS_CACHE = {"ts": 0.0, "data": None}
 
 
+def _conclusions(date="", items=None):
+    return patch.object(
+        hermes_main,
+        "_load_latest_stock_conclusions",
+        return_value=(date, items or {}),
+        create=True,
+    )
+
+
 def test_normalize_two_rows():
     """Mock upstream with 2 rows; verify response has count=2 and flat items."""
     async def run():
@@ -57,7 +66,8 @@ def test_normalize_two_rows():
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
         with patch.dict(os.environ, {"MX_APIKEY": "test_key"}), \
-             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session):
+             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session), \
+             _conclusions():
             resp = await hermes_main.handle_stocks_portfolio(MagicMock())
             body = json.loads(resp.body)
             assert body["count"] == 2, f"expected 2 got {body['count']}"
@@ -134,7 +144,8 @@ def test_mx_quota_exhausted_uses_daily_stock_fallback():
         mock_session.get.side_effect = mock_get
 
         with patch.dict(os.environ, {"MX_APIKEY": "test_key"}), \
-             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session):
+             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session), \
+             _conclusions():
             resp = await hermes_main.handle_stocks_portfolio(MagicMock())
             body = json.loads(resp.body)
             assert resp.status == 200
@@ -143,6 +154,7 @@ def test_mx_quota_exhausted_uses_daily_stock_fallback():
             assert body["items"][0] == {
                 "code": "688018", "name": "乐鑫科技", "price": 122.5,
                 "chg": -0.5, "pchg": -0.61, "turnover": 0.0, "liangbi": 0.0,
+                "one_sentence": "", "analysis_date": "",
             }
     asyncio.run(run())
 
@@ -156,7 +168,8 @@ def test_missing_apikey_and_fallback_error_returns_502():
         mock_session.__aexit__ = AsyncMock(return_value=False)
         mock_session.get.side_effect = Exception("fallback connection refused")
         with patch.dict(os.environ, {}, clear=True), \
-             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session):
+             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session), \
+             _conclusions():
             resp = await hermes_main.handle_stocks_portfolio(MagicMock())
             assert resp.status == 502
             body = json.loads(resp.body)
@@ -176,12 +189,94 @@ def test_upstream_error_returns_502():
         mock_session.post.side_effect = Exception("connection refused")
         mock_session.get.side_effect = Exception("fallback connection refused")
         with patch.dict(os.environ, {"MX_APIKEY": "test_key"}), \
-             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session):
+             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session), \
+             _conclusions():
             resp = await hermes_main.handle_stocks_portfolio(MagicMock())
             assert resp.status == 502
             body = json.loads(resp.body)
             assert "mx: connection refused" in body["error"]
             assert "daily_stock_analysis: fallback connection refused" in body["error"]
+    asyncio.run(run())
+
+
+def test_latest_conclusions_are_merged_by_code():
+    """Matching stocks get the latest sentence/date; unmatched stocks stay empty."""
+    async def run():
+        _reset_cache()
+        payload = _east_money_payload([
+            _row(),
+            _row(code="300750", name="宁德时代", price=380.0, chg=-1.25),
+        ])
+        mock_resp = MagicMock()
+        mock_resp.json = AsyncMock(return_value=payload)
+        mock_session = MagicMock()
+        mock_session.post.return_value.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_session.post.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.dict(os.environ, {"MX_APIKEY": "test_key"}), \
+             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session), \
+             _conclusions("2026-06-23", {
+                 "600519": "多头结构保持，等待放量确认。",
+             }):
+            resp = await hermes_main.handle_stocks_portfolio(MagicMock())
+            body = json.loads(resp.body)
+            assert resp.status == 200
+            assert body["analysis_date"] == "2026-06-23"
+            assert body["items"][0]["one_sentence"] == "多头结构保持，等待放量确认。"
+            assert body["items"][0]["analysis_date"] == "2026-06-23"
+            assert body["items"][1]["one_sentence"] == ""
+            assert body["items"][1]["analysis_date"] == ""
+    asyncio.run(run())
+
+
+def test_latest_conclusion_loader_preserves_leading_zero_codes():
+    """The real loader uses the service Python and normalizes numeric codes."""
+    assert hasattr(hermes_main, "_load_latest_stock_conclusions"), \
+        "latest conclusion loader is missing"
+    completed = MagicMock()
+    completed.stdout = json.dumps({
+        "date": "2026-06-23",
+        "items": [{
+            "code": 2050,
+            "one_sentence": "等待趋势修复信号。",
+        }],
+    })
+    with patch.object(hermes_main.subprocess, "run", return_value=completed) as run:
+        date, conclusions = hermes_main._load_latest_stock_conclusions()
+        assert date == "2026-06-23"
+        assert conclusions == {"002050": "等待趋势修复信号。"}
+        assert run.call_args.args[0][0] == hermes_main.sys.executable
+
+
+def test_latest_conclusion_failure_keeps_quotes_available():
+    """Analysis failures degrade to empty conclusions without failing quotes."""
+    async def run():
+        _reset_cache()
+        payload = _east_money_payload([_row()])
+        mock_resp = MagicMock()
+        mock_resp.json = AsyncMock(return_value=payload)
+        mock_session = MagicMock()
+        mock_session.post.return_value.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_session.post.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.dict(os.environ, {"MX_APIKEY": "test_key"}), \
+             patch.object(hermes_main.aiohttp, "ClientSession", lambda: mock_session), \
+             patch.object(
+                 hermes_main,
+                 "_load_latest_stock_conclusions",
+                 side_effect=RuntimeError("analysis unavailable"),
+                 create=True,
+             ):
+            resp = await hermes_main.handle_stocks_portfolio(MagicMock())
+            body = json.loads(resp.body)
+            assert resp.status == 200
+            assert body["items"][0]["price"] == 1850.0
+            assert body["items"][0]["one_sentence"] == ""
+            assert body["items"][0]["analysis_date"] == ""
     asyncio.run(run())
 
 
@@ -196,4 +291,10 @@ if __name__ == "__main__":
     print("test_missing_apikey_and_fallback_error_returns_502 OK")
     test_upstream_error_returns_502()
     print("test_upstream_error_returns_502 OK")
-    print("\nAll 5 tests passed.")
+    test_latest_conclusions_are_merged_by_code()
+    print("test_latest_conclusions_are_merged_by_code OK")
+    test_latest_conclusion_loader_preserves_leading_zero_codes()
+    print("test_latest_conclusion_loader_preserves_leading_zero_codes OK")
+    test_latest_conclusion_failure_keeps_quotes_available()
+    print("test_latest_conclusion_failure_keeps_quotes_available OK")
+    print("\nAll 8 tests passed.")

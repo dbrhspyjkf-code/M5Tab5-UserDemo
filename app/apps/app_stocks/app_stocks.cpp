@@ -18,7 +18,7 @@
 static const char* TAG = "stocks";
 
 // ── 全覆盖中文字体 (与 app_ha/view, app_settings 一致) ────────────────────────
-//   zh_font_lg() 30px (标题), zh_font_sm() 20px (表头/单元格/按钮).
+//   zh_font_lg() 30px (标题/数据行), zh_font_sm() 20px (表头/按钮).
 //   设备上是 flash 里的 cbin blob 原地用; 桌面回退到链接进来的 20px C 数组字体.
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
@@ -224,6 +224,8 @@ void AppStocks::_buildUi()
         lv_obj_align(_rows[i], LV_ALIGN_TOP_MID, 0, rows_top + i * ROW_H);
         lv_obj_set_style_bg_color(_rows[i], lv_color_hex(C_HEADER), 0);
         lv_obj_set_style_bg_opa(_rows[i], i % 2 ? LV_OPA_30 : LV_OPA_10, 0);
+        lv_obj_set_style_bg_color(_rows[i], lv_color_hex(C_ACCENT), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(_rows[i], LV_OPA_40, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(_rows[i], 0, 0);
         lv_obj_set_style_radius(_rows[i], 0, 0);
         lv_obj_set_style_pad_all(_rows[i], 0, 0);
@@ -240,7 +242,7 @@ void AppStocks::_buildUi()
         for (int c = 0; c < 7; c++) {
             lv_obj_t* cell = lv_label_create(_rows[i]);
             lv_label_set_text(cell, "--");
-            lv_obj_set_style_text_font(cell, zh_font_sm(), 0);
+            lv_obj_set_style_text_font(cell, zh_font_lg(), 0);
             lv_obj_set_style_text_color(cell, lv_color_hex(C_DIM), 0);
             lv_obj_align(cell, LV_ALIGN_LEFT_MID, COL_X[c], 0);
             lv_obj_add_flag(cell, LV_OBJ_FLAG_EVENT_BUBBLE);  // 点击冒泡到 row
@@ -328,35 +330,42 @@ void AppStocks::_showDetail(int row_idx)
     _closeDetail();
 
     _detail_modal = lv_obj_create(_scr);
-    lv_obj_set_size(_detail_modal, 600, 400);
+    lv_obj_set_size(_detail_modal, 960, 360);
     lv_obj_center(_detail_modal);
     lv_obj_set_style_bg_color(_detail_modal, lv_color_hex(C_HEADER), 0);
     lv_obj_set_style_border_color(_detail_modal, lv_color_hex(C_ACCENT), 0);
     lv_obj_set_style_border_width(_detail_modal, 2, 0);
     lv_obj_set_style_radius(_detail_modal, 16, 0);
-    lv_obj_set_style_pad_all(_detail_modal, 24, 0);
+    lv_obj_set_style_pad_all(_detail_modal, 28, 0);
     lv_obj_clear_flag(_detail_modal, LV_OBJ_FLAG_SCROLLABLE);
 
-    int y = 0;
-    auto add_line = [&](const char* label, const std::string& val, uint32_t color) {
-        lv_obj_t* l = lv_label_create(_detail_modal);
-        lv_label_set_text_fmt(l, "%s   %s", label, val.c_str());
-        lv_obj_set_style_text_font(l, zh_font_sm(), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
-        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, y);
-        y += 40;
-    };
-    char buf[32];
-    add_line("代码", s.code, C_TEXT);
-    add_line("名称", s.name, C_TEXT);
-    snprintf(buf, sizeof(buf), "%.2f", s.price);   add_line("现价", buf, C_TEXT);
-    snprintf(buf, sizeof(buf), "%+.2f%%", s.chg);  add_line("涨跌幅", buf, _chgColor(s.chg));
-    snprintf(buf, sizeof(buf), "%+.2f", s.pchg);   add_line("涨跌额", buf, _chgColor(s.chg));
-    snprintf(buf, sizeof(buf), "%.2f%%", s.turnover); add_line("换手率", buf, C_DIM);
-    snprintf(buf, sizeof(buf), "%.2f", s.liangbi);    add_line("量比", buf, C_DIM);
+    lv_obj_t* title = lv_label_create(_detail_modal);
+    lv_label_set_text_fmt(title, "%s  %s", s.name.c_str(), s.code.c_str());
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lv_obj_t* date = lv_label_create(_detail_modal);
+    std::string date_text = s.analysis_date.empty()
+        ? "分析日期：--" : "分析日期：" + s.analysis_date;
+    lv_label_set_text(date, date_text.c_str());
+    lv_obj_set_style_text_font(date, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(date, lv_color_hex(C_DIM), 0);
+    lv_obj_align(date, LV_ALIGN_TOP_LEFT, 0, 48);
+
+    lv_obj_t* conclusion = lv_label_create(_detail_modal);
+    const char* conclusion_text = s.one_sentence.empty()
+        ? "暂无分析结论" : s.one_sentence.c_str();
+    lv_label_set_text(conclusion, conclusion_text);
+    lv_label_set_long_mode(conclusion, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(conclusion, 860);
+    lv_obj_set_style_text_font(conclusion, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(conclusion, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_line_space(conclusion, 10, 0);
+    lv_obj_align(conclusion, LV_ALIGN_TOP_LEFT, 0, 92);
 
     lv_obj_t* close_btn = lv_button_create(_detail_modal);
-    lv_obj_set_size(close_btn, 120, 48);
+    lv_obj_set_size(close_btn, 150, 54);
     lv_obj_align(close_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     lv_obj_set_style_bg_color(close_btn, lv_color_hex(C_ACCENT), 0);
     lv_obj_set_style_radius(close_btn, 10, 0);
@@ -494,6 +503,8 @@ void AppStocks::_parseStocksJson(const std::string& body)
                 s.pchg     = it.value("pchg", 0.0f);
                 s.turnover = it.value("turnover", 0.0f);
                 s.liangbi  = it.value("liangbi", 0.0f);
+                s.one_sentence = it.value("one_sentence", std::string());
+                s.analysis_date = it.value("analysis_date", std::string());
                 if (!s.code.empty()) parsed.push_back(std::move(s));
             }
         }
