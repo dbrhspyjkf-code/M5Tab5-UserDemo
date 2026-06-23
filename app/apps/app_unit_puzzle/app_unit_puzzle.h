@@ -33,9 +33,12 @@ public:
     void onClose()   override;
 
 private:
-    static constexpr int W = 8;
-    static constexpr int H = 8;
-    static constexpr int N = W * H;  // 64 LEDs
+    // 5 块 8x8 Unit-Puzzle 串成一条 40x8 横排 (DIN 进最左块, 左→右).
+    static constexpr int PANEL  = 8;             // 单块宽=高
+    static constexpr int PANELS = 5;             // 串联块数
+    static constexpr int W = PANEL * PANELS;     // 40
+    static constexpr int H = PANEL;              // 8
+    static constexpr int N = W * H;              // 320 LEDs
     // PORT A Signal 真身: GPIO53 (Tab5 的 M5Stack UiFlow/PORT.A 引脚定义)
     // 注意: 与 EXT_I2C SDA 复用 (BSP_EXT_I2C_SDA). 用作 WS2812 DIN 时
     // RMT 接管此 pin, I2C bus 不可用.
@@ -68,10 +71,12 @@ private:
     void _installSwipeGesture();
     void _removeSwipeGesture();
 
-    // Public-ish helper for the swipe-up gesture: ask the framework to close
-    // this app (runs the close callback installed by app_installer.h, which
-    // restores the home screen).
-    void _requestClose() { if (_close_cb) _close_cb(); }
+    // Public-ish helper for the swipe-up gesture / 返回 按钮: 退出灯阵.
+    // 注意: 灯阵退出走 _close_cb → openApp(工具页), mooncake 的 openApp 不会
+    // 关闭当前 app, 所以本 app 的 onClose() 永远不触发. 因此所有"退出收尾"
+    // (停动画、关灯、释放 RMT、把 PORT A 交还后台邮件通知器) 必须在这里做,
+    // 而不是 onClose 里. 实现见 .cpp.
+    void _requestClose();
 
     // LED 驱动
     esp_err_t _stripInit();
@@ -97,6 +102,9 @@ private:
 
     // 诊断 UI 更新
     void _updateDiag();
+
+    // 文字输入弹窗 (点击"文字"按钮时调用)
+    void _showTextInput();
 
     // 图案回调 (按 _pattern 当前值分发)
     static void _animTick(lv_timer_t* t);

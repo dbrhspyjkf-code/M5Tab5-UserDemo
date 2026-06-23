@@ -17,6 +17,8 @@
 #include "app_project_assistant/app_project_assistant.h"
 #include "app_voice_input/app_voice_input.h"
 #include "app_unit_puzzle/app_unit_puzzle.h"
+#include "app_lora_chat/app_lora_chat.h"
+#include "app_email_led/app_email_led.h"
 /* Header files locator (Don't remove) */
 
 // Start boot anim app and wait for it to finish
@@ -60,6 +62,9 @@ inline void on_install_apps()
     auto up_uptr = std::make_unique<AppUnitPuzzle>();
     AppUnitPuzzle* unit_puzzle = up_uptr.get();
 
+    auto lc_uptr = std::make_unique<AppLoraChat>();
+    AppLoraChat* lora_chat = lc_uptr.get();
+
     // ── Install (AppHome auto-opens via onCreate → open()) ──
     mooncake::GetMooncake().installApp(std::move(home_uptr));
     int ha_id = mooncake::GetMooncake().installApp(std::move(ha_uptr));
@@ -67,16 +72,26 @@ inline void on_install_apps()
     int set_id = mooncake::GetMooncake().installApp(std::move(set_uptr));
     int pa_id = mooncake::GetMooncake().installApp(std::move(pa_uptr));
     int up_id = mooncake::GetMooncake().installApp(std::move(up_uptr));
+    int lc_id = mooncake::GetMooncake().installApp(std::move(lc_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
     xz->setCloseCallback([home]() { home->restoreScreen(); });
     settings->setCloseCallback([home]() { home->restoreScreen(); });
     project_assistant->setCloseCallback([home]() { home->restoreScreen(); });
-    unit_puzzle->setCloseCallback([home]() { home->restoreScreen(); });
+    // 灯阵是从「工具」页 (AppSettings) 打开的, 上拨返回到工具页而非主屏.
+    unit_puzzle->setCloseCallback([settings, set_id]() {
+        (void)settings;
+        mooncake::GetMooncake().openApp(set_id);
+    });
+    // LoRa 聊天同样从「工具」页打开, 上拨返回工具页.
+    lora_chat->setCloseCallback([set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+    });
 
     // 灯阵入口放到「工具」页第 2 行 (由 AppSettings 持有), 不再占 home 一格.
     settings->setPuzzleAppId(up_id);
+    settings->setLoraChatAppId(lc_id);
 
     // Status-bar mail icon → open the AppSettings email sub-page. The handler
     // (1) brings the AppSettings app to the foreground (its onOpen builds the
@@ -99,6 +114,13 @@ inline void on_install_apps()
     int vi_id = mooncake::GetMooncake().extensionManager()->createAbility(
         std::make_unique<AppVoiceInput>());
     mooncake::GetMooncake().extensionManager()->resumeWorkerAbility(vi_id);
+
+    // ── Email LED notifier WorkerAbility (always-on) ──
+    // 后台轮询未读邮件, 有未读时在 PORT A 的 8x8 矩阵滚动蓝色 "NEW EMAIL".
+    // 与「灯阵」/「LoRa」app 通过 AppEmailLed::setPortAOwnedByApp 协调 GPIO53.
+    int el_id = mooncake::GetMooncake().extensionManager()->createAbility(
+        std::make_unique<AppEmailLed>());
+    mooncake::GetMooncake().extensionManager()->resumeWorkerAbility(el_id);
 
     // WiFi / HA configuration moved to the home status-bar WiFi popup; the
     // red WiFi icon there signals a failed connection, so there's no longer a

@@ -1120,11 +1120,12 @@ void AppProjectAssistant::_textarea_cb(lv_event_t* e)
         if (GetHAL()->lvKbGroup) {
             lv_group_focus_obj(self->_input);
         }
-        // Tapping the textarea shows the on-screen keyboard. Voice input is
-        // gated through the 🎤 button that appears with the keyboard — see
-        // _voice_btn_cb.
-        if (lv_obj_has_flag(self->_keyboard, LV_OBJ_FLAG_HIDDEN))
-            self->_showKeyboard();
+        // Only show the on-screen keyboard when no physical keyboard is connected.
+        // USB keyboard users tap to focus, not to invoke the virtual keyboard.
+        if (!GetHAL()->usbKeyboardDetect()) {
+            if (lv_obj_has_flag(self->_keyboard, LV_OBJ_FLAG_HIDDEN))
+                self->_showKeyboard();
+        }
     } else if (code == LV_EVENT_DEFOCUSED) {
         // Don't tear down the keyboard/chat layout while the voice input
         // mic (big-mic overlay) is on screen — tapping the mic moves focus

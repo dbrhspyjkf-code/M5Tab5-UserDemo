@@ -1,5 +1,7 @@
 #include "app_unit_puzzle.h"
+#include "../app_email_led/app_email_led.h"
 
+#include <hal/hal.h>
 #include <mooncake_log.h>
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -30,73 +32,75 @@ LV_FONT_DECLARE(lv_font_montserrat_8);
 // 0x4811606a load fault. 原因疑为 RMT 写 LED 期间 PSRAM 字形数据被覆盖.
 // v6 起改用本表, glyph 在 rodata (.text), XIP 自 PSRAM 段已验证可读.
 
+// Bit layout: bit4=col0(left) … bit0=col4(right). Row0=top, Row6=bottom.
+// Lowercase letters (0x61-0x7A) are rendered as uppercase in _drawPattern case 8.
 static const uint8_t font5x7[95][7] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x20 ' '
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x21 '!'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x22 '"'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x23 '#'
+    {0x04,0x04,0x04,0x04,0x04,0x00,0x04},  // 0x21 '!'
+    {0x0A,0x0A,0x00,0x00,0x00,0x00,0x00},  // 0x22 '"'
+    {0x0A,0x1F,0x0A,0x0A,0x1F,0x0A,0x00},  // 0x23 '#'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x24 '$'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x25 '%'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x26 '&'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x27 '''
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x28 '('
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x29 ')'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x2A '*'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x2B '+'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x2C ','
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x2D '-'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x2E '.'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x2F '/'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x30 '0'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x31 '1'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x32 '2'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x33 '3'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x34 '4'
-    {0x0F,0x10,0x0F,0x01,0x0F,0x10,0x1E},  // 0x35 '5' (手画: 顶横满 5 缺右, 右上竖线, 中横满 5 缺左, ...)
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x36 '6'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x37 '7'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x38 '8'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x39 '9'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x3A ':'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x3B ';'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x3C '<'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x3D '='
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x3E '>'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x3F '?'
+    {0x04,0x04,0x00,0x00,0x00,0x00,0x00},  // 0x27 '\''
+    {0x02,0x04,0x08,0x08,0x08,0x04,0x02},  // 0x28 '('
+    {0x08,0x04,0x02,0x02,0x02,0x04,0x08},  // 0x29 ')'
+    {0x00,0x11,0x0A,0x1F,0x0A,0x11,0x00},  // 0x2A '*'
+    {0x00,0x04,0x04,0x1F,0x04,0x04,0x00},  // 0x2B '+'
+    {0x00,0x00,0x00,0x00,0x04,0x04,0x08},  // 0x2C ','
+    {0x00,0x00,0x00,0x1F,0x00,0x00,0x00},  // 0x2D '-'
+    {0x00,0x00,0x00,0x00,0x00,0x00,0x04},  // 0x2E '.'
+    {0x02,0x02,0x04,0x04,0x08,0x08,0x10},  // 0x2F '/'
+    {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},  // 0x30 '0'
+    {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E},  // 0x31 '1'
+    {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F},  // 0x32 '2'
+    {0x0E,0x01,0x01,0x0E,0x01,0x01,0x0E},  // 0x33 '3'
+    {0x11,0x11,0x11,0x1F,0x01,0x01,0x01},  // 0x34 '4'
+    {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E},  // 0x35 '5'
+    {0x0E,0x10,0x10,0x1E,0x11,0x11,0x0E},  // 0x36 '6'
+    {0x1F,0x01,0x02,0x04,0x04,0x04,0x04},  // 0x37 '7'
+    {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E},  // 0x38 '8'
+    {0x0E,0x11,0x11,0x0F,0x01,0x01,0x0E},  // 0x39 '9'
+    {0x00,0x04,0x00,0x00,0x04,0x00,0x00},  // 0x3A ':'
+    {0x00,0x04,0x00,0x00,0x04,0x04,0x08},  // 0x3B ';'
+    {0x02,0x04,0x08,0x10,0x08,0x04,0x02},  // 0x3C '<'
+    {0x00,0x00,0x1F,0x00,0x1F,0x00,0x00},  // 0x3D '='
+    {0x08,0x04,0x02,0x01,0x02,0x04,0x08},  // 0x3E '>'
+    {0x0E,0x11,0x01,0x02,0x04,0x00,0x04},  // 0x3F '?'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x40 '@'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x41 'A'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x42 'B'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x43 'C'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x44 'D'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x45 'E'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x46 'F'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x47 'G'
-    {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},  // 0x48 'H' (手画: 左右竖线 7 行, 中间横杠在第 4 行)
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x49 'I'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x4A 'J'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x4B 'K'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x4C 'L'
-    {0x11,0x1B,0x15,0x11,0x11,0x11,0x11},  // 0x4D 'M' (手画: 顶行左右两竖, 第 2 行 M 中间两点, 第 3 行 M 中间一点)
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x4E 'N'
-    {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},  // 0x4F 'O' (手画: 顶/底弧 + 中间方框)
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x50 'P'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x51 'Q'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x52 'R'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x53 'S'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x54 'T'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x55 'U'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x56 'V'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x57 'W'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x58 'X'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x59 'Y'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x5A 'Z'
+    {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},  // 0x41 'A'
+    {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},  // 0x42 'B'
+    {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E},  // 0x43 'C'
+    {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E},  // 0x44 'D'
+    {0x1E,0x10,0x10,0x1C,0x10,0x10,0x1E},  // 0x45 'E' (最右列全暗, 防光晕看成 B)
+    {0x1E,0x10,0x10,0x1C,0x10,0x10,0x10},  // 0x46 'F'
+    {0x0E,0x11,0x10,0x17,0x11,0x11,0x0E},  // 0x47 'G'
+    {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},  // 0x48 'H'
+    {0x1F,0x04,0x04,0x04,0x04,0x04,0x1F},  // 0x49 'I'
+    {0x07,0x01,0x01,0x01,0x11,0x11,0x0E},  // 0x4A 'J'
+    {0x11,0x12,0x14,0x18,0x14,0x12,0x11},  // 0x4B 'K'
+    {0x10,0x10,0x10,0x10,0x10,0x10,0x1F},  // 0x4C 'L'
+    {0x11,0x1B,0x15,0x11,0x11,0x11,0x11},  // 0x4D 'M'
+    {0x11,0x19,0x15,0x13,0x11,0x11,0x11},  // 0x4E 'N'
+    {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},  // 0x4F 'O'
+    {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},  // 0x50 'P'
+    {0x0E,0x11,0x11,0x11,0x13,0x0E,0x03},  // 0x51 'Q'
+    {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11},  // 0x52 'R'
+    {0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E},  // 0x53 'S'
+    {0x1F,0x04,0x04,0x04,0x04,0x04,0x04},  // 0x54 'T'
+    {0x11,0x11,0x11,0x11,0x11,0x11,0x0E},  // 0x55 'U'
+    {0x11,0x11,0x11,0x11,0x11,0x0A,0x04},  // 0x56 'V'
+    {0x11,0x11,0x11,0x15,0x15,0x1B,0x11},  // 0x57 'W'
+    {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},  // 0x58 'X'
+    {0x11,0x11,0x11,0x0A,0x04,0x04,0x04},  // 0x59 'Y'
+    {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F},  // 0x5A 'Z'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x5B '['
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x5C '\'
+    {0x10,0x08,0x08,0x04,0x02,0x02,0x01},  // 0x5C '\'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x5D ']'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x5E '^'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x5F '_'
+    {0x00,0x00,0x00,0x00,0x00,0x00,0x1F},  // 0x5F '_'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x60 '`'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x61 'a'
+    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x61 'a' (用大写代替, 见渲染代码)
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x62 'b'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x63 'c'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x64 'd'
@@ -123,7 +127,7 @@ static const uint8_t font5x7[95][7] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x79 'y'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x7A 'z'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x7B '{'
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x7C '|'
+    {0x04,0x04,0x04,0x04,0x04,0x04,0x04},  // 0x7C '|'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x7D '}'
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 0x7E '~'
 };
@@ -167,6 +171,9 @@ void AppUnitPuzzle::onOpen()
 {
     mclog::tagInfo(TAG, "on open");
 
+    // 独占 PORT A: 让后台邮件通知器先释放 RMT/GPIO53, 再由本 app 接管.
+    AppEmailLed::setPortAOwnedByApp(true);
+
     _init_err = _stripInit();
     if (_init_err != ESP_OK) {
         mclog::tagError(TAG, "led_strip init failed: %s", esp_err_to_name(_init_err));
@@ -205,6 +212,16 @@ void AppUnitPuzzle::onClose()
         _diag_timer = nullptr;
     }
 
+    // 如果文字输入弹窗仍然打开, 先关掉 (避免悬空指针)
+    if (_text_ui[0]) {
+        auto* hal = GetHAL();
+        if (hal && hal->lvKbGroup && _text_ta)
+            lv_group_remove_obj(_text_ta);
+        _text_ta = nullptr;
+        lv_obj_delete(_text_ui[0]);
+        _text_ui[0] = nullptr;
+    }
+
     _removeSwipeGesture();
 
     // 关灯 (即使 strip init 失败也要安全)
@@ -218,10 +235,38 @@ void AppUnitPuzzle::onClose()
 
     _stripDeinit();
 
+    // 把 PORT A 交还给后台邮件通知器 (下一 tick 若有未读会自动接管显示).
+    AppEmailLed::setPortAOwnedByApp(false);
+
     if (_scr) {
         lv_obj_delete(_scr);
         _scr = nullptr;
     }
+
+    if (_close_cb) _close_cb();
+}
+
+// 退出灯阵的唯一出口 (swipe-up + 返回按钮都经此). 因为 onClose 不会触发
+// (见 .h 说明), 退出收尾必须在这里做: 停掉动画定时器、关灯、释放 RMT, 然后
+// 把 PORT A 交还后台邮件通知器 —— 否则 setPortAOwnedByApp(true) 永不复位,
+// worker 永久让位, 退出后再有未读也不会亮 LED.
+void AppUnitPuzzle::_requestClose()
+{
+    _led_on.store(false);  // 让 _animTick 立即停止画 LED
+
+    if (_anim_timer) { lv_timer_delete(_anim_timer); _anim_timer = nullptr; }
+    if (_diag_timer) { lv_timer_delete(_diag_timer); _diag_timer = nullptr; }
+
+    {
+        std::lock_guard<std::mutex> lk(_strip_mu);
+        if (_strip) {
+            led_strip_clear(_strip);
+            led_strip_refresh(_strip);
+        }
+    }
+    _stripDeinit();
+
+    AppEmailLed::setPortAOwnedByApp(false);
 
     if (_close_cb) _close_cb();
 }
@@ -322,13 +367,18 @@ void AppUnitPuzzle::_show()
     led_strip_refresh(_strip);
 }
 
-// 默认 row-major 蛇形走线 (第 0 行左→右, 第 1 行右→左).
-// 拿到 Unit-Puzzle 实物后, 先跑 "setPixel(0)" 看哪个角亮,
-// 不对再调整 (常见: WS2812E-1313 板子实际是行扫描而不是蛇形).
+// 5 块 8x8 串成 40x8 横排 (DIN 在最左, 数据左→右). 单块走线是「逐行同向」
+// (progressive/raster: 每行左→右), 不是蛇形. 现在横向正常显示 (不旋转):
+// 逻辑 (x,y), x∈[0,40) 横向, y∈[0,8) 纵向 →
+//   panel = x / 8 (第几块, 0=最左), lx = x % 8 (块内列),
+//   块内 index = y*8 + lx, 全局 index = panel*64 + 块内 index.
+// 若文字上下颠倒/左右镜像, 调这里 (y→7-y 或 lx→7-lx).
 int AppUnitPuzzle::_xy2i(int x, int y)
 {
-    if (y & 1) return y * W + (W - 1 - x);
-    return y * W + x;
+    int panel = x / PANEL;          // 第几块面板
+    int lx    = x % PANEL;          // 块内逻辑列 (0..7)
+    // 面板物理安装方向逆时针偏转 90°, 顺时针补偿: 逻辑 (lx,y) → 物理 (row=lx, col=7-y)
+    return panel * (PANEL * PANEL) + lx * PANEL + (PANEL - 1 - y);
 }
 
 // =============================================================================
@@ -362,14 +412,17 @@ void AppUnitPuzzle::_pattern_btn_cb(lv_event_t* e)
             if (app->_status_lbl) lv_label_set_text(app->_status_lbl, "已开启");
         }
     } else {
+        if (desc->idx == 8) {
+            // 文字模式: 弹出输入框让用户输入
+            app->_showTextInput();
+            return;
+        }
         app->_pattern.store(desc->idx);
         if (app->_status_lbl) {
             char buf[32];
             snprintf(buf, sizeof(buf), "图案 %d", desc->idx);
             lv_label_set_text(app->_status_lbl, buf);
         }
-        // idx=8: 字库循环, 启动滚动计时
-        if (desc->idx == 8) app->_text_scroll = 0;
     }
 }
 
@@ -385,6 +438,35 @@ void AppUnitPuzzle::_buildUi()
     lv_obj_set_style_text_color(title, lv_color_hex(0x4FA3FF), 0);
     lv_obj_set_style_text_font(title, zh_font_30(), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 12);
+
+    // 返回按钮 (左上角): 退出灯阵, 回到工具页. 上拨手势也能退出 (见 _installSwipeGesture).
+    lv_obj_t* back_btn = lv_obj_create(_scr);
+    lv_obj_set_size(back_btn, 150, 70);
+    lv_obj_set_pos(back_btn, 20, 12);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_opa(back_btn, LV_OPA_80, 0);
+    lv_obj_set_style_radius(back_btn, 16, 0);
+    lv_obj_set_style_border_width(back_btn, 2, 0);
+    lv_obj_set_style_border_color(back_btn, lv_color_hex(0x6A8FB5), 0);
+    lv_obj_clear_flag(back_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(back_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x1A1A1A), LV_STATE_PRESSED);
+
+    lv_obj_t* back_lbl = lv_label_create(back_btn);
+    lv_label_set_text(back_lbl, "← 返回");
+    lv_obj_set_style_text_color(back_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(back_lbl, zh_font_30(), 0);
+    lv_obj_set_align(back_lbl, LV_ALIGN_CENTER);
+
+    // 点击在 LVGL 线程上, 但 _requestClose 会触发 onClose 删除 _scr (本按钮的父节点),
+    // 同步删会 use-after-free. 用 lv_async_call 延后到事件处理完再关.
+    lv_obj_add_event_cb(back_btn, [](lv_event_t* e) {
+        auto* app = static_cast<AppUnitPuzzle*>(lv_event_get_user_data(e));
+        if (!app) return;
+        lv_async_call([](void* u) {
+            static_cast<AppUnitPuzzle*>(u)->_requestClose();
+        }, app);
+    }, LV_EVENT_CLICKED, this);
 
     // 状态行
     _status_lbl = lv_label_create(_scr);
@@ -403,11 +485,11 @@ void AppUnitPuzzle::_buildUi()
     lv_obj_align(_diag_lbl, LV_ALIGN_TOP_MID, 0, 78);
     _updateDiag();  // 立即填充
 
-    // 9 个图案按钮 (3 行 × 3 列), idx 8 是"字库" (循环显示预设 ASCII 短语)
+    // 9 个图案按钮 (3 行 × 3 列), idx 8 是"文字" (输入文字后在 LED 上滚动显示)
     static const char* labels[9] = {
         "红", "绿", "蓝", "白",
         "跑马", "心跳", "笑脸", "彩虹",
-        "字库",
+        "文字",
     };
     static const uint32_t colors[9] = {
         0xFF3344, 0x33FF66, 0x3388FF, 0xFFEEAA,
@@ -455,10 +537,8 @@ void AppUnitPuzzle::_buildUi()
         lv_obj_add_event_cb(btn, _pattern_btn_cb, LV_EVENT_CLICKED, desc);
     }
 
-    // idx=8 是"字库"模式: 不需要输入区, 按下后 LED 循环显示 4 段预设短语.
-    // (历史: 之前这里放 lv_textarea 让用户输入, 0x4811606a load fault 在点 idx=8
-    // 触发 textarea 首次绘制时崩, v1-v3 三种字体/参数组合都崩. 改字库循环, 完全
-    // 不用 lvgl 复杂 widget, 零崩溃风险.)
+    // idx=8 "文字"模式: 点击后弹出 _showTextInput() 输入框,
+    // 确认后文字存入 _text_buf, _drawPattern case 8 滚动显示.
 
     // 亮度调节按钮: − 和 + (放在 GPIO 诊断按钮的左边, 避开被覆盖)
     //   diag 起点 x=750, 所以 +/− 必须在 x<750
@@ -668,29 +748,47 @@ void AppUnitPuzzle::_drawPattern()
         }
         break;
     }
-    case 8: { // 字库循环 — 5x7 内置位图, 静态显示 1 字符 (8 屏宽装不下多字符滚动)
-        // (历史: 滚动版本黑屏阶段太长 + 字符快看不清. 改静态 1 字符显示,
-        //  LED 持续亮, 2 秒一切, 一眼看清. 5x7 字体在 8 屏宽内居中 1 字符完美.)
-        static const char* chars = "HM5O";  // 4 个字符, 每段 2 秒
-        constexpr int N_CHARS    = 4;
-        constexpr int SWITCH_MS  = 2000;     // 每段 2 秒
-        int idx = (phase / SWITCH_MS) % N_CHARS;
-        char c = chars[idx];
-        if (c < 0x20 || c > 0x7E) c = '?';
-        const uint8_t* bmp = font5x7[c - 0x20];
+    case 8: { // 文字滚动 — 5x7 内置位图, 水平滚动显示用户输入文字
+        const char* text = _text_buf;
+        int len = (int)strlen(text);
+        if (len == 0) break;  // 无文字时黑屏 (提示用户先输入)
 
         constexpr int CHAR_W = 5;
         constexpr int CHAR_H = 7;
-        constexpr int X_OFF  = (W - CHAR_W) / 2;  // 8-5=3, 左 1 像素 padding + 字符 + 右 2
-        constexpr int Y_OFF  = (H - CHAR_H) / 2;  // 8-7=1, 顶部 1 行 padding
+        constexpr int CHAR_GAP = 1;          // 字符间距 1px
+        constexpr int CELL    = CHAR_W + CHAR_GAP;  // 每字符占 6px
+        constexpr int Y_OFF   = (H - CHAR_H) / 2;   // 8-7=1, 垂直居中
 
-        for (int col = 0; col < CHAR_W; col++) {
-            for (int row = 0; row < CHAR_H; row++) {
-                if (bmp[row] & (1 << (4 - col))) {
-                    int x = X_OFF + col;
-                    int y = Y_OFF + row;
-                    if (x >= 0 && x < W && y >= 0 && y < H) {
-                        _setPixelXY(x, y, 0, 255, 200);  // 青绿色
+        int total_w = len * CELL - CHAR_GAP;  // 末字符后不加间距
+        int x_start;
+        if (total_w <= W) {
+            // 放得下: 静态居中, 不滚动 (单字符/短词一眼看清)
+            x_start = (W - total_w) / 2;
+        } else {
+            // 放不下: 从右侧进入, 150ms 滚动 1px, 滚过总宽后循环
+            int scroll_px = (phase / 150) % (total_w + W);
+            x_start = W - scroll_px;  // 第0字符的左边 x
+        }
+
+        for (int ci = 0; ci < len; ci++) {
+            char c = text[ci];
+            // 小写转大写
+            if (c >= 'a' && c <= 'z') c = (char)(c - ('a' - 'A'));
+            if (c < 0x20 || c > 0x7E) c = '?';
+            const uint8_t* bmp = font5x7[c - 0x20];
+
+            int cx = x_start + ci * CELL;
+            if (cx + CHAR_W <= 0) continue;  // 完全在左边屏外
+            if (cx >= W) break;              // 完全在右边屏外
+
+            for (int col = 0; col < CHAR_W; col++) {
+                int x = cx + col;
+                if (x < 0 || x >= W) continue;
+                for (int row = 0; row < CHAR_H; row++) {
+                    if (bmp[row] & (1 << (4 - col))) {
+                        int y = Y_OFF + row;
+                        if (y >= 0 && y < H)
+                            _setPixelXY(x, y, 0, 255, 200);  // 青绿色
                     }
                 }
             }
@@ -771,6 +869,149 @@ void AppUnitPuzzle::_renderText(const char* s, int n, int phase,
             }
         }
     }
+}
+
+// =============================================================================
+// 文字输入弹窗
+// =============================================================================
+
+void AppUnitPuzzle::_showTextInput()
+{
+    // 如果已经打开就不重复创建
+    if (_text_ui[0]) return;
+
+    // 全屏半透明遮罩
+    lv_obj_t* overlay = lv_obj_create(_scr);
+    lv_obj_set_size(overlay, 1280, 800);
+    lv_obj_set_pos(overlay, 0, 0);
+    lv_obj_set_style_bg_color(overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(overlay, 0, 0);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    _text_ui[0] = overlay;
+
+    // 对话框主体 (放上方, 给底部虚拟键盘腾空间)
+    lv_obj_t* box = lv_obj_create(overlay);
+    lv_obj_set_size(box, 900, 320);
+    lv_obj_align(box, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_style_bg_color(box, lv_color_hex(0x1A2A3A), 0);
+    lv_obj_set_style_radius(box, 20, 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 标题
+    lv_obj_t* title = lv_label_create(box);
+    lv_label_set_text(title, "输入文字 (LED 滚动显示, 最多 16 字符)");
+    lv_obj_set_style_text_color(title, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_font(title, zh_font_30(), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+
+    // 输入框
+    lv_obj_t* ta = lv_textarea_create(box);
+    lv_obj_set_size(ta, 820, 100);
+    lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 80);
+    lv_textarea_set_max_length(ta, 16);
+    lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_placeholder_text(ta, "e.g. HELLO WORLD");
+    lv_obj_set_style_text_font(ta, &lv_font_montserrat_20, 0);
+    if (_text_buf[0]) lv_textarea_set_text(ta, _text_buf);
+    _text_ta = ta;
+
+    // 确认按钮
+    lv_obj_t* ok_btn = lv_obj_create(box);
+    lv_obj_set_size(ok_btn, 200, 80);
+    lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 80, -20);
+    lv_obj_set_style_bg_color(ok_btn, lv_color_hex(0x1B5E20), 0);
+    lv_obj_set_style_radius(ok_btn, 12, 0);
+    lv_obj_set_style_border_width(ok_btn, 0, 0);
+    lv_obj_add_flag(ok_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(ok_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* ok_lbl = lv_label_create(ok_btn);
+    lv_label_set_text(ok_lbl, "确认");
+    lv_obj_set_style_text_font(ok_lbl, zh_font_30(), 0);
+    lv_obj_set_style_text_color(ok_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_align(ok_lbl, LV_ALIGN_CENTER);
+    _text_ui[2] = ok_btn;
+
+    // 取消按钮
+    lv_obj_t* cancel_btn = lv_obj_create(box);
+    lv_obj_set_size(cancel_btn, 200, 80);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -80, -20);
+    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0x6A1B1B), 0);
+    lv_obj_set_style_radius(cancel_btn, 12, 0);
+    lv_obj_set_style_border_width(cancel_btn, 0, 0);
+    lv_obj_add_flag(cancel_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(cancel_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* cancel_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_lbl, "取消");
+    lv_obj_set_style_text_font(cancel_lbl, zh_font_30(), 0);
+    lv_obj_set_style_text_color(cancel_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_align(cancel_lbl, LV_ALIGN_CENTER);
+
+    // 屏幕虚拟键盘 (默认隐藏, 点输入框时弹出). 放屏幕底部, 全宽.
+    lv_obj_t* kb = lv_keyboard_create(overlay);
+    lv_obj_set_size(kb, 1280, 360);
+    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_keyboard_set_textarea(kb, ta);
+    lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
+
+    // 把 textarea 加入物理键盘 group (USB 实体键盘也能用)
+    auto* hal = GetHAL();
+    if (hal && hal->lvKbGroup) {
+        lv_group_add_obj(hal->lvKbGroup, ta);
+        lv_group_focus_obj(ta);
+    }
+
+    // 点输入框 → 弹出虚拟键盘; 键盘自带的关闭(✕)/确认(✓) → 收起键盘.
+    lv_obj_add_event_cb(ta, [](lv_event_t* e) {
+        lv_obj_t* keyboard = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+        if (keyboard) lv_obj_clear_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    }, LV_EVENT_CLICKED, kb);
+
+    lv_obj_add_event_cb(kb, [](lv_event_t* e) {
+        lv_obj_t* keyboard = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    }, LV_EVENT_READY, nullptr);
+    lv_obj_add_event_cb(kb, [](lv_event_t* e) {
+        lv_obj_t* keyboard = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    }, LV_EVENT_CANCEL, nullptr);
+
+    struct Ctx { AppUnitPuzzle* app; lv_obj_t* overlay; lv_obj_t* ta; };
+    auto* ctx = new Ctx{this, overlay, ta};
+
+    lv_obj_add_event_cb(ok_btn, [](lv_event_t* e) {
+        auto* c = static_cast<Ctx*>(lv_event_get_user_data(e));
+        if (!c) return;
+        const char* text = lv_textarea_get_text(c->ta);
+        if (text) {
+            strncpy(c->app->_text_buf, text, sizeof(c->app->_text_buf) - 1);
+            c->app->_text_buf[sizeof(c->app->_text_buf) - 1] = '\0';
+        }
+        c->app->_text_scroll = 0;
+        c->app->_pattern.store(8);
+        if (c->app->_status_lbl) lv_label_set_text(c->app->_status_lbl, "文字滚动");
+        auto* hal = GetHAL();
+        if (hal && hal->lvKbGroup) lv_group_remove_obj(c->ta);
+        c->app->_text_ta  = nullptr;
+        c->app->_text_ui[0] = nullptr;
+        c->app->_text_ui[2] = nullptr;
+        lv_obj_delete(c->overlay);
+        delete c;
+    }, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
+        auto* c = static_cast<Ctx*>(lv_event_get_user_data(e));
+        if (!c) return;
+        auto* hal = GetHAL();
+        if (hal && hal->lvKbGroup) lv_group_remove_obj(c->ta);
+        c->app->_text_ta  = nullptr;
+        c->app->_text_ui[0] = nullptr;
+        c->app->_text_ui[2] = nullptr;
+        lv_obj_delete(c->overlay);
+        delete c;
+    }, LV_EVENT_CLICKED, ctx);
 }
 
 // =============================================================================

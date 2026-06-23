@@ -38,6 +38,9 @@ public:
     // _toolPuzzle_cb 用它启动外部 AppUnitPuzzle.
     void setPuzzleAppId(int id) { _puzzle_id = id; }
 
+    // AppLoraChat 的 mooncake app id, 由 app_installer 注入.
+    void setLoraChatAppId(int id) { _lora_chat_id = id; }
+
     // ── Shared email cache (status-bar poll + sub-page both read these) ──
     // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
     // and reads email_unread_total to decide whether to show the icon.
@@ -62,7 +65,8 @@ public:
 
 private:
     std::function<void()> _close_cb;
-    int _puzzle_id = -1;
+    int _puzzle_id    = -1;
+    int _lora_chat_id = -1;
 
     lv_indev_t* _gesture_indev = nullptr;
     lv_obj_t*   _scr        = nullptr;
@@ -134,7 +138,8 @@ private:
     static void _toolBtn_cb(lv_event_t* e);  // tools tile → open calculator
     static void _calcKey_cb(lv_event_t* e);  // a calculator key
     static void _back_cb(lv_event_t* e);     // calculator → tools page
-    static void _toolPuzzle_cb(lv_event_t* e);  // tools 第 2 行 tile → open 灯阵
+    static void _toolPuzzle_cb(lv_event_t* e);    // tools 第 2 行 tile → open 灯阵
+    static void _toolLoraChat_cb(lv_event_t* e);  // tools tile → open LoRa 聊天
 
     static void _toolFx_cb(lv_event_t* e);   // tools tile → open converter
     static void _fxKey_cb(lv_event_t* e);    // a converter keypad key

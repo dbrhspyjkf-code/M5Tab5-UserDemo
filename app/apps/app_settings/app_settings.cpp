@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cctype>
 #include <atomic>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -33,9 +34,10 @@ static const lv_font_t* zh_font_30()
 extern lv_font_t font_zh_36;
 
 // Tool tile icons (ARGB8888) defined in app_settings/calc_icon.c & fx_icon.c & unit_icon.c.
-extern const lv_image_dsc_t calc_icon;  // 80x112
-extern const lv_image_dsc_t fx_icon;    // 100x100
-extern const lv_image_dsc_t unit_icon;  // 200x200
+extern const lv_image_dsc_t calc_icon;   // 80x112
+extern const lv_image_dsc_t fx_icon;     // 100x100
+extern const lv_image_dsc_t unit_icon;   // 200x200
+extern const lv_image_dsc_t lora_logo;   // 130x130
 
 // Calculator fonts (Arial Unicode subsets) defined in this app's font_calc_*.c.
 extern const lv_font_t font_calc_big;   // 80px result line
@@ -154,7 +156,9 @@ void AppSettings::onClose()
     _fx_from_dd = _fx_to_dd = _fx_amt_lbl = _fx_res_lbl = _fx_rate_lbl = nullptr;
     _unit_cat_dd = _unit_from_dd = _unit_to_dd = _unit_amt_lbl = _unit_res_lbl = _unit_eq_lbl = nullptr;
     _email_page = _email_title = _email_status = _email_list = nullptr;
-    email_unread_total.store(0);
+    // 不清零 email_unread_total: 本 app 只展示邮件列表, 没有"标记已读"功能,
+    // 退出不代表邮件已读. 未读数是服务器真实状态 (由轮询刷新), 退出后状态栏
+    // 信封图标 / 灯阵 NEW EMAIL 应继续按真实未读显示.
     email_updated.store(false);
     email_error.store(false);
     email_error_msg.clear();
@@ -296,8 +300,8 @@ void AppSettings::_buildToolsPage()
                 lv_obj_clear_flag(flap, LV_OBJ_FLAG_CLICKABLE);
                 // 关键: flap 不吞 click 事件, 冒泡到父 tile
                 lv_obj_add_flag(flap, LV_OBJ_FLAG_EVENT_BUBBLE);
-                // label 右移
-                lv_obj_align(name, LV_ALIGN_LEFT_MID, ex + EW + 16, 0);
+                // label 对齐到 160px, 与图片 tile 保持一致
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, ex + EW + 52, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -326,8 +330,8 @@ void AppSettings::_buildToolsPage()
                         lv_obj_add_flag(dot, LV_OBJ_FLAG_EVENT_BUBBLE);
                     }
                 }
-                // label 整体右移更多, 避免压到点阵
-                lv_obj_align(name, LV_ALIGN_LEFT_MID, start_x + GRID_W + 12, 0);
+                // label 对齐到 160px, 与图片 tile (icon_x+130+16=158) 保持一致
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start_x + GRID_W + 56, 0);
             }
         }
     };
@@ -345,6 +349,41 @@ void AppSettings::_buildToolsPage()
     //   图标走 make_tile 的 nullptr 分支, 用 LV_SYMBOL_BULLET 拼 6x6 LED 缩略图
     make_tile(35, nullptr, 130, "灯  阵", _toolPuzzle_cb, 256, 12, -1, 310);
 
+    // 第 2 行第 2 列: LoRa 聊天 (Unit C6L SX1262, PORT.A UART)
+    //   图标: 4 根逐渐升高的信号柱
+    {
+        const int x = 450, y_pos = 310;
+        lv_obj_t* tile = lv_obj_create(_tools_page);
+        lv_obj_set_size(tile, 380, 140);
+        lv_obj_align(tile, LV_ALIGN_TOP_LEFT, x, y_pos);
+        lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD), 0);
+        lv_obj_set_style_radius(tile, 20, 0);
+        lv_obj_set_style_border_width(tile, 0, 0);
+        lv_obj_set_style_pad_all(tile, 0, 0);
+        lv_obj_set_style_shadow_width(tile, 18, 0);
+        lv_obj_set_style_shadow_color(tile, lv_color_hex(0x5A7A9C), 0);
+        lv_obj_set_style_shadow_opa(tile, LV_OPA_30, 0);
+        lv_obj_set_style_shadow_ofs_y(tile, 4, 0);
+        lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD_PR), LV_STATE_PRESSED);
+        lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(tile, _toolLoraChat_cb, LV_EVENT_CLICKED, this);
+
+        // LoRa 官方 logo 图标
+        lv_obj_t* icon = lv_image_create(tile);
+        lv_image_set_src(icon, &lora_logo);
+        lv_image_set_scale(icon, 256);  // 130×130 native, 1:1
+        lv_obj_align(icon, LV_ALIGN_LEFT_MID, 12, 0);
+        lv_obj_add_flag(icon, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t* name = lv_label_create(tile);
+        lv_label_set_text(name, "LoRa Chat");
+        lv_obj_set_style_text_font(name, zh_font_30(), 0);
+        lv_obj_set_style_text_color(name, lv_color_hex(C_TEXT), 0);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, 12 + 130 + 16, 0);
+    }
+
     // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表)
     //   y=310 + 140 + 30 = 480, 走 kind=1 信封分支
     make_tile(35, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 480, 1);
@@ -360,6 +399,14 @@ void AppSettings::_toolPuzzle_cb(lv_event_t* e)
     auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
     if (self->_puzzle_id > 0) {
         mooncake::GetMooncake().openApp(self->_puzzle_id);
+    }
+}
+
+void AppSettings::_toolLoraChat_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (self->_lora_chat_id > 0) {
+        mooncake::GetMooncake().openApp(self->_lora_chat_id);
     }
 }
 
@@ -1483,19 +1530,31 @@ void AppSettings::fetchEmail()
                 // 8768 schema: {count, folders:[{name, unread, latest_subject,
                 // latest_from, latest_preview}], error, account, time}
                 if (j.contains("folders") && j["folders"].is_array()) {
-                    email_unread_total.store(j.value("count", 0));
+                    // 草稿箱里的"未读"是自己没写完的草稿, 不算真正的未读邮件.
+                    // 按 folder 名 (含 "draft" / "草稿", 大小写不敏感) 跳过, 并用
+                    // 各 folder 的 unread 重新累加 total (不再直接用服务器 count).
+                    auto is_draft = [](std::string n) {
+                        for (auto& c : n) c = (char)std::tolower((unsigned char)c);
+                        return n.find("draft") != std::string::npos ||
+                               n.find("草稿") != std::string::npos;
+                    };
+                    int total = 0;
                     for (const auto& f : j["folders"]) {
                         if (!f.is_object()) continue;
+                        std::string name = f.value("name", std::string("?"));
+                        if (is_draft(name)) continue;  // 跳过草稿箱
+                        total += f.value("unread", 0);
                         // 单条数据只 latest 一封, 用 preview 字段当 subject
                         email_list.push_back(EmailItem{
                             f.value("latest_from", std::string("?")),
                             f.value("latest_subject", std::string("(无主题)")),
                             std::string(),  // 8768 不暴露 date
-                            f.value("name", std::string("?")),
+                            name,
                         });
                     }
+                    email_unread_total.store(total);
                     email_updated.store(true);
-                    mclog::tagInfo(_tag, "email list updated ({} folders, {} total)",
+                    mclog::tagInfo(_tag, "email list updated ({} folders, {} total, drafts excluded)",
                                    email_list.size(), email_unread_total.load());
                 } else {
                     email_error.store(true);

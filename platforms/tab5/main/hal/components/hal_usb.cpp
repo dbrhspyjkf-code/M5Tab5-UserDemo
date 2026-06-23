@@ -349,7 +349,7 @@ static void lvgl_keyboard_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
     }
 }
 
-static void lvgl_mouse_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+[[maybe_unused]] static void lvgl_mouse_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {
     _usba_detect_mutex.lock();
     if (!_is_usba_connected) {
@@ -376,15 +376,19 @@ void HalEsp32::hid_init()
     mclog::tagInfo(TAG, "hid init");
     xTaskCreatePinnedToCore(tab5_usb_host_task, "usba", 4096 * 2, NULL, 5, NULL, 0);
 
-    // Mouse pointer indev
-    auto lvMouse = lv_indev_create();
-    lv_indev_set_type(lvMouse, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(lvMouse, lvgl_mouse_read_cb);
-    lv_indev_set_display(lvMouse, lvDisp);
-
-    _cursor_img = lv_image_create(lv_screen_active());
-    lv_image_set_src(_cursor_img, &mouse_cursor);
-    lv_indev_set_cursor(lvMouse, _cursor_img);
+    // USB 鼠标 pointer indev 暂时禁用.
+    // 原因: LVGL 新建 indev 插链表头部. 触摸 indev 在 bsp_display_start 里先建 (排尾),
+    // 这个鼠标 indev 后建 (排头), 于是各 app 的"找第一个 pointer indev 注册上拨手势"
+    // 会错误地注册到鼠标 indev 上, 导致全部 app 触摸上拨退出失效.
+    // 用户当前只用 USB 键盘, 不用鼠标. 如需恢复鼠标, 要改各 app 改成精确拿触摸 indev.
+    // auto lvMouse = lv_indev_create();
+    // lv_indev_set_type(lvMouse, LV_INDEV_TYPE_POINTER);
+    // lv_indev_set_read_cb(lvMouse, lvgl_mouse_read_cb);
+    // lv_indev_set_display(lvMouse, lvDisp);
+    //
+    // _cursor_img = lv_image_create(lv_screen_active());
+    // lv_image_set_src(_cursor_img, &mouse_cursor);
+    // lv_indev_set_cursor(lvMouse, _cursor_img);
 
     // Physical keyboard indev
     _key_event_queue = xQueueCreate(32, sizeof(KeyEvent_t));

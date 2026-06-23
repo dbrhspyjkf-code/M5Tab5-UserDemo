@@ -163,12 +163,10 @@ void HalEsp32::init()
     // lv_indev_set_read_cb(lvTouchpad, lvgl_read_cb);
     // lv_indev_set_display(lvTouchpad, lvDisp);
 
-    // HA panel does not use USB host/HID. Keep it disabled so the USB-Serial/JTAG
-    // connection remains stable while the dashboard is running.
-    // mclog::tagInfo(_tag, "usb host init");
-    // bsp_usb_host_start(BSP_USB_HOST_POWER_MODE_USB_DEV, true);
-    // mclog::tagInfo(_tag, "hid init");
-    // hid_init();
+    mclog::tagInfo(_tag, "usb host init");
+    bsp_usb_host_start(BSP_USB_HOST_POWER_MODE_USB_DEV, true);
+    mclog::tagInfo(_tag, "hid init");
+    hid_init();
 
     mclog::tagInfo(_tag, "rs485 init");
     rs485_init();
