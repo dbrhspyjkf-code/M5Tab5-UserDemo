@@ -218,7 +218,9 @@ void AppEmailLed::_renderFrame(int64_t now_ms)
     {
         std::lock_guard<std::mutex> lk(_strip_mu);
         if (!_strip) return;
-        led_strip_clear(_strip);
+        // 不能用 led_strip_clear() —— 它内部 memset+refresh 会先把灯全灭再刷,
+        // 与本帧末尾的 refresh 形成「黑一下→画字」= 闪. 只清缓冲, 末尾刷一次.
+        for (int i = 0; i < N; i++) led_strip_set_pixel(_strip, i, 0, 0, 0);
 
         int cycle_t = (int)(now_ms % CYCLE);
         if (cycle_t < SCROLL_DUR) {
