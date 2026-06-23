@@ -18,8 +18,8 @@
 static const char* TAG = "stocks";
 
 // ── 全覆盖中文字体 (与 app_ha/view, app_settings 一致) ────────────────────────
-//   zh_font_lg() 30px (标题/表头/数据行), zh_font_sm() 20px (状态/按钮).
-//   标题和数据行通过 LVGL transform 分别放大到约 36px / 34px。
+//   stock_row_font() 36px (标题/表头/数据行), zh_font_sm() 20px (状态/按钮).
+//   股票字体只包含表格常用字符，未知股票名自动回退到 30px 全字库。
 //   设备上是 flash 里的 cbin blob 原地用; 桌面回退到链接进来的 20px C 数组字体.
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
@@ -43,6 +43,17 @@ static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
 #endif
 
+extern "C" const lv_font_t font_stocks_36;
+static const lv_font_t* stock_row_font()
+{
+    static lv_font_t font = []() {
+        lv_font_t copy = font_stocks_36;
+        copy.fallback = zh_font_lg();
+        return copy;
+    }();
+    return &font;
+}
+
 // 单调毫秒时钟 (两平台通用)
 static int64_t mono_ms()
 {
@@ -56,7 +67,7 @@ static int64_t mono_ms()
 
 // 7 列的水平像素布局 (1280 宽屏). 代码/名称/现价/涨跌幅/涨跌额/换手率/量比.
 static const char* COLS[]  = {"代码", "名称", "现价", "涨跌幅", "涨跌额", "换手率", "量比"};
-static const int   COL_X[] = {30, 150, 370, 510, 670, 830, 970};
+static const int   COL_X[] = {24, 170, 390, 540, 710, 880, 1050};
 
 // ════════════════════════════════════════════════════════════════════════════
 //  生命周期
@@ -189,8 +200,7 @@ void AppStocks::_buildUi()
 
     lv_obj_t* title = lv_label_create(_header);
     lv_label_set_text(title, "自选股");
-    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
-    lv_obj_set_style_transform_scale(title, 307, 0);  // 30px × 1.2 ≈ 36px
+    lv_obj_set_style_text_font(title, stock_row_font(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 84, 0);
 
@@ -202,7 +212,7 @@ void AppStocks::_buildUi()
 
     // ── Column header ─────────────────────────────────────────────────
     _col_header = lv_obj_create(_scr);
-    lv_obj_set_size(_col_header, SCREEN_W, 36);
+    lv_obj_set_size(_col_header, SCREEN_W, 40);
     lv_obj_align(_col_header, LV_ALIGN_TOP_MID, 0, HEADER_H + 4);
     lv_obj_set_style_bg_color(_col_header, lv_color_hex(C_HEADER), 0);
     lv_obj_set_style_bg_opa(_col_header, LV_OPA_60, 0);
@@ -213,13 +223,13 @@ void AppStocks::_buildUi()
     for (int i = 0; i < 7; i++) {
         lv_obj_t* lbl = lv_label_create(_col_header);
         lv_label_set_text(lbl, COLS[i]);
-        lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);
+        lv_obj_set_style_text_font(lbl, stock_row_font(), 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(C_DIM), 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, COL_X[i], 0);
     }
 
     // ── Data rows ─────────────────────────────────────────────────────
-    const int rows_top = HEADER_H + 4 + 36 + 4;
+    const int rows_top = HEADER_H + 4 + 40;
     for (int i = 0; i < N_ROWS; i++) {
         _rows[i] = lv_obj_create(_scr);
         lv_obj_set_size(_rows[i], SCREEN_W, ROW_H);
@@ -244,9 +254,7 @@ void AppStocks::_buildUi()
         for (int c = 0; c < 7; c++) {
             lv_obj_t* cell = lv_label_create(_rows[i]);
             lv_label_set_text(cell, "--");
-            lv_obj_set_style_text_font(cell, zh_font_lg(), 0);
-            // 30px 全覆盖中文字体放大到约 34px；仍能在 54px 行高中完整显示。
-            lv_obj_set_style_transform_scale(cell, 290, 0);
+            lv_obj_set_style_text_font(cell, stock_row_font(), 0);
             lv_obj_set_style_text_color(cell, lv_color_hex(C_DIM), 0);
             lv_obj_align(cell, LV_ALIGN_LEFT_MID, COL_X[c], 0);
             lv_obj_add_flag(cell, LV_OBJ_FLAG_EVENT_BUBBLE);  // 点击冒泡到 row
