@@ -19,6 +19,7 @@
 #include "app_unit_puzzle/app_unit_puzzle.h"
 #include "app_lora_chat/app_lora_chat.h"
 #include "app_email_led/app_email_led.h"
+#include "app_stocks/app_stocks.h"
 /* Header files locator (Don't remove) */
 
 // Start boot anim app and wait for it to finish
@@ -65,6 +66,9 @@ inline void on_install_apps()
     auto lc_uptr = std::make_unique<AppLoraChat>();
     AppLoraChat* lora_chat = lc_uptr.get();
 
+    auto st_uptr = std::make_unique<AppStocks>();
+    AppStocks* stocks = st_uptr.get();
+
     // ── Install (AppHome auto-opens via onCreate → open()) ──
     mooncake::GetMooncake().installApp(std::move(home_uptr));
     int ha_id = mooncake::GetMooncake().installApp(std::move(ha_uptr));
@@ -73,6 +77,7 @@ inline void on_install_apps()
     int pa_id = mooncake::GetMooncake().installApp(std::move(pa_uptr));
     int up_id = mooncake::GetMooncake().installApp(std::move(up_uptr));
     int lc_id = mooncake::GetMooncake().installApp(std::move(lc_uptr));
+    int st_id = mooncake::GetMooncake().installApp(std::move(st_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
@@ -88,10 +93,15 @@ inline void on_install_apps()
     lora_chat->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+    // 自选股也从「工具」页打开, 返回 (← / 上拨) 回到工具页.
+    stocks->setCloseCallback([set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+    });
 
     // 灯阵入口放到「工具」页第 2 行 (由 AppSettings 持有), 不再占 home 一格.
     settings->setPuzzleAppId(up_id);
     settings->setLoraChatAppId(lc_id);
+    settings->setStocksAppId(st_id);
 
     // Status-bar mail icon → open the AppSettings email sub-page. The handler
     // (1) brings the AppSettings app to the foreground (its onOpen builds the

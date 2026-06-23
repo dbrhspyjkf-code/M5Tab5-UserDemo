@@ -1199,24 +1199,25 @@ void AppStocks::_fetchStocksAsync()
 void AppStocks::_doFetch()
 {
     auto* hal = GetHAL();
-    std::string svc_host = hal->getConfig().svc_host;  // NVS-backed
+    // svc_host is the Mac hermes NVS key (default 192.168.1.142, see app_home.cpp)
+    std::string svc_host = hal->getConfig("svc_host", "192.168.1.142");
     if (svc_host.empty()) svc_host = "192.168.1.142";
     std::string url = "http://" + svc_host + ":8766/api/stocks/portfolio";
 
-    std::string body;
-    bool ok = hal->httpGet(url, body, FETCH_TIMEOUT_MS);
-    if (!ok) {
+    // HttpResponse_t has {int status, std::string body, bool ok} — see app/hal/hal.h:389.
+    auto resp = hal->httpGet(url);
+    if (!resp.ok || resp.status != 200) {
         {
             std::lock_guard<std::mutex> lk(_items_mu);
             _fetch_error = true;
-            _fetch_error_msg = "HTTP failed";
+            _fetch_error_msg = "HTTP " + std::to_string(resp.status);
         }
         mclog::tagWarn(TAG, "fetch failed: %s", _fetch_error_msg.c_str());
         auto lock = hal->lvglLock();
         _setStatus(false, nullptr);
         return;
     }
-    _parseStocksJson(body);
+    _parseStocksJson(resp.body);
 }
 
 void AppStocks::_parseStocksJson(const std::string& body)
@@ -1309,19 +1310,17 @@ void AppStocks::onRunning()
 }
 ```
 
-- [ ] **Step 4: Add `httpGet` declaration in HAL or fallback**
+- [ ] **Step 4: Confirm HAL `httpGet` signature**
 
-The `hal->httpGet(url, body, timeout_ms)` signature must exist. Check `app/hal/hal.h` for the existing `httpGet` signature.
-
-In `app/hal/hal.h` (the abstract class), the existing signature is:
+The actual signature in `app/hal/hal.h:389-398` is:
 
 ```cpp
-virtual bool httpGet(const std::string& url, std::string& body, int timeout_ms = 5000) = 0;
+struct HttpResponse_t { int status = 0; std::string body; bool ok = false; };
+virtual HttpResponse_t httpGet(const std::string& url,
+    const std::vector<std::pair<std::string, std::string>>& headers = {});
 ```
 
-If the timeout parameter is missing, add the third parameter to the abstract and the two implementations (`hal_esp32.cpp`, `hal_desktop.cpp`).
-
-In `platforms/tab5/main/hal/hal_esp32.cpp` (the ESP impl) and `platforms/desktop/hal/hal_desktop.cpp` (the desktop impl), confirm the timeout is forwarded to the underlying HTTP call. (Recent memory note: hal_http.cpp already has 30s timeouts for email endpoint via a route; the default httpGet timeout is 10s. Update the spec to use 5s; if the ESP impl caps at 10s, that's fine — 5s just means the call returns earlier.)
+No timeout parameter — `hal_http.cpp` handles the timeout internally (default 10s for generic, 30s for the email endpoint per commit cb03bcc). The Step 1 `_doFetch` code uses `resp.status != 200` for the error check. **No HAL changes needed.** If the actual default timeout is too long, the future Task 7+ cleanup can route this URL through `hal_http.cpp` similar to the email endpoint pattern — out of scope for this plan.
 
 - [ ] **Step 5: Build**
 

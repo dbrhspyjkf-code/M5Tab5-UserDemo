@@ -38,6 +38,7 @@ extern const lv_image_dsc_t calc_icon;   // 80x112
 extern const lv_image_dsc_t fx_icon;     // 100x100
 extern const lv_image_dsc_t unit_icon;   // 200x200
 extern const lv_image_dsc_t lora_logo;   // 130x130
+extern const lv_image_dsc_t stocks_icon; // 130x130
 
 // Calculator fonts (Arial Unicode subsets) defined in this app's font_calc_*.c.
 extern const lv_font_t font_calc_big;   // 80px result line
@@ -387,6 +388,10 @@ void AppSettings::_buildToolsPage()
     // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表)
     //   y=310 + 140 + 30 = 480, 走 kind=1 信封分支
     make_tile(35, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 480, 1);
+
+    // 第 3 行第 2 列: 自选股 (走 hermes :8766/api/stocks/portfolio, mx-selfselect 后端)
+    //   stocks_icon 130×130 native, 1:1, 与 lora/fx 同款图片 tile
+    make_tile(450, &stocks_icon, 130, "自选股", _toolStocks_cb, 256, 12, -1, 480);
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)
@@ -423,6 +428,18 @@ void AppSettings::_toolUnit_cb(lv_event_t* e)
 void AppSettings::_toolMail_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->_openEmail();
+}
+
+void AppSettings::_toolStocks_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->openStocks();
+}
+
+void AppSettings::openStocks()
+{
+    if (_stocks_id > 0) {
+        mooncake::GetMooncake().openApp(_stocks_id);
+    }
 }
 
 void AppSettings::_emailRefresh_cb(lv_event_t* e)

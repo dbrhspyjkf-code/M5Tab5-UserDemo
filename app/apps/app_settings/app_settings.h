@@ -41,6 +41,10 @@ public:
     // AppLoraChat 的 mooncake app id, 由 app_installer 注入.
     void setLoraChatAppId(int id) { _lora_chat_id = id; }
 
+    // AppStocks (自选股) 的 mooncake app id, 由 app_installer 注入.
+    void setStocksAppId(int id) { _stocks_id = id; }
+    void openStocks();  // 工具页 tile → 打开自选股 app
+
     // ── Shared email cache (status-bar poll + sub-page both read these) ──
     // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
     // and reads email_unread_total to decide whether to show the icon.
@@ -67,6 +71,7 @@ private:
     std::function<void()> _close_cb;
     int _puzzle_id    = -1;
     int _lora_chat_id = -1;
+    int _stocks_id    = -1;
 
     lv_indev_t* _gesture_indev = nullptr;
     lv_obj_t*   _scr        = nullptr;
@@ -156,5 +161,6 @@ private:
     static void _unitBack_cb(lv_event_t* e);   // converter → tools page
 
     static void _toolMail_cb(lv_event_t* e);   // tools tile → open email page
+    static void _toolStocks_cb(lv_event_t* e); // tools tile → open 自选股
     static void _emailRefresh_cb(lv_event_t* e); // 邮件子页刷新按钮 → _emailFetch
 };
