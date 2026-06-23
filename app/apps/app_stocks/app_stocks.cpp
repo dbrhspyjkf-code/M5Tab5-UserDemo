@@ -1,10 +1,12 @@
 #include "app_stocks.h"
+#include "stock_market_hours.h"
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
 #include <cstdio>
 #include <cstring>
 #include <chrono>
+#include <ctime>
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <esp_log.h>
@@ -100,13 +102,15 @@ void AppStocks::onRunning()
         return;
     }
 
-    // 前台: 30s 轮询. 首次拉取已在 onOpen 触发, 这里只管周期刷新.
+    // App 打开时已经无条件拉取一次；周期刷新只在 A 股交易时段执行。
+    if (!stocks_refresh::isAshareTradingTime(std::time(nullptr))) return;
+
     int64_t last;
     {
         std::lock_guard<std::mutex> lk(_items_mu);
         last = _last_fetch_ms;
     }
-    if (last != 0 && (mono_ms() - last) > FETCH_INTERVAL_MS) {
+    if (last != 0 && (mono_ms() - last) >= FETCH_INTERVAL_MS) {
         _fetchStocksAsync();
     }
 }
@@ -415,11 +419,41 @@ void AppStocks::_refreshUiFromItems()
 // ════════════════════════════════════════════════════════════════════════════
 void AppStocks::_fetchStocksAsync()
 {
-    // app 实例随 mooncake 常驻 (从不 uninstall), 捕获 this 安全.
-    if (GetHAL()->tryRunDetached([this]() { _doFetch(); })) {
+    bool expected = false;
+    if (!_fetch_in_flight.compare_exchange_strong(expected, true)) {
+        mclog::tagInfo(TAG, "fetch already in flight");
+        return;
+    }
+
+    // app 实例随 mooncake 常驻 (从不 uninstall), 捕获 this 安全。
+    if (GetHAL()->tryRunDetached([this]() {
+            try {
+                _doFetch();
+            } catch (const std::exception& e) {
+                {
+                    std::lock_guard<std::mutex> lk(_items_mu);
+                    _fetch_error = true;
+                    _fetch_error_msg = e.what();
+                    _last_fetch_ms = mono_ms();
+                }
+                mclog::tagWarn(TAG, "fetch exception: {}", e.what());
+                _refreshUiFromItems();
+            } catch (...) {
+                {
+                    std::lock_guard<std::mutex> lk(_items_mu);
+                    _fetch_error = true;
+                    _fetch_error_msg = "unknown fetch exception";
+                    _last_fetch_ms = mono_ms();
+                }
+                mclog::tagWarn(TAG, "unknown fetch exception");
+                _refreshUiFromItems();
+            }
+            _fetch_in_flight.store(false);
+        })) {
         mclog::tagInfo(TAG, "fetch scheduled");
     } else {
-        mclog::tagWarn(TAG, "fetch worker spawn failed, will retry next tick");
+        _fetch_in_flight.store(false);
+        mclog::tagWarn(TAG, "fetch worker spawn failed");
     }
 }
 
