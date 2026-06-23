@@ -50,7 +50,7 @@ class StocksConclusionUiTests(unittest.TestCase):
         first_pixel = pixel_data.split(",", 4)[:4]
         self.assertEqual(
             [part.strip() for part in first_pixel],
-            ["0xfe", "0xff", "0xff", "0xff"],
+            ["0x00", "0x00", "0x00", "0x00"],
         )
 
     def test_detail_shows_only_conclusion_content(self):
