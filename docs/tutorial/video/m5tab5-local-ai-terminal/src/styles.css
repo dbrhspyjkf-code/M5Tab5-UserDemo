@@ -50,12 +50,12 @@ body {
   padding: 64px 88px 72px;
   display: flex;
   flex-direction: column;
-  gap: 26px;
+  gap: 22px;
   background:
     radial-gradient(circle at 50% 44%, rgba(53, 208, 186, 0.1), transparent 36%),
     linear-gradient(180deg, rgba(70, 166, 255, 0.04), transparent 44%),
     var(--canvas);
-  opacity: 0;
+  opacity: 1;
 }
 
 .scene-header {
@@ -159,8 +159,9 @@ body {
   border: 1px solid var(--line);
   color: var(--muted);
   font-family: "JetBrains Mono", monospace;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .hero-layout {
@@ -315,6 +316,7 @@ body {
   grid-template-columns: minmax(0, 1fr) 420px;
   gap: 22px;
   align-items: stretch;
+  flex: 0 0 430px;
 }
 
 .system-layers {
@@ -324,10 +326,10 @@ body {
 }
 
 .system-card {
-  padding: 24px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
 .system-card-title {
@@ -340,13 +342,17 @@ body {
   gap: 12px;
 }
 
+.system-card:nth-child(2) .system-items {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .system-item {
-  min-height: 58px;
-  padding: 13px 14px;
+  min-height: 46px;
+  padding: 10px 12px;
   border-radius: 8px;
   background: rgba(244, 247, 250, 0.05);
   color: var(--muted);
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.35;
 }
 
@@ -486,9 +492,10 @@ body {
 
 .step-title {
   margin-top: 14px;
-  font-size: 24px;
+  font-size: 21px;
   font-weight: 800;
   line-height: 1.16;
+  overflow-wrap: anywhere;
 }
 
 .step-copy {
@@ -615,6 +622,28 @@ body {
 
 .closing-map {
   position: relative;
+  flex: 0 0 470px;
+}
+
+.scene-close .title {
+  font-size: 58px;
+  max-width: 1120px;
+}
+
+.scene-close .subtitle {
+  font-size: 28px;
+}
+
+.scene-close .closing-map {
+  flex-basis: 360px;
+}
+
+.scene-close .commit-ribbon {
+  display: none;
+}
+
+.scene-close .closing-nodes {
+  display: none;
 }
 
 .final-device {

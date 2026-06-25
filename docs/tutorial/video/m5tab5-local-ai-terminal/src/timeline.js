@@ -167,8 +167,6 @@
 
   const tl = gsap.timeline({ paused: true });
 
-  tl.set(".scene", { opacity: 0 }, 0);
-  tl.set("#s1", { opacity: 1 }, 0);
   tl.set(".transition-wipe", { opacity: 0, xPercent: -110 }, 0);
 
   scenes.forEach((scene, index) => {
@@ -176,23 +174,16 @@
     const start = scene.start;
     const sceneEnd = scene.start + scene.duration;
 
-    tl.set(selector, { opacity: 1 }, start);
     tl.from(
       `${selector} .eyebrow, ${selector} .title, ${selector} .subtitle, ${selector} .timecode`,
-      { y: 34, opacity: 0, duration: 0.7, stagger: 0.1, ease: "power3.out" },
+      { y: 34, opacity: 0, duration: 0.7, stagger: 0.1, ease: "power3.out", immediateRender: false },
       start + 0.2
     );
     tl.from(
       `${selector} .card, ${selector} .step, ${selector} .pitfall, ${selector} .system-card, ${selector} .node, ${selector} .mini-app, ${selector} .source-pill, ${selector} .check`,
-      { y: 26, opacity: 0, duration: 0.55, stagger: 0.05, ease: "power2.out" },
+      { y: 26, opacity: 0, duration: 0.55, stagger: 0.05, ease: "power2.out", immediateRender: false },
       start + 0.8
     );
-    tl.from(
-      `${selector} .caption-line, ${selector} .evidence-tag`,
-      { y: 14, opacity: 0, duration: 0.45, stagger: 0.14, ease: "power2.out" },
-      start + Math.min(2.2, scene.duration * 0.2)
-    );
-
     if (index > 0) {
       tl.fromTo(
         ".transition-wipe",
@@ -200,13 +191,12 @@
         { xPercent: 110, duration: 0.65, ease: "power2.inOut" },
         start - 0.35
       );
-      tl.set(`#${scenes[index - 1].id}`, { opacity: 0 }, start + 0.05);
     }
 
     if (scene.id === "s4") {
       tl.from(
         `${selector} .guardrail`,
-        { scale: 0.96, opacity: 0, duration: 0.45, stagger: 0.12, ease: "power2.out" },
+        { scale: 0.96, opacity: 0, duration: 0.45, stagger: 0.12, ease: "power2.out", immediateRender: false },
         start + 4.2
       );
     }
@@ -214,13 +204,11 @@
     if (scene.id === "s5") {
       tl.from(
         `${selector} .evidence-line`,
-        { y: 20, opacity: 0, duration: 0.6, ease: "power2.out" },
+        { y: 20, opacity: 0, duration: 0.6, ease: "power2.out", immediateRender: false },
         sceneEnd - 8
       );
     }
   });
-
-  tl.to("#s7", { opacity: 0, duration: 0.6, ease: "power2.in" }, 419.2);
 
   window.__timelines["m5tab5-local-ai-terminal"] = tl;
 })();
