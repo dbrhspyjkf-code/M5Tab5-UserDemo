@@ -33,6 +33,7 @@ private:
         float turnover{0};
         float liangbi {0};
         std::string one_sentence;
+        std::string analysis_summary;
         std::string analysis_date;
     };
 
@@ -66,8 +67,8 @@ private:
     static constexpr int CHAR_H = 7;
     static constexpr int CHAR_GAP = 1;
     static constexpr int CELL = CHAR_W + CHAR_GAP;       // 6 px per char
-    // 滚动速度: 每段时长 = (文字宽+40) * 此值, 滚完整段再切. 40ms/px ≈ 5s 滚完一只.
-    static constexpr int SCROLL_MS_PER_PX = 40;
+    // 滚动速度: 每段时长 = (文字宽+40) * 此值, 滚完整段再切. 越大越慢. 50ms/px.
+    static constexpr int SCROLL_MS_PER_PX = 50;
     static constexpr int STOCK_PAUSE_MS = 1000;           // 两段之间黑屏间隔
 
     // ── State ──────────────────────────────────────────────────────────

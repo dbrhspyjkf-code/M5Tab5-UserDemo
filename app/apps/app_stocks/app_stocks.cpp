@@ -342,7 +342,7 @@ void AppStocks::_showDetail(int row_idx)
     _closeDetail();
 
     _detail_modal = lv_obj_create(_scr);
-    lv_obj_set_size(_detail_modal, 960, 360);
+    lv_obj_set_size(_detail_modal, 1000, 560);  // 摘要较长, 加大弹窗
     lv_obj_center(_detail_modal);
     lv_obj_set_style_bg_color(_detail_modal, lv_color_hex(C_HEADER), 0);
     lv_obj_set_style_border_color(_detail_modal, lv_color_hex(C_ACCENT), 0);
@@ -365,16 +365,28 @@ void AppStocks::_showDetail(int row_idx)
     lv_obj_set_style_text_color(date, lv_color_hex(C_DIM), 0);
     lv_obj_align(date, LV_ALIGN_TOP_LEFT, 0, 48);
 
-    lv_obj_t* conclusion = lv_label_create(_detail_modal);
-    const char* conclusion_text = s.one_sentence.empty()
-        ? "暂无分析结论" : s.one_sentence.c_str();
+    // 摘要可能很长 → 放进一个可竖向滚动的容器, 不会盖住关闭键.
+    lv_obj_t* body = lv_obj_create(_detail_modal);
+    lv_obj_set_size(body, 944, 348);            // 标题(0)+日期(48) 之下, 关闭键之上
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, 92);
+    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(body, 0, 0);
+    lv_obj_set_style_pad_all(body, 0, 0);
+    lv_obj_set_scroll_dir(body, LV_DIR_VER);
+
+    lv_obj_t* conclusion = lv_label_create(body);
+    // 优先显示更完整的分析摘要 analysis_summary, 退回 one_sentence, 再退回占位.
+    const char* conclusion_text =
+        !s.analysis_summary.empty() ? s.analysis_summary.c_str()
+        : (!s.one_sentence.empty()  ? s.one_sentence.c_str()
+                                    : "暂无分析结论");
     lv_label_set_text(conclusion, conclusion_text);
     lv_label_set_long_mode(conclusion, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(conclusion, 860);
-    lv_obj_set_style_text_font(conclusion, zh_font_lg(), 0);
+    lv_obj_set_width(conclusion, 920);
+    lv_obj_set_style_text_font(conclusion, zh_font_lg(), 0);  // 大字号 (30px), 容器可滚动
     lv_obj_set_style_text_color(conclusion, lv_color_hex(C_TEXT), 0);
     lv_obj_set_style_text_line_space(conclusion, 10, 0);
-    lv_obj_align(conclusion, LV_ALIGN_TOP_LEFT, 0, 92);
+    lv_obj_align(conclusion, LV_ALIGN_TOP_LEFT, 0, 0);
 
     lv_obj_t* close_btn = lv_button_create(_detail_modal);
     lv_obj_set_size(close_btn, 150, 54);
@@ -516,6 +528,7 @@ void AppStocks::_parseStocksJson(const std::string& body)
                 s.turnover = it.value("turnover", 0.0f);
                 s.liangbi  = it.value("liangbi", 0.0f);
                 s.one_sentence = it.value("one_sentence", std::string());
+                s.analysis_summary = it.value("analysis_summary", std::string());
                 s.analysis_date = it.value("analysis_date", std::string());
                 if (!s.code.empty()) parsed.push_back(std::move(s));
             }
