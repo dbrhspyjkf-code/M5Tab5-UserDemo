@@ -1,0 +1,61 @@
+# M5Tab5 HyperFrames Tutorial Asset Inventory
+
+## Asset Policy
+
+Use real project evidence first. Use generated or diagrammatic assets only when real screenshots or footage are unavailable. Do not fake live values.
+
+## Required Assets
+
+| Asset ID | Scenes | Type | Source Or Capture Path | Status | Notes |
+|---|---|---|---|---|---|
+| A001 | S1, S7 | Device hero image | Real M5Tab5 photo or generated product-style render | Missing | Needs clean front-facing frame. |
+| A002 | S2, S4 | Architecture diagram data | Derived from repo and gateway memory | Ready to draw | Firmware, app layer, Mac services, LAN HTTP JSON. |
+| A003 | S3 | HA app screenshot or simulator capture | `app/apps/app_ha` runtime | Missing | Prefer real device or desktop simulator. |
+| A004 | S3 | Xiaozhi app screenshot or still | `app/apps/app_xiaozhi` runtime | Missing | Include idle face or voice state. |
+| A005 | S3, S4 | Claude assistant screenshot | `app/apps/app_project_assistant` runtime | Missing | Show quick actions if possible. |
+| A006 | S3 | Voice input screenshot | `app/apps/app_voice_input` runtime | Missing | Show waveform UI. |
+| A007 | S3 | Tools/settings screenshot | `app/apps/app_settings` runtime | Missing | Calculator, currency, units, mail list. |
+| A008 | S3, S5 | LED matrix photo or generated strip visualization | `app/apps/app_unit_puzzle` plus external LED | Missing | Show NEW EMAIL or ticker if available. |
+| A009 | S3 | LoRa chat screenshot | `app/apps/app_lora_chat` runtime | Missing | Show chat bubbles and input. |
+| A010 | S3 | Stocks screenshot | `app/apps/app_stocks` runtime | Missing | Show table and conclusion line. |
+| A011 | S5 | Pitfall cards | Drawn in HyperFrames | Ready to draw | Problem/fix cards. |
+| A012 | S6 | Terminal command snippets | `docs/TUTORIAL-outline.md` | Ready | Use shortened command reveal. |
+
+## Optional Assets
+
+| Asset ID | Scenes | Type | Source Or Capture Path | Status | Notes |
+|---|---|---|---|---|---|
+| O001 | S1 | Short real device montage | Phone footage | Optional | Useful if available. |
+| O002 | S6 | Flashing or serial monitor footage | Terminal recording | Optional | Use only if readable. |
+| O003 | S5 | Git timeline mini-map | `git log --oneline` | Optional | Helps show project evolution. |
+
+## Generated Assets Allowed
+
+| Asset ID | Scenes | Description | Constraints |
+|---|---|---|---|
+| G001 | S1, S7 | Clean M5Tab5 device render | Must look like a hardware product frame, not a fake UI screenshot. |
+| G002 | S2, S4 | System diagrams | Must use project-accurate labels and boundaries. |
+| G003 | S5 | Pitfall icon set | Use simple technical icons, no decorative clutter. |
+
+## Capture Checklist
+
+- [ ] Capture or provide M5Tab5 hero photo.
+- [ ] Capture HA screen.
+- [ ] Capture Xiaozhi screen.
+- [ ] Capture Claude assistant screen.
+- [ ] Capture Voice Input screen.
+- [ ] Capture Settings tools screen.
+- [ ] Capture LED matrix or decide to draw it.
+- [ ] Capture LoRa chat screen.
+- [ ] Capture Stocks screen.
+- [ ] Confirm terminal snippets for build and flash.
+
+## Scene Coverage Check
+
+- S1 has A001 plus app flashes.
+- S2 has A002.
+- S3 has A003 through A010.
+- S4 has A002 and A005.
+- S5 has A011.
+- S6 has A012.
+- S7 has A001 and A002.
