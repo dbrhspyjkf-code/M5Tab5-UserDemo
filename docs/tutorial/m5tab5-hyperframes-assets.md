@@ -15,11 +15,21 @@ Use real project evidence first. Use generated or diagrammatic assets only when 
 | A005 | S3, S4 | Claude assistant screenshot | `app/apps/app_project_assistant` runtime | Missing | Show quick actions if possible. |
 | A006 | S3 | Voice input screenshot | `app/apps/app_voice_input` runtime | Missing | Show waveform UI. |
 | A007 | S3 | Tools/settings screenshot | `app/apps/app_settings` runtime | Missing | Calculator, currency, units, mail list. |
-| A008 | S3, S5 | LED matrix photo or generated strip visualization | `app/apps/app_unit_puzzle` plus external LED | Missing | Show NEW EMAIL or ticker if available. |
+| A008 | S3 | Email LED photo or generated strip visualization | `app/apps/app_email_led` runtime | Missing | Show NEW EMAIL or mail alert state. |
 | A009 | S3 | LoRa chat screenshot | `app/apps/app_lora_chat` runtime | Missing | Show chat bubbles and input. |
 | A010 | S3 | Stocks screenshot | `app/apps/app_stocks` runtime | Missing | Show table and conclusion line. |
 | A011 | S5 | Pitfall cards | Drawn in HyperFrames | Ready to draw | Problem/fix cards. |
 | A012 | S6 | Terminal command snippets | `docs/TUTORIAL-outline.md` | Ready | Use shortened command reveal. |
+| A013 | S5 | Unit-Puzzle LED photo or generated strip visualization | `app/apps/app_unit_puzzle` runtime | Missing | Show ticker or puzzle state without reusing the Email LED slot. |
+
+## Required Evidence Sources
+
+| Evidence ID | Purpose | Source Or Capture Path | Required For | Status | Notes |
+|---|---|---|---|---|---|
+| E001 | Tutorial outline evidence | `docs/TUTORIAL-outline.md` | Later production and terminal snippet selection | Required | Source of the build/flash command framing. |
+| E002 | Git timeline evidence | `git history` | Later production and edit chronology | Required | Use history to narrate iteration and evolution. |
+| E003 | HA stability / flashing memory | Project memory and verified local service behavior | Later production and reliability claims | Required | Use only validated local evidence, not fabricated metrics. |
+| E004 | Tab5-to-local-Claude approval / handoff memory | Project memory and handoff notes | Later production and workflow narration | Required | Required context for approval and handoff language. |
 
 ## Optional Assets
 
@@ -27,7 +37,6 @@ Use real project evidence first. Use generated or diagrammatic assets only when 
 |---|---|---|---|---|---|
 | O001 | S1 | Short real device montage | Phone footage | Optional | Useful if available. |
 | O002 | S6 | Flashing or serial monitor footage | Terminal recording | Optional | Use only if readable. |
-| O003 | S5 | Git timeline mini-map | `git log --oneline` | Optional | Helps show project evolution. |
 
 ## Generated Assets Allowed
 
@@ -45,7 +54,8 @@ Use real project evidence first. Use generated or diagrammatic assets only when 
 - [ ] Capture Claude assistant screen.
 - [ ] Capture Voice Input screen.
 - [ ] Capture Settings tools screen.
-- [ ] Capture LED matrix or decide to draw it.
+- [ ] Capture Email LED strip or decide to draw it.
+- [ ] Capture Unit-Puzzle LED strip or decide to draw it.
 - [ ] Capture LoRa chat screen.
 - [ ] Capture Stocks screen.
 - [ ] Confirm terminal snippets for build and flash.
@@ -54,8 +64,8 @@ Use real project evidence first. Use generated or diagrammatic assets only when 
 
 - S1 has A001 plus app flashes.
 - S2 has A002.
-- S3 has A003 through A010.
+- S3 has A003 through A010, with A008 reserved for Email LED.
 - S4 has A002 and A005.
-- S5 has A011.
+- S5 has A011 and A013.
 - S6 has A012.
 - S7 has A001 and A002.
