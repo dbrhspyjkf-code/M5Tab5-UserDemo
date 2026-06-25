@@ -134,3 +134,37 @@ Self-review:
 - The S3 coverage check is explicit about the Unit-Puzzle LED asset.
 - The S5 surface still has the pitfall card asset and no fake screenshot requirement was added.
 - Asset IDs remain unique.
+
+## Task 3 final re-review fix
+
+Updated `docs/tutorial/m5tab5-hyperframes-assets.md` to address the final review findings:
+
+- Expanded `A002` scenes from `S2, S4` to `S2, S4, S7` so the closing scene's reused system map is covered explicitly.
+- Added a `Production Format` section requiring all captures, screenshots, generated visuals, and diagrams to be framed for `16:9 landscape` and safe within a `1920x1080` output area.
+
+Verification run after the edit:
+
+```bash
+rg -n "A002|16:9|1920x1080|S7 has" docs/tutorial/m5tab5-hyperframes-assets.md
+```
+
+Result:
+
+```text
+9:All captures, screenshots, generated visuals, and diagrams must be framed for 16:9 landscape composition and remain safe within a 1920x1080 output area.
+16:| A002 | S2, S4, S7 | Architecture diagram data | Derived from repo and gateway memory | Ready to draw | Firmware, app layer, Mac services, LAN HTTP JSON. |
+70:- S2 has A002.
+72:- S4 has A002 and A005.
+75:- S7 has A001 and A002.
+```
+
+```bash
+rg -o "^[|] [A-Z][0-9]{3}" docs/tutorial/m5tab5-hyperframes-assets.md | sort | uniq -d
+```
+
+Result: no output, so the asset IDs remain unique.
+
+Self-review:
+
+- The final review items are both closed in the asset inventory, and no storyboard or voiceover files were touched.
+- The required evidence sources and existing asset IDs were preserved as-is.

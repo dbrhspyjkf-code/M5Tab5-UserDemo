@@ -4,12 +4,16 @@
 
 Use real project evidence first. Use generated or diagrammatic assets only when real screenshots or footage are unavailable. Do not fake live values.
 
+## Production Format
+
+All captures, screenshots, generated visuals, and diagrams must be framed for 16:9 landscape composition and remain safe within a 1920x1080 output area.
+
 ## Required Assets
 
 | Asset ID | Scenes | Type | Source Or Capture Path | Status | Notes |
 |---|---|---|---|---|---|
 | A001 | S1, S7 | Device hero image | Real M5Tab5 photo or generated product-style render | Missing | Needs clean front-facing frame. |
-| A002 | S2, S4 | Architecture diagram data | Derived from repo and gateway memory | Ready to draw | Firmware, app layer, Mac services, LAN HTTP JSON. |
+| A002 | S2, S4, S7 | Architecture diagram data | Derived from repo and gateway memory | Ready to draw | Firmware, app layer, Mac services, LAN HTTP JSON. |
 | A003 | S3 | HA app screenshot or simulator capture | `app/apps/app_ha` runtime | Missing | Prefer real device or desktop simulator. |
 | A004 | S3 | Xiaozhi app screenshot or still | `app/apps/app_xiaozhi` runtime | Missing | Include idle face or voice state. |
 | A005 | S3, S4 | Claude assistant screenshot | `app/apps/app_project_assistant` runtime | Missing | Show quick actions if possible. |
