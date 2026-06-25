@@ -92,3 +92,45 @@ Self-review:
 - The required evidence sources are explicit and marked required for later production use.
 - The unique asset ID check still passes.
 - I did not touch the storyboard, voiceover, `DESIGN.md`, plan files, or the untracked outline.
+
+## Task 3 re-review fix
+
+Adjusted `docs/tutorial/m5tab5-hyperframes-assets.md` to move `A013` from `S5` to `S3` so the Unit-Puzzle LED asset matches the storyboard's maker-feature placement.
+
+Updated the scene coverage check so `S3` now explicitly includes `A013` alongside the existing S3 assets, while `S5` remains covered by the pitfall cards entry `A011` and the required evidence sources already listed in the inventory.
+
+Verification run after the edit:
+
+```bash
+rg -n "A013|S3 has|S5 has|Unit-Puzzle LED" docs/tutorial/m5tab5-hyperframes-assets.md
+```
+
+Result:
+
+```text
+23:| A013 | S3 | Unit-Puzzle LED photo or generated strip visualization | `app/apps/app_unit_puzzle` runtime | Missing | Show ticker or puzzle state without reusing the Email LED slot. |
+58:- [ ] Capture Unit-Puzzle LED strip or decide to draw it.
+67:- S3 has A003 through A010, plus A013 for Unit-Puzzle LED, with A008 reserved for Email LED.
+69:- S5 has A011.
+```
+
+```bash
+rg -o "^[|] [A-Z][0-9]{3}" docs/tutorial/m5tab5-hyperframes-assets.md | sort | uniq -d
+```
+
+Result: no output, so no duplicate asset IDs were found.
+
+Commit created:
+
+```bash
+git commit -m "docs(tutorial): move Unit-Puzzle LED to S3"
+```
+
+Result: commit succeeded.
+
+Self-review:
+
+- `A013` is now aligned with the S3 maker feature instead of S5.
+- The S3 coverage check is explicit about the Unit-Puzzle LED asset.
+- The S5 surface still has the pitfall card asset and no fake screenshot requirement was added.
+- Asset IDs remain unique.

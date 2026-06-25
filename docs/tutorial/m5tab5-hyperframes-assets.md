@@ -20,7 +20,7 @@ Use real project evidence first. Use generated or diagrammatic assets only when 
 | A010 | S3 | Stocks screenshot | `app/apps/app_stocks` runtime | Missing | Show table and conclusion line. |
 | A011 | S5 | Pitfall cards | Drawn in HyperFrames | Ready to draw | Problem/fix cards. |
 | A012 | S6 | Terminal command snippets | `docs/TUTORIAL-outline.md` | Ready | Use shortened command reveal. |
-| A013 | S5 | Unit-Puzzle LED photo or generated strip visualization | `app/apps/app_unit_puzzle` runtime | Missing | Show ticker or puzzle state without reusing the Email LED slot. |
+| A013 | S3 | Unit-Puzzle LED photo or generated strip visualization | `app/apps/app_unit_puzzle` runtime | Missing | Show ticker or puzzle state without reusing the Email LED slot. |
 
 ## Required Evidence Sources
 
@@ -64,8 +64,8 @@ Use real project evidence first. Use generated or diagrammatic assets only when 
 
 - S1 has A001 plus app flashes.
 - S2 has A002.
-- S3 has A003 through A010, with A008 reserved for Email LED.
+- S3 has A003 through A010, plus A013 for Unit-Puzzle LED, with A008 reserved for Email LED.
 - S4 has A002 and A005.
-- S5 has A011 and A013.
+- S5 has A011.
 - S6 has A012.
 - S7 has A001 and A002.
