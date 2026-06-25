@@ -16,113 +16,123 @@
       data-duration="420"
     >
       <section id="s1" class="scene scene-hook">
-        <div class="eyebrow">M5Tab5 Local AI Terminal</div>
-        <h1 class="title">把 M5Tab5 变成本地 AI 智能终端</h1>
-        <p class="subtitle">一块 5 寸触摸屏, 连接 Home Assistant、Hermes、Claude 和真实设备。</p>
-        <div class="device-map" data-layout-allow-overflow>
-          <div class="node node-home">
-            <strong>Home Assistant</strong>
-            <span>实体控制与状态回读</span>
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow" data-field="eyebrow"></div>
+            <h1 class="title" data-field="heading"></h1>
+            <p class="subtitle" data-field="subtitle"></p>
           </div>
-          <div class="node node-service">
-            <strong>Hermes / Xiaozhi</strong>
-            <span>本地服务桥与语音入口</span>
+          <div class="timecode" data-field="timeline"></div>
+        </div>
+        <div class="hero-layout" data-layout-allow-overflow>
+          <div class="device-wrap">
+            <div class="device">
+              <div class="device-screen">
+                <div class="screen-title">M5Tab5</div>
+                <div class="screen-subtitle">Local AI Terminal</div>
+                <div class="screen-grid" data-app-flashes></div>
+              </div>
+            </div>
           </div>
-          <div class="device"></div>
-          <div class="node node-ai">
-            <strong>Claude</strong>
-            <span>请求处理与结果整理</span>
-          </div>
-          <div class="node node-mac">
-            <strong>Mac Gateway</strong>
-            <span>审批、执行包与回传</span>
-          </div>
+          <div class="orbit-map" data-orbit-map></div>
         </div>
       </section>
+
       <section id="s2" class="scene scene-map">
-        <div class="eyebrow">System Map</div>
-        <h2 class="title">固件、App 与本地服务的真实边界</h2>
-        <p class="subtitle">保持中心设备拓扑, 先把 M5Tab5、Mac 服务和智能家居关系搭出稳定骨架。</p>
-        <div class="timeline-ribbon panel">
-          <div class="step">Hook</div>
-          <div class="step">System Map</div>
-          <div class="step">Feature Tour</div>
-          <div class="step">Local AI Loop</div>
-          <div class="step">Pitfalls</div>
-          <div class="step">Build</div>
-          <div class="step">Closing</div>
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow" data-field="eyebrow"></div>
+            <h2 class="title" data-field="heading"></h2>
+            <p class="subtitle" data-field="subtitle"></p>
+          </div>
+          <div class="timecode" data-field="timeline"></div>
         </div>
+        <div class="system-layout">
+          <div class="system-layers" data-system-layers></div>
+          <div class="bridge-panel panel">
+            <div class="bridge-title">LAN HTTP JSON</div>
+            <div class="bridge-line"></div>
+            <div class="bridge-copy">secrets stay on Mac</div>
+          </div>
+        </div>
+        <div class="commit-ribbon panel" data-scene-ribbon></div>
       </section>
+
       <section id="s3" class="scene scene-features">
-        <div class="eyebrow">Maker Feature Tour</div>
-        <h2 class="title">九个功能位先挂上数据骨架</h2>
-        <p class="subtitle">这一阶段只建立格子、节奏和信息密度, 后续再填充真实场景与分组动画。</p>
-        <div class="feature-grid">
-          <article class="card">
-            <div class="card-title">Feature Cards Ready</div>
-            <div class="card-copy">3x3 布局将在下一任务里用 story-data.js 的九张卡片同步渲染。</div>
-            <div class="card-source">src/story-data.js</div>
-          </article>
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow" data-field="eyebrow"></div>
+            <h2 class="title" data-field="heading"></h2>
+            <p class="subtitle" data-field="subtitle"></p>
+          </div>
+          <div class="timecode" data-field="timeline"></div>
         </div>
+        <div class="feature-grid" data-feature-grid></div>
       </section>
+
       <section id="s4" class="scene scene-ai">
-        <div class="eyebrow">Local AI Loop</div>
-        <h2 class="title">先注册七段时间线, 再展开审批链路</h2>
-        <p class="subtitle">Tab5 发送意图, Mac 侧守住审批和执行, 这个 guarded bridge 会在后续任务里逐步细化。</p>
-        <div class="ai-flow">
-          <div class="step">
-            <div class="step-index">01</div>
-            <div class="step-copy">Timeline shell ready</div>
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow" data-field="eyebrow"></div>
+            <h2 class="title" data-field="heading"></h2>
+            <p class="subtitle" data-field="subtitle"></p>
           </div>
+          <div class="timecode" data-field="timeline"></div>
         </div>
+        <div class="ai-flow" data-ai-flow></div>
+        <div class="guardrail-strip panel" data-guardrails></div>
       </section>
+
       <section id="s5" class="scene scene-pitfalls">
-        <div class="eyebrow">Embedded Pitfalls</div>
-        <h2 class="title">问题 / 修复卡位先留好</h2>
-        <p class="subtitle">每一组嵌入式坑点都要和修复放在一起, 这里先把双栏结构固定下来。</p>
-        <div class="pitfall-grid">
-          <article class="pitfall">
-            <div class="pitfall-problem">
-              <div class="pitfall-label">Problem</div>
-              <div class="pitfall-copy">占位结构已就绪</div>
-            </div>
-            <div class="pitfall-fix">
-              <div class="pitfall-label">Fix</div>
-              <div class="pitfall-copy">后续直接映射七组 pitfalls 数据</div>
-            </div>
-          </article>
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow" data-field="eyebrow"></div>
+            <h2 class="title" data-field="heading"></h2>
+            <p class="subtitle" data-field="subtitle"></p>
+          </div>
+          <div class="timecode" data-field="timeline"></div>
         </div>
+        <div class="pitfall-grid" data-pitfall-grid></div>
+        <div class="evidence-line">硬件证据 &gt; 猜测</div>
       </section>
+
       <section id="s6" class="scene scene-build">
-        <div class="eyebrow">Build And Flash</div>
-        <h2 class="title">把命令面板和核验清单钉住</h2>
-        <p class="subtitle">先保证终端信息可读, 后续再接入完整命令行与刷机核验项。</p>
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow" data-field="eyebrow"></div>
+            <h2 class="title" data-field="heading"></h2>
+            <p class="subtitle" data-field="subtitle"></p>
+          </div>
+          <div class="timecode" data-field="timeline"></div>
+        </div>
         <div class="terminal-wrap">
-          <div class="terminal">
-            <div class="terminal-line">npx hyperframes lint</div>
-            <div class="terminal-line">npx hyperframes validate</div>
-          </div>
-          <div class="checklist">
-            <div class="panel check">1920x1080 composition shell</div>
-            <div class="panel check">420-second registered timeline</div>
-            <div class="panel check">No blank render on scene entry</div>
-          </div>
+          <div class="terminal" data-build-commands></div>
+          <div class="checklist" data-verification-checks></div>
         </div>
+        <div class="source-strip panel" data-evidence></div>
       </section>
+
       <section id="s7" class="scene scene-close">
-        <div class="eyebrow">Closing</div>
-        <h2 class="title">骨架完成, 下一步填充完整教程叙事</h2>
-        <p class="subtitle">现在已经具备 HyperFrames 项目壳、视觉系统和最小时间线, 可以继续做场景内容。</p>
-        <div class="timeline-ribbon panel">
-          <div class="step">Scaffolded</div>
-          <div class="step">Validated</div>
-          <div class="step">Ready for scenes</div>
-          <div class="step">Ready for captions</div>
-          <div class="step">Ready for assets</div>
-          <div class="step">Ready for inspect</div>
-          <div class="step">Ready for render</div>
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow" data-field="eyebrow"></div>
+            <h2 class="title" data-field="heading"></h2>
+            <p class="subtitle" data-field="subtitle"></p>
+          </div>
+          <div class="timecode" data-field="timeline"></div>
         </div>
+        <div class="closing-map" data-layout-allow-overflow>
+          <div class="device final-device">
+            <div class="device-screen">
+              <div class="screen-title">M5Tab5</div>
+              <div class="screen-subtitle">Local AI Terminal</div>
+            </div>
+          </div>
+          <div class="closing-nodes" data-orbit-map></div>
+        </div>
+        <div class="commit-ribbon panel" data-scene-ribbon></div>
       </section>
+
       <div class="transition-wipe" data-layout-ignore></div>
     </div>
     <script src="./src/vendor/gsap.min.js"></script>
