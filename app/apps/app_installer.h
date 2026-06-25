@@ -117,7 +117,7 @@ inline void on_install_apps()
     home->addApp("智能家居", ha_id);
     home->addApp("小  智", xz_id);
     home->addApp("工  具", set_id);
-    home->addApp("Claude", pa_id);
+    home->addApp("Hermes", pa_id);
     /* Install app locator (Don't remove) */
 
     // ── Voice input WorkerAbility (always-on, not a user-launchable app) ──

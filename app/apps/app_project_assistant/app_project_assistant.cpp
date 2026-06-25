@@ -76,7 +76,7 @@ const lv_font_t* input_font() { return zh_font(); }
 
 AppProjectAssistant::AppProjectAssistant()
 {
-    setAppInfo().name = "Claude";
+    setAppInfo().name = "Hermes";
 }
 
 void AppProjectAssistant::onCreate() {
@@ -248,7 +248,7 @@ void AppProjectAssistant::_buildUi()
     // The header now hosts only the title + Claude logo.
 
     lv_obj_t* title = lv_label_create(hdr);
-    lv_label_set_text(title, "Claude");
+    lv_label_set_text(title, "Hermes");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_ACCENT), 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
@@ -999,7 +999,7 @@ std::string AppProjectAssistant::_bridgeUrl(const std::string& path)
     // :8770, weather, Sonos) stayed on the Mac (.142) — so use "svc_host"
     // here, not "ha_host" (which now points at HA).
     std::string host = GetHAL()->getConfig("svc_host", "192.168.1.142");
-    return "http://" + host + ":8770" + path;
+    return "http://" + host + ":8771" + path;  // Hermes ACP 桥 (原 Claude :8770)
 }
 
 std::string AppProjectAssistant::_stripMarkdown(const std::string& s)
