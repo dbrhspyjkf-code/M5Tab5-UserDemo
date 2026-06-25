@@ -11,6 +11,7 @@
     buildCommands,
     verificationChecks,
     evidence,
+    sceneEvidence,
   } = data;
 
   window.__timelines = window.__timelines || {};
@@ -134,6 +135,21 @@
     evidence.forEach((item) => strip.append(el("div", "source-pill", item)));
   }
 
+  function renderCaptions() {
+    scenes.forEach((scene) => {
+      const section = document.getElementById(scene.id);
+      const captionRoot = section.querySelector("[data-captions]");
+      scene.captions.forEach((caption, index) => {
+        const node = el("div", "caption-line", caption);
+        node.dataset.captionIndex = String(index);
+        captionRoot.append(node);
+      });
+
+      const evidenceRoot = section.querySelector("[data-scene-evidence]");
+      sceneEvidence[scene.id].forEach((label) => evidenceRoot.append(el("div", "evidence-tag", label)));
+    });
+  }
+
   function renderAll() {
     fillSceneText();
     renderOrbitMaps();
@@ -144,6 +160,7 @@
     renderAiFlow();
     renderPitfalls();
     renderBuild();
+    renderCaptions();
   }
 
   renderAll();
@@ -169,6 +186,11 @@
       `${selector} .card, ${selector} .step, ${selector} .pitfall, ${selector} .system-card, ${selector} .node, ${selector} .mini-app, ${selector} .source-pill, ${selector} .check`,
       { y: 26, opacity: 0, duration: 0.55, stagger: 0.05, ease: "power2.out" },
       start + 0.8
+    );
+    tl.from(
+      `${selector} .caption-line, ${selector} .evidence-tag`,
+      { y: 14, opacity: 0, duration: 0.45, stagger: 0.14, ease: "power2.out" },
+      start + Math.min(2.2, scene.duration * 0.2)
     );
 
     if (index > 0) {
