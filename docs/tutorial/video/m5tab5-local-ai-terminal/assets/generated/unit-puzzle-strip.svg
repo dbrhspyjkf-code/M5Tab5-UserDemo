@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="160" viewBox="0 0 960 160" role="img" aria-label="Generated Unit-Puzzle LED strip placeholder">
+  <rect width="960" height="160" rx="20" fill="#0B0F14"/>
+  <g>
+    <rect x="50" y="40" width="38" height="38" rx="8" fill="#35D0BA"/><rect x="94" y="40" width="38" height="38" rx="8" fill="#8B7CFF"/><rect x="138" y="40" width="38" height="38" rx="8" fill="#46A6FF"/><rect x="182" y="40" width="38" height="38" rx="8" fill="#FFB020"/>
+    <rect x="50" y="84" width="38" height="38" rx="8" fill="#46A6FF"/><rect x="94" y="84" width="38" height="38" rx="8" fill="#35D0BA"/><rect x="138" y="84" width="38" height="38" rx="8" fill="#FF5C5C"/><rect x="182" y="84" width="38" height="38" rx="8" fill="#8B7CFF"/>
+  </g>
+  <text x="300" y="82" fill="#F4F7FA" font-family="Arial, sans-serif" font-size="34" font-weight="700">40x8 Unit-Puzzle LED</text>
+  <text x="300" y="118" fill="#A9B4C0" font-family="Arial, sans-serif" font-size="20">generated placeholder for ticker / pattern scenes</text>
+</svg>

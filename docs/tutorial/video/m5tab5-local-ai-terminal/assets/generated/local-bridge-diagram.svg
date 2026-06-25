@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="360" viewBox="0 0 960 360" role="img" aria-label="Generated local bridge diagram">
+  <rect width="960" height="360" rx="24" fill="#141B24"/>
+  <rect x="48" y="82" width="230" height="150" rx="16" fill="#0B0F14" stroke="#35D0BA" stroke-width="3"/>
+  <rect x="682" y="82" width="230" height="150" rx="16" fill="#0B0F14" stroke="#FFB020" stroke-width="3"/>
+  <path d="M298 157H662" stroke="#46A6FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M650 142L682 157L650 172" fill="none" stroke="#46A6FF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="163" y="150" text-anchor="middle" fill="#F4F7FA" font-family="Arial, sans-serif" font-size="30" font-weight="700">Tab5</text>
+  <text x="797" y="150" text-anchor="middle" fill="#F4F7FA" font-family="Arial, sans-serif" font-size="30" font-weight="700">Mac</text>
+  <text x="480" y="130" text-anchor="middle" fill="#F4F7FA" font-family="Arial, sans-serif" font-size="24">LAN HTTP JSON</text>
+  <text x="480" y="226" text-anchor="middle" fill="#A9B4C0" font-family="Arial, sans-serif" font-size="22">intent out, approved result back</text>
+  <text x="480" y="292" text-anchor="middle" fill="#FF5C5C" font-family="Arial, sans-serif" font-size="22">no secrets on device · no direct shell execution</text>
+</svg>

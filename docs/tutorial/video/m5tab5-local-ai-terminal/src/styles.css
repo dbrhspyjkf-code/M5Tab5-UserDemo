@@ -186,9 +186,23 @@ body {
   background: linear-gradient(135deg, #101820, #17222d);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45), 0 0 60px rgba(53, 208, 186, 0.16);
   padding: 18px;
+  position: relative;
+  overflow: hidden;
+}
+
+.device-frame-asset {
+  position: absolute;
+  inset: -14px;
+  width: calc(100% + 28px);
+  height: calc(100% + 28px);
+  object-fit: fill;
+  opacity: 0.32;
+  pointer-events: none;
 }
 
 .device-screen {
+  position: relative;
+  z-index: 1;
   height: 100%;
   border-radius: 18px;
   background: linear-gradient(135deg, rgba(53, 208, 186, 0.14), rgba(139, 124, 255, 0.12)), #0e151d;

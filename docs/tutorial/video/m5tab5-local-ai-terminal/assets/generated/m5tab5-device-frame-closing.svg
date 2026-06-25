@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520" role="img" aria-label="Generated closing M5Tab5 placeholder device frame">
+  <rect width="900" height="520" rx="52" fill="#202B36"/>
+  <rect x="38" y="42" width="824" height="436" rx="28" fill="#0B0F14"/>
+  <rect x="68" y="72" width="764" height="376" rx="22" fill="#101820"/>
+  <path d="M112 398H788" stroke="#8B7CFF" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
+  <circle cx="450" cy="464" r="10" fill="#8B7CFF" opacity="0.75"/>
+  <text x="450" y="238" text-anchor="middle" fill="#F4F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="700">M5Tab5</text>
+  <text x="450" y="292" text-anchor="middle" fill="#35D0BA" font-family="Arial, sans-serif" font-size="28">Local AI Terminal</text>
+  <text x="450" y="334" text-anchor="middle" fill="#A9B4C0" font-family="Arial, sans-serif" font-size="20">generated closing frame</text>
+</svg>

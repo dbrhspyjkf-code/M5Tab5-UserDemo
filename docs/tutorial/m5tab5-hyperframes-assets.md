@@ -12,19 +12,29 @@ All captures, screenshots, generated visuals, and diagrams must be framed for 16
 
 | Asset ID | Scenes | Type | Source Or Capture Path | Status | Notes |
 |---|---|---|---|---|---|
-| A001 | S1, S7 | Device hero image | Real M5Tab5 photo or generated product-style render | Missing | Needs clean front-facing frame. |
-| A002 | S2, S4, S7 | Architecture diagram data | Derived from repo and gateway memory | Ready to draw | Firmware, app layer, Mac services, LAN HTTP JSON. |
+| A001 | S1, S7 | Device hero image | Real M5Tab5 photo or generated product-style render | Generated placeholder ready | `video/m5tab5-local-ai-terminal/assets/generated/m5tab5-device-frame.svg`; real photo can replace later. |
+| A002 | S2, S4, S7 | Architecture diagram data | Derived from repo and gateway memory | Generated placeholder ready | `video/m5tab5-local-ai-terminal/assets/generated/local-bridge-diagram.svg`; firmware, app layer, Mac services, LAN HTTP JSON. |
 | A003 | S3 | HA app screenshot or simulator capture | `app/apps/app_ha` runtime | Missing | Prefer real device or desktop simulator. |
 | A004 | S3 | Xiaozhi app screenshot or still | `app/apps/app_xiaozhi` runtime | Missing | Include idle face or voice state. |
 | A005 | S3, S4 | Claude assistant screenshot | `app/apps/app_project_assistant` runtime | Missing | Show quick actions if possible. |
 | A006 | S3 | Voice input screenshot | `app/apps/app_voice_input` runtime | Missing | Show waveform UI. |
 | A007 | S3 | Tools/settings screenshot | `app/apps/app_settings` runtime | Missing | Calculator, currency, units, mail list. |
-| A008 | S3 | Email LED photo or generated strip visualization | `app/apps/app_email_led` runtime | Missing | Show NEW EMAIL or mail alert state. |
+| A008 | S3 | Email LED photo or generated strip visualization | `app/apps/app_email_led` runtime | Generated placeholder ready | `video/m5tab5-local-ai-terminal/assets/generated/email-led-strip.svg`; clearly labeled as generated, not live capture. |
 | A009 | S3 | LoRa chat screenshot | `app/apps/app_lora_chat` runtime | Missing | Show chat bubbles and input. |
 | A010 | S3 | Stocks screenshot | `app/apps/app_stocks` runtime | Missing | Show table and conclusion line. |
-| A011 | S5 | Pitfall cards | Drawn in HyperFrames | Ready to draw | Problem/fix cards. |
+| A011 | S5 | Pitfall cards | Drawn in HyperFrames | Implemented in composition | Problem/fix cards are rendered from `src/story-data.js`. |
 | A012 | S6 | Terminal command snippets | `docs/TUTORIAL-outline.md` | Ready | Use shortened command reveal. |
-| A013 | S3 | Unit-Puzzle LED photo or generated strip visualization | `app/apps/app_unit_puzzle` runtime | Missing | Show ticker or puzzle state without reusing the Email LED slot. |
+| A013 | S3 | Unit-Puzzle LED photo or generated strip visualization | `app/apps/app_unit_puzzle` runtime | Generated placeholder ready | `video/m5tab5-local-ai-terminal/assets/generated/unit-puzzle-strip.svg`; separate from Email LED slot. |
+
+## Generated Placeholder Files
+
+- `video/m5tab5-local-ai-terminal/assets/generated/m5tab5-device-frame.svg`
+- `video/m5tab5-local-ai-terminal/assets/generated/m5tab5-device-frame-closing.svg`
+- `video/m5tab5-local-ai-terminal/assets/generated/local-bridge-diagram.svg`
+- `video/m5tab5-local-ai-terminal/assets/generated/email-led-strip.svg`
+- `video/m5tab5-local-ai-terminal/assets/generated/unit-puzzle-strip.svg`
+
+These files are intentionally diagrammatic placeholders. They must not be treated as real device screenshots or live LED captures.
 
 ## Required Evidence Sources
 

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="160" viewBox="0 0 960 160" role="img" aria-label="Generated email LED strip placeholder">
+  <rect width="960" height="160" rx="20" fill="#0B0F14"/>
+  <g fill="#FFB020">
+    <circle cx="72" cy="80" r="16"/><circle cx="122" cy="80" r="16"/><circle cx="172" cy="80" r="16"/><circle cx="222" cy="80" r="16"/>
+    <circle cx="272" cy="80" r="16"/><circle cx="322" cy="80" r="16"/><circle cx="372" cy="80" r="16"/><circle cx="422" cy="80" r="16"/>
+  </g>
+  <text x="540" y="92" fill="#F4F7FA" font-family="Arial, sans-serif" font-size="42" font-weight="700">NEW EMAIL</text>
+  <text x="540" y="128" fill="#A9B4C0" font-family="Arial, sans-serif" font-size="20">generated placeholder, not a live capture</text>
+</svg>
