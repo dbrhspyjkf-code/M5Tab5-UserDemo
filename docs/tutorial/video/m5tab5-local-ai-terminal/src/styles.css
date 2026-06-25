@@ -11,6 +11,14 @@
   --line: rgba(244, 247, 250, 0.1);
 }
 
+@font-face {
+  font-family: "Source Han Sans SC";
+  src: url("/assets/fonts/SourceHanSansSC-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -20,7 +28,7 @@ body {
   margin: 0;
   background: var(--canvas);
   color: var(--text);
-  font-family: "Inter", sans-serif;
+  font-family: "Source Han Sans SC", "Inter", sans-serif;
 }
 
 body {

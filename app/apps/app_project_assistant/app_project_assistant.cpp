@@ -20,7 +20,7 @@ using json = nlohmann::json;
 static const std::string TAG = "app-claude";
 LV_IMAGE_DECLARE(key_icon);
 #include "mic_icon.h"
-LV_IMAGE_DECLARE(claude_logo);
+LV_IMAGE_DECLARE(hermes_logo);
 
 namespace {
 
@@ -255,7 +255,7 @@ void AppProjectAssistant::_buildUi()
 
     // Claude logo to the left of the title text
     lv_obj_t* logo = lv_image_create(hdr);
-    lv_image_set_src(logo, &claude_logo);
+    lv_image_set_src(logo, &hermes_logo);
     lv_obj_align_to(logo, title, LV_ALIGN_OUT_LEFT_MID, -12, 0);
 
     // Clear chat history button (trash icon, top-right corner)
