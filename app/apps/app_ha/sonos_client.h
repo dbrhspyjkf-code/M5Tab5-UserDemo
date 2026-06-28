@@ -15,7 +15,7 @@
 class SonosClient {
 public:
     struct Config {
-        std::string baseUrl;           // e.g. "http://192.168.1.142:8900"
+        std::string baseUrl;           // e.g. "http://<host>:<port>"
         int pollIntervalMsPlaying  = 5000;
         int pollIntervalMsIdle     = 30000;
     };

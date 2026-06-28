@@ -21,8 +21,9 @@
 // ─── WiFi credentials (compile-time defaults) ─────────────────────────────────
 // These are only used the very first time, before the user sets WiFi on-screen.
 // Runtime values live in NVS ("devcfg" namespace) and override these.
-#define WIFI_STA_SSID  "ChinaNet-11G"
-#define WIFI_STA_PASS  "Blackbug225"
+// Leave empty — configure via Settings app (stored in NVS).
+#define WIFI_STA_SSID  ""
+#define WIFI_STA_PASS  ""
 #define WIFI_MAX_RETRY 10
 
 // NVS namespace + keys for runtime device config (WiFi + HA server, etc.)

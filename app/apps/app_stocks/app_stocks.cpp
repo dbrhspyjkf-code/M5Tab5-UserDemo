@@ -493,8 +493,8 @@ void AppStocks::_fetchStocksAsync()
 void AppStocks::_doFetch()
 {
     auto* hal = GetHAL();
-    std::string svc_host = hal->getConfig("svc_host", "192.168.1.142");
-    if (svc_host.empty()) svc_host = "192.168.1.142";
+    std::string svc_host = hal->getConfig("svc_host", "");
+    if (svc_host.empty()) svc_host = "";
     std::string url = "http://" + svc_host + ":8766/api/stocks/portfolio";
 
     auto resp = hal->httpGet(url);

@@ -892,7 +892,7 @@ void AppSettings::_fxFetch()
 {
     if (g_fx_fetching.exchange(true)) return;  // already in flight
 
-    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.142");
+    std::string host = GetHAL()->getConfig("svc_host", "");
     std::string url  = "http://" + host + ":8766/rate";
 
     bool spawned = GetHAL()->tryRunDetached([url]() {
@@ -1528,9 +1528,9 @@ void AppSettings::fetchEmail()
     // email-status-server.py 跑在 8768 端口, 直接读 /tmp/email-status.json
     // 缓存 (由 cron email-led.py 周期更新), <10ms 返回, 不需要 IMAP 同步.
     // 跟桌面 Übersicht unread-emails.widget 是同一个数据源, 完全同步.
-    // 用 svc_host (默认 192.168.1.142) 而不是 ha_host (默认 192.168.1.133):
+    // 用 svc_host 而不是 ha_host:
     // ha_host 指向 HA 主机, svc_host 才是 hermes + email-status-server 跑的机器.
-    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.142");
+    std::string host = GetHAL()->getConfig("svc_host", "");
     std::string url  = "http://" + host + ":8768/api/email/status";
     mclog::tagInfo(_tag, "emailFetch: url={}", url);
 

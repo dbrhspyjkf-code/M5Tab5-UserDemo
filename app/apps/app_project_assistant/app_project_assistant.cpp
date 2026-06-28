@@ -998,7 +998,7 @@ std::string AppProjectAssistant::_bridgeUrl(const std::string& path)
     // Assistant box. HA moved to .133 while Hermes services (Claude bridge
     // :8770, weather, Sonos) stayed on the Mac (.142) — so use "svc_host"
     // here, not "ha_host" (which now points at HA).
-    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.142");
+    std::string host = GetHAL()->getConfig("svc_host", "");
     return "http://" + host + ":8771" + path;  // Hermes ACP 桥 (原 Claude :8770)
 }
 

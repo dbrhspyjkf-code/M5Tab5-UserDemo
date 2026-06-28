@@ -341,7 +341,7 @@ void AppHome::_fetch_weather()
     // Home has no HA client, so read the HA weather entity directly via the REST
     // API (GET /api/states/<entity> with the shared token). The worker only
     // writes strings — it must not touch LVGL — onRunning copies them to labels.
-    std::string url = "http://" + GetHAL()->getConfig("ha_host", "192.168.1.133")
+    std::string url = "http://" + GetHAL()->getConfig("ha_host", "")
                     + ":8123/api/states/" + ha_weather::ENTITY;
     GetHAL()->tryRunDetached([this, url]() {
         auto resp = GetHAL()->httpGet(url, {{"Authorization", std::string("Bearer ") + ha_weather::TOKEN}});
@@ -501,7 +501,7 @@ void AppHome::_openWeatherDialog()
 
 void AppHome::_fetchWeatherDetail()
 {
-    std::string base = "http://" + GetHAL()->getConfig("ha_host", "192.168.1.133") + ":8123";
+    std::string base = "http://" + GetHAL()->getConfig("ha_host", "") + ":8123";
     std::string tok  = std::string("Bearer ") + ha_weather::TOKEN;
     GetHAL()->tryRunDetached([this, base, tok]() {
         auto dir8 = [](double b) -> const char* {
@@ -717,7 +717,7 @@ void AppHome::_openNetworkDialog()
     // WiFi SSID + 扫描
     mk_label("WiFi 名称", y);
     _net_ssid = mk_ta(y, FLD_W - 140, false);
-    lv_textarea_set_text(_net_ssid, hal->getConfig("wifi_ssid", "ChinaNet-11G").c_str());
+    lv_textarea_set_text(_net_ssid, hal->getConfig("wifi_ssid", "").c_str());
     lv_obj_t* scan = mk_btn(card, "扫描", M_BTN, 124, ROW_H - 10,
         [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))->_doNetworkScan();
@@ -749,13 +749,13 @@ void AppHome::_openNetworkDialog()
     // HA server host (smart-home devices, :8123)
     mk_label("HA 服务器", y);
     _net_host = mk_ta(y, FLD_W, false);
-    lv_textarea_set_text(_net_host, hal->getConfig("ha_host", "192.168.1.133").c_str());
+    lv_textarea_set_text(_net_host, hal->getConfig("ha_host", "").c_str());
     y += ROW_H;
 
     // Other services host (weather :8766 + Claude bridge :8770), runs on the Mac
     mk_label("其他服务器", y);
     _net_svc = mk_ta(y, FLD_W, false);
-    lv_textarea_set_text(_net_svc, hal->getConfig("svc_host", "192.168.1.142").c_str());
+    lv_textarea_set_text(_net_svc, hal->getConfig("svc_host", "").c_str());
     y += ROW_H + 6;
 
     // Save + status

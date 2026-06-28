@@ -41,7 +41,7 @@ static double _safe_stod(const std::string& s, double def = 0.0)
 // on-screen via the Settings app (NVS key "ha_host"). The Mac-side Hermes
 // services (weather used to be there, Claude bridge still is) live on a separate
 // host stored in NVS "svc_host"; this app no longer needs it.
-static const char* HA_HOST_DEFAULT = "192.168.1.133";
+static const char* HA_HOST_DEFAULT = "";  // Configure via Settings app
 
 static std::string ha_host()
 {
@@ -680,12 +680,9 @@ void AppHA::onRunning()
                   weather, battery, _ha->isConnected(), tbuf, date_str);
 }
 
-// Map 操作ID → 用户名（从小米家庭app对应填写）
+// Map 操作ID → 用户名（从小米家庭App查询对应operationId后填写）
 static const struct { uint32_t id; const char* name; } LOCK_USERS[] = {
-    {2147549194, ""},   // 指纹用户 — 请填写
-    {2147876868, ""},   // 人脸用户1 — 请填写
-    {2147876869, ""},   // 人脸用户2 — 请填写
-    {2147876872, ""},   // 人脸用户3 — 请填写
+    // {YOUR_OPERATION_ID, "姓名"},  // 示例：指纹用户
     {0, nullptr}
 };
 

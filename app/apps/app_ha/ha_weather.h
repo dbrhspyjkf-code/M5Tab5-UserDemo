@@ -6,13 +6,9 @@
 // weather.* entity instead of the Mac-side Hermes :8766 service.
 namespace ha_weather {
 
-// HA server @ 192.168.1.133 long-lived token (iss c61238…, exp 2036).
-// Single source of truth — the HaClient in app_ha.cpp uses this too.
-inline const char* TOKEN =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-    ".eyJpc3MiOiJjNjEyMzhiYWNjY2M0ODFkOTJhMDkwZDJlNmI0ODAyNiIsImlhdCI6MTc4MTc1OD"
-    "M3MywiZXhwIjoyMDk3MTE4MzczfQ"
-    ".KKfg46ghPhHSg0mFOyQsQkwhAq93pGME_NGFcUpBkZ8";
+// HA long-lived access token — set via Settings app (stored in NVS).
+// Generate one in HA → Profile → Long-Lived Access Tokens.
+inline const char* TOKEN = "";
 
 // Local home forecast entity (met.no, °C, has temperature + humidity).
 inline const char* ENTITY = "weather.forecast_wo_de_jia";
