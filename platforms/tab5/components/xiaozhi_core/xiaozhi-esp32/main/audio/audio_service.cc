@@ -151,11 +151,15 @@ void AudioService::Start() {
     }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
 
     /* Start the audio output task */
+    // 2048 bytes overflowed in practice (Guru Meditation: Stack protection
+    // fault in "audio_output", stack bounds only 2044 bytes) while handling
+    // a TTS playback path. Matches the CONFIG_USE_AUDIO_PROCESSOR branch's
+    // already-proven 2048*2 size above.
     xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048, this, 4, &audio_output_task_handle_);
+    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
 #endif
 
     /* Start the opus codec task */

@@ -58,6 +58,13 @@ struct DeviceCard {
     bool is_lenovo_printer = false;
     int  cartridge_pct = -1;
 
+    // 空调 (climate.*)：is_on = hvac_mode != "off"。hvac_mode 是 HA 原始值
+    // (cool/heat/dry/fan_only/auto/off)，卡片自己映射中文。target_temp 是
+    // "temperature" attribute（目标温度，非当前室温——这台设备不上报当前室温）。
+    bool is_climate = false;
+    std::string hvac_mode;
+    std::string target_temp;
+
     // Equality over every rendered field, so update() can skip rebuilding a tab
     // whose data hasn't changed (avoids destroying/recreating ~30–50 LVGL
     // objects every frame, which fragments PSRAM and opens crash windows).
@@ -82,7 +89,9 @@ struct DeviceCard {
             && child_lock_on == o.child_lock_on
             && is_printer == o.is_printer
             && is_lenovo_printer == o.is_lenovo_printer
-            && cartridge_pct == o.cartridge_pct;
+            && cartridge_pct == o.cartridge_pct
+            && is_climate == o.is_climate && hvac_mode == o.hvac_mode
+            && target_temp == o.target_temp;
     }
     bool operator!=(const DeviceCard& o) const { return !(*this == o); }
 };
@@ -112,6 +121,15 @@ public:
                                         const std::string& value)>;
 
     ActionCb _on_action_fn;  // public for card callbacks
+
+    // Outlives `this`: the swipe-up-to-exit gesture defers via lv_async_call,
+    // and lv_async_call_cancel() in the destructor has proven unreliable at
+    // actually stopping every queued call before it fires against a freed
+    // HaView (seen crashing in production — Guru Meditation in _exit_async_cb).
+    // The deferred callback holds a weak_ptr to this flag and checks it before
+    // touching `this`; flipped false as the very first thing in ~HaView().
+    // Public so the gesture-registration lambda (a free function) can read it.
+    std::shared_ptr<bool> _alive = std::make_shared<bool>(true);
 
     void init(ActionCb on_action);
     void _switch_tab(TabPage tab);  // called by tab button callbacks
@@ -161,6 +179,13 @@ private:
 
     // Indev for swipe-up-to-exit gesture
     lv_indev_t* _gesture_indev = nullptr;
+    // Opaque heap context (ExitCbCtx, defined in view.cpp) passed as the
+    // indev gesture callback's user_data instead of `this`. See the comment
+    // above _build_skeleton's gesture registration in view.cpp for why: a
+    // raw `this` there was observed crashing in production (dangling access
+    // after HaView was destroyed but lv_indev_remove_event_cb_with_user_data
+    // didn't actually stop the callback in time).
+    void* _gesture_ctx = nullptr;
 
     // Root screen objects
     lv_obj_t* _scr          = nullptr;

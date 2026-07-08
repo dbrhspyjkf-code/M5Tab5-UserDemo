@@ -6,6 +6,7 @@
 #include <string>
 #include <atomic>
 #include <mutex>
+#include <memory>
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <freertos/FreeRTOS.h>
@@ -98,6 +99,15 @@ private:
     lv_obj_t* _detail_modal{nullptr};
     lv_timer_t* _poll_timer{nullptr};
 
+    // Swipe-up-to-exit gesture, registered on the (persistent, global) pointer
+    // indev instead of a back button. Guards against a stale callback firing
+    // after teardown with an alive flag rather than relying on
+    // lv_indev_remove_event_cb_with_user_data actually winning the race —
+    // see app_ha/view/view.cpp for the crash this pattern was hardened against.
+    std::shared_ptr<bool> _alive = std::make_shared<bool>(true);
+    lv_indev_t* _gesture_indev{nullptr};
+    void*       _gesture_ctx{nullptr};  // opaque SwipeCtx*, defined in app_stocks.cpp
+
     // ── LED handles (ESP only) ─────────────────────────────────────────
 #ifndef PLATFORM_BUILD_DESKTOP
     led_strip_handle_t  _strip         {nullptr};
@@ -121,6 +131,8 @@ private:
     void _teardownHardware();  // 停 ticker + 释放 strip + 交还 PORT A (幂等)
     void _buildUi();
     void _destroyUi();
+    void _installSwipeGesture();
+    void _removeSwipeGesture();
     void _setCellText(lv_obj_t* row, int col, const char* text, uint32_t color);
     void _setStatus(bool online, const char* text);
     void _showDetail(int row);

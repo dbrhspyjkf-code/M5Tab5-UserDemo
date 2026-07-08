@@ -214,13 +214,18 @@ void AppProjectAssistant::onClose()
     // _streaming_lbl and _perm_overlay live inside _scr; nullify before delete.
     _streaming_lbl = nullptr;
     _perm_overlay = nullptr;
+    // Restore launcher screen BEFORE destroying LVGL objects so there is always
+    // an active screen — deleting the current active screen without first
+    // loading a different one leaves LVGL's active-screen pointer dangling
+    // (LVGL itself warns "the active screen was deleted"), crashing later in
+    // an unrelated lv_obj_update_layout call once something touches it.
+    if (_close_cb) _close_cb();
     if (_scr) {
         lv_obj_delete(_scr);
         _scr = nullptr;
     }
     _chat_scroll = _chat_panel = _status_lbl = nullptr;
     _input = _input_row = _send_btn = _voice_btn = _keyboard = _keyboard_btn = _clear_btn = nullptr;
-    if (_close_cb) _close_cb();
 }
 
 // ── UI build ──────────────────────────────────────────────────────────────

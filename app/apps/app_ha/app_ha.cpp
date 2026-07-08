@@ -155,6 +155,16 @@ void AppHA::onOpen()
             _ha->setFanOscillation(entity_id, value == "true");
         } else if (action == "set_preset_mode") {
             _ha->setFanPresetMode(entity_id, value);
+        } else if (action == "climate_toggle") {
+            bool on = (_ha->getEntityState(entity_id) != "off");
+            _ha->callService("climate", on ? "turn_off" : "turn_on", entity_id);
+        } else if (action == "climate_temp_up" || action == "climate_temp_down") {
+            double cur = _safe_stod(_ha->getEntityAttr(entity_id, "temperature", "24"), 24.0);
+            double next = cur + (action == "climate_temp_up" ? 1.0 : -1.0);
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.0f", next);
+            _ha->callService("climate", "set_temperature", entity_id,
+                "\"temperature\":" + std::string(buf));
         } else if (entity_id == TV_EID) {
             if (action == "tv_power") {
                 // Power button toggles the "是否为音箱模式" switch.
@@ -420,6 +430,19 @@ void AppHA::onRunning()
     std::vector<ha_view::DeviceCard> appliance;
     // 落地扇（独占顶部一行，高 FAN_H=430）— 从 设备 tab 移过来
     appliance.push_back(_make_fan_card("fan.dmaker_cn_740412216_p5c_s_2_fan", "落地扇", *_ha));
+    // 卧室空调（绿米空调伴侣，红外控制，2026-07 加入 HA）。占据落地扇右边、原鱼缸的位置。
+    {
+        static const char* CLIMATE_EID = "climate.lumi_cn_74788630_v3";
+        ha_view::DeviceCard cc;
+        cc.entity_id  = CLIMATE_EID;
+        cc.label      = "空调";
+        cc.is_climate = true;
+        cc.hvac_mode  = _ha->getEntityState(CLIMATE_EID);
+        cc.is_offline = cc.hvac_mode.empty() || cc.hvac_mode == "unavailable" || cc.hvac_mode == "unknown";
+        cc.is_on      = !cc.is_offline && cc.hvac_mode != "off";
+        cc.target_temp = _ha->getEntityAttr(CLIMATE_EID, "temperature");
+        appliance.push_back(std::move(cc));
+    }
     // 鱼缸综合卡片（电源 + 水泵 + 灯 + 水温 + 滤芯）。
     // 灯光按钮在 view.cpp 的鱼缸卡片内（第三个按钮），灯光 tab 不再列它。
     {

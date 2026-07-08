@@ -336,34 +336,7 @@ void AppUnitPuzzle::_buildUi()
     lv_obj_set_style_text_font(title, zh_font_30(), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 12);
 
-    // 返回按钮 (左上角): 退出灯阵, 回到工具页. 上拨手势也能退出 (见 _installSwipeGesture).
-    lv_obj_t* back_btn = lv_obj_create(_scr);
-    lv_obj_set_size(back_btn, 150, 70);
-    lv_obj_set_pos(back_btn, 20, 12);
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x333333), 0);
-    lv_obj_set_style_bg_opa(back_btn, LV_OPA_80, 0);
-    lv_obj_set_style_radius(back_btn, 16, 0);
-    lv_obj_set_style_border_width(back_btn, 2, 0);
-    lv_obj_set_style_border_color(back_btn, lv_color_hex(0x6A8FB5), 0);
-    lv_obj_clear_flag(back_btn, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(back_btn, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x1A1A1A), LV_STATE_PRESSED);
-
-    lv_obj_t* back_lbl = lv_label_create(back_btn);
-    lv_label_set_text(back_lbl, "← 返回");
-    lv_obj_set_style_text_color(back_lbl, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(back_lbl, zh_font_30(), 0);
-    lv_obj_set_align(back_lbl, LV_ALIGN_CENTER);
-
-    // 点击在 LVGL 线程上, 但 _requestClose 会触发 onClose 删除 _scr (本按钮的父节点),
-    // 同步删会 use-after-free. 用 lv_async_call 延后到事件处理完再关.
-    lv_obj_add_event_cb(back_btn, [](lv_event_t* e) {
-        auto* app = static_cast<AppUnitPuzzle*>(lv_event_get_user_data(e));
-        if (!app) return;
-        lv_async_call([](void* u) {
-            static_cast<AppUnitPuzzle*>(u)->_requestClose();
-        }, app);
-    }, LV_EVENT_CLICKED, this);
+    // 退出灯阵改为只用上拨手势 (见 _installSwipeGesture), 不再放返回按钮。
 
     // 状态行
     _status_lbl = lv_label_create(_scr);

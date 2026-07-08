@@ -438,7 +438,7 @@ void AppHome::_closeModal()
     lv_obj_delete_async(_modal);  // safe to call from within the modal's own event
     _modal      = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
-    _net_ssid = _net_pass = _net_host = _net_svc = _net_ssid_dd = _net_kb = _net_status = nullptr;
+    _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
     _wx_body  = nullptr;
 }
 
@@ -504,11 +504,6 @@ void AppHome::_fetchWeatherDetail()
     std::string base = "http://" + GetHAL()->getConfig("ha_host", "") + ":8123";
     std::string tok  = std::string("Bearer ") + ha_weather::TOKEN;
     GetHAL()->tryRunDetached([this, base, tok]() {
-        auto dir8 = [](double b) -> const char* {
-            static const char* D[] = {"北","东北","东","东南","南","西南","西","西北"};
-            int i = (int)((b + 22.5) / 45.0) & 7;
-            return D[i];
-        };
         std::string out;
         // ── Current conditions ──
         try {
@@ -521,18 +516,20 @@ void AppHome::_fetchWeatherDetail()
                 auto num = [&](const char* k, double def = 0) {
                     return a.contains(k) && a[k].is_number() ? a[k].get<double>() : def;
                 };
+                // 和风天气(heweather) already reports wind in km/h, pressure in
+                // hPa, and wind_bearing as a Chinese direction string (e.g. "东南风")
+                // — no unit conversion needed (unlike the old met.no entity).
+                std::string wind_dir = a.value("wind_bearing", std::string("--"));
                 char line[160];
                 out += ha_weather::condZh(st) + "   " +
                        std::to_string((int)(num("temperature") + 0.5)) + "°C\n";
-                // Pack three fields per line to keep the card short. met.no via HA
-                // reports wind in mph / pressure in inHg — convert to km/h / hPa.
                 snprintf(line, sizeof(line), "湿度 %d%%   露点 %d°C   紫外线 %.1f\n",
                          (int)num("humidity"), (int)(num("dew_point") + 0.5), num("uv_index"));
                 out += line;
                 snprintf(line, sizeof(line), "云量 %d%%   风 %s%dkm/h   气压 %dhPa\n",
-                         (int)num("cloud_coverage"), dir8(num("wind_bearing")),
-                         (int)(num("wind_speed") * 1.60934 + 0.5),
-                         (int)(num("pressure") * 33.8639 + 0.5));
+                         (int)num("cloud_coverage"), wind_dir.c_str(),
+                         (int)(num("wind_speed") + 0.5),
+                         (int)(num("pressure") + 0.5));
                 out += line;
             }
         } catch (...) {}
@@ -691,7 +688,7 @@ void AppHome::_qsBrt_cb(lv_event_t* e)
 void AppHome::_openNetworkDialog()
 {
     auto* hal = GetHAL();
-    lv_obj_t* card = _openModal(820, 606, "网络设置");
+    lv_obj_t* card = _openModal(820, 540, "网络设置");
 
     const int LBL_X = 36, FLD_X = 250, FLD_W = 520, ROW_H = 66;
     int y = 86;
@@ -746,16 +743,11 @@ void AppHome::_openNetworkDialog()
     lv_textarea_set_text(_net_pass, hal->getConfig("wifi_pass", "").c_str());
     y += ROW_H;
 
-    // HA server host (smart-home devices, :8123)
-    mk_label("HA 服务器", y);
+    // Server host — HA (:8123) + hermes/weather/Claude bridge (:8766/:8770) now
+    // all run on the same box, so one field drives both NVS keys.
+    mk_label("服务器", y);
     _net_host = mk_ta(y, FLD_W, false);
     lv_textarea_set_text(_net_host, hal->getConfig("ha_host", "").c_str());
-    y += ROW_H;
-
-    // Other services host (weather :8766 + Claude bridge :8770), runs on the Mac
-    mk_label("其他服务器", y);
-    _net_svc = mk_ta(y, FLD_W, false);
-    lv_textarea_set_text(_net_svc, hal->getConfig("svc_host", "").c_str());
     y += ROW_H + 6;
 
     // Save + status
@@ -806,17 +798,18 @@ void AppHome::_doNetworkSave()
     std::string ssid = lv_textarea_get_text(_net_ssid);
     std::string pass = lv_textarea_get_text(_net_pass);
     std::string host = lv_textarea_get_text(_net_host);
-    std::string svc  = lv_textarea_get_text(_net_svc);
     if (ssid.empty()) {
         lv_label_set_text(_net_status, "请填写 WiFi 名称");
         return;
     }
     hal->setConfig("wifi_ssid", ssid);
     hal->setConfig("wifi_pass", pass);
-    if (!host.empty()) hal->setConfig("ha_host", host);
-    if (!svc.empty())  hal->setConfig("svc_host", svc);
+    if (!host.empty()) {
+        hal->setConfig("ha_host", host);
+        hal->setConfig("svc_host", host);
+    }
     lv_label_set_text(_net_status, "已保存，正在重启…");
-    mclog::tagInfo(_tag, "network saved ssid={} ha_host={} svc_host={}, rebooting", ssid, host, svc);
+    mclog::tagInfo(_tag, "network saved ssid={} host={}, rebooting", ssid, host);
     hal->delay(800);
     hal->reboot();
 }

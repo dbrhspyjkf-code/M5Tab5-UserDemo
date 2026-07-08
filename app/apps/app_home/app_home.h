@@ -87,8 +87,7 @@ private:
     lv_obj_t* _qs_brt_lbl = nullptr;  // quick-settings brightness %
     lv_obj_t* _net_ssid   = nullptr;  // network dialog: SSID textarea
     lv_obj_t* _net_pass   = nullptr;  // network dialog: password textarea
-    lv_obj_t* _net_host   = nullptr;  // network dialog: HA host textarea
-    lv_obj_t* _net_svc    = nullptr;  // network dialog: 其他服务器 (天气/Claude) textarea
+    lv_obj_t* _net_host   = nullptr;  // network dialog: server host textarea (writes both ha_host + svc_host)
     lv_obj_t* _net_ssid_dd = nullptr; // network dialog: scan-result dropdown
     lv_obj_t* _net_kb     = nullptr;  // network dialog: on-screen keyboard
     lv_obj_t* _net_status = nullptr;  // network dialog: status line

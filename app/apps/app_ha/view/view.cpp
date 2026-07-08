@@ -603,6 +603,112 @@ static void _build_fishtank_card(lv_obj_t* parent, int x, int y, int w,
     }
 }
 
+// ─── Climate card (空调) ────────────────────────────────────────────────────
+// Layout: 空调                 24°C   (title + target temp, top-right)
+//         制冷中 / 已关闭
+//         ──────────────────────────
+//         [－]        [电源]        [＋]
+static void _build_climate_card(lv_obj_t* parent, int x, int y, int w,
+                                 const DeviceCard& card, HaView* view)
+{
+    int pad = 14;
+    lv_obj_t* c = _make_card(parent, x, y, w, FISHTANK_H, C_CARD);
+    _add_shadow(c);
+
+    lv_obj_t* title = lv_label_create(c);
+    lv_label_set_text(title, card.label.c_str());
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad, 14);
+
+    if (!card.target_temp.empty()) {
+        char tbuf[24];
+        snprintf(tbuf, sizeof(tbuf), "%.0f °C", atof(card.target_temp.c_str()));
+        lv_obj_t* tl = lv_label_create(c);
+        lv_label_set_text(tl, tbuf);
+        lv_obj_set_style_text_font(tl, &lv_font_montserrat_28, 0);
+        lv_obj_set_style_text_color(tl, lv_color_hex(C_TEXT2), 0);
+        lv_obj_align(tl, LV_ALIGN_TOP_RIGHT, -pad, 16);
+    }
+
+    // hvac_mode → 中文状态 + 高亮色（离线态复用 is_offline，灰底不可控）
+    struct ModeText { const char* mode; const char* zh; uint32_t color; };
+    static const ModeText MODES[] = {
+        {"cool",     "制冷中", 0x4FC3F7},
+        {"heat",     "制热中", C_AMBER},
+        {"dry",      "除湿中", 0x4FC3F7},
+        {"fan_only", "送风中", C_TEXT2},
+        {"auto",     "自动运行", C_GREEN},
+        {"off",      "已关闭", C_TEXT2},
+    };
+    const char* status_zh = card.is_offline ? "离线" : "已关闭";
+    uint32_t status_color = C_TEXT2;
+    for (const auto& m : MODES) {
+        if (card.hvac_mode == m.mode) { status_zh = m.zh; status_color = m.color; break; }
+    }
+    lv_obj_t* status = lv_label_create(c);
+    lv_label_set_text(status, status_zh);
+    lv_obj_set_style_text_font(status, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(status, lv_color_hex(status_color), 0);
+    lv_obj_align(status, LV_ALIGN_TOP_LEFT, pad, 56);
+
+    lv_obj_t* dv = lv_obj_create(c);
+    lv_obj_set_size(dv, w - pad * 2, 1);
+    lv_obj_set_style_bg_color(dv, lv_color_hex(0x1C3E62), 0);
+    lv_obj_set_style_border_width(dv, 0, 0);
+    lv_obj_align(dv, LV_ALIGN_TOP_LEFT, pad, 92);
+    lv_obj_clear_flag(dv, LV_OBJ_FLAG_SCROLLABLE);
+
+    auto _border = [](lv_obj_t* b) {
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(0x2A5080), 0);
+    };
+    int ctrl_y = 108, ctrl_h = 72, gap = 8;
+    int ctrl_w = (w - pad * 2 - gap * 2) / 3;
+
+    // [－1°]
+    {
+        lv_obj_t* b = _make_card(c, pad, ctrl_y, ctrl_w, ctrl_h, C_CARD, 10);
+        _border(b);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* l = lv_label_create(b);
+        lv_label_set_text(l, LV_SYMBOL_MINUS);
+        lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT2), 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_28, 0);
+        lv_obj_center(l);
+        auto* d = new CardData{view, card.entity_id, "climate_temp_down", ""};
+        _bind_action(b, d);
+    }
+    // [电源]
+    {
+        uint32_t bg = card.is_on ? C_CARD_ON : C_CARD;
+        uint32_t fg = card.is_on ? 0xFFFFFF : C_TEXT2;
+        lv_obj_t* b = _make_card(c, pad + ctrl_w + gap, ctrl_y, ctrl_w, ctrl_h, bg, 10);
+        _border(b);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* l = lv_label_create(b);
+        lv_label_set_text(l, "电源");
+        lv_obj_set_style_text_color(l, lv_color_hex(fg), 0);
+        lv_obj_set_style_text_font(l, zh_font_sm(), 0);
+        lv_obj_center(l);
+        auto* d = new CardData{view, card.entity_id, "climate_toggle", ""};
+        _bind_action(b, d);
+    }
+    // [＋1°]
+    {
+        lv_obj_t* b = _make_card(c, pad + 2 * (ctrl_w + gap), ctrl_y, ctrl_w, ctrl_h, C_CARD, 10);
+        _border(b);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* l = lv_label_create(b);
+        lv_label_set_text(l, LV_SYMBOL_PLUS);
+        lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT2), 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_28, 0);
+        lv_obj_center(l);
+        auto* d = new CardData{view, card.entity_id, "climate_temp_up", ""};
+        _bind_action(b, d);
+    }
+}
+
 // ─── Vacuum card (扫地机器人) ───────────────────────────────────────────────────
 static void _build_vacuum_card(lv_obj_t* parent, int x, int y, int w,
                                 const DeviceCard& card, HaView* view)
@@ -742,7 +848,7 @@ static void _build_printer_card(lv_obj_t* parent, int x, int y, int w,
     lv_obj_t* title = lv_label_create(c);
     lv_label_set_text(title, "拓竹3D打印机-X1CC");
     lv_obj_set_style_text_font(title, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT2), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad, 14);
 
     // Status (top-right, colored)
@@ -817,7 +923,7 @@ static void _build_lenovo_printer_card(lv_obj_t* parent, int x, int y, int w,
     lv_obj_t* title = lv_label_create(c);
     lv_label_set_text(title, "Lenovo L100DW");
     lv_obj_set_style_text_font(title, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT2), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, pad, 14);
 
     // Status (right) — card.value already holds the Chinese label from app_ha.cpp
@@ -1405,7 +1511,7 @@ static void _layout_device_tab(lv_obj_t* cont,
     }
 }
 
-// ─── Appliance tab (家电): 落地扇 (full-width top) / 鱼缸 | 门锁 / 扫地机 | 洗衣机 ──
+// ─── Appliance tab (家电): 落地扇+空调 (top) / 门锁 / 扫地机+洗衣机+鱼缸 (bottom row) ──
 static void _layout_appliance(lv_obj_t* cont, const std::vector<DeviceCard>& cards,
                                HaView* view)
 {
@@ -1414,12 +1520,14 @@ static void _layout_appliance(lv_obj_t* cont, const std::vector<DeviceCard>& car
     int row_h   = FISHTANK_H;            // 2×2 cards share this height
 
     const DeviceCard* fan      = nullptr;
+    const DeviceCard* climate  = nullptr;
     const DeviceCard* fishtank = nullptr;
     const DeviceCard* lock     = nullptr;
     const DeviceCard* vacuum   = nullptr;
     const DeviceCard* washer   = nullptr;
     for (const auto& c : cards) {
         if      (c.is_fan)      fan      = &c;
+        else if (c.is_climate)  climate  = &c;
         else if (c.is_fishtank) fishtank = &c;
         else if (c.is_lock)     lock     = &c;
         else if (c.is_vacuum)   vacuum   = &c;
@@ -1430,17 +1538,21 @@ static void _layout_appliance(lv_obj_t* cont, const std::vector<DeviceCard>& car
     int fan_y = GAP;
     if (fan) _build_fan_card(cont, PAD, fan_y, half_w, *fan, view);
 
-    // 鱼缸 + 门锁 叠放在落地扇右边（两卡总高 210+8+210=428 ≈ FAN_H 430，与落地扇视觉对齐）
+    // 空调 + 门锁 叠放在落地扇右边（两卡总高 210+8+210=428 ≈ FAN_H 430，与落地扇视觉对齐）
+    // 空调用的是鱼缸原来这个位置——鱼缸挪到下面一行跟扫地机/洗衣机并排。
     int rx = PAD + half_w + GAP;
-    if (fishtank) _build_fishtank_card(cont, rx, fan_y, half_w, *fishtank, view);
+    if (climate)  _build_climate_card(cont, rx, fan_y, half_w, *climate, view);
     if (lock)     _build_lock_card(cont, rx, fan_y + row_h + GAP, half_w, row_h, *lock, nullptr);
 
-    // 扫地机 + 洗衣机 在落地扇下方（家电 tab 垂直滚动）
+    // 扫地机 / 洗衣机 / 鱼缸 三列并排在落地扇下方（家电 tab 垂直滚动）
     int y0 = GAP + FAN_H + GAP;
-    int y1 = y0 + row_h + GAP;
-    int lx = PAD;
-    if (vacuum)   _build_vacuum_card(cont, lx, y0, half_w, *vacuum, view);
-    if (washer)   _build_washer_card(cont, rx, y0, half_w, *washer, view);
+    int third_w = (avail_w - 2 * GAP) / 3;
+    int c0 = PAD;
+    int c1 = PAD + third_w + GAP;
+    int c2 = PAD + 2 * (third_w + GAP);
+    if (vacuum)   _build_vacuum_card(cont, c0, y0, third_w, *vacuum, view);
+    if (washer)   _build_washer_card(cont, c1, y0, third_w, *washer, view);
+    if (fishtank) _build_fishtank_card(cont, c2, y0, third_w, *fishtank, view);
 }
 
 // ─── Init & skeleton ─────────────────────────────────────────────────────────
@@ -1452,25 +1564,46 @@ uint32_t HaView::_get_millis() const
     return GetHAL()->millis();
 }
 
-// Deferred swipe-up-to-exit handler. Named (not a lambda) so the destructor can
-// pass the exact same function pointer to lv_async_call_cancel — otherwise a
-// second swipe queued just before close would fire after HaView is freed and
-// dereference a dangling pointer.
+// Heap context for the deferred swipe-up-to-exit callback: pairs the target
+// HaView* with a weak_ptr to its `_alive` flag (see view.h). `view` is only
+// dereferenced after confirming `alive` is still true — since HaView::~HaView
+// flips the flag to false as its very first statement, "alive" here is a
+// sound guarantee that `view` hasn't been (and isn't concurrently being)
+// destroyed. This replaces relying on lv_async_call_cancel() in the
+// destructor to stop every queued call in time, which was observed in
+// production to not always hold (Guru Meditation, Instruction access fault,
+// right in this callback, with `view` already dangling).
+struct ExitCbCtx {
+    HaView* view;
+    std::weak_ptr<bool> alive;
+};
+
 static void _exit_async_cb(void* udata)
 {
-    auto* view = static_cast<HaView*>(udata);
-    if (view->_on_action_fn) view->_on_action_fn("app", "home", "");
+    std::unique_ptr<ExitCbCtx> ctx(static_cast<ExitCbCtx*>(udata));
+    auto alive = ctx->alive.lock();
+    if (!alive || !*alive) return;  // HaView already destroyed — nothing to do
+
+    HaView* view = ctx->view;
+    if (!view->_on_action_fn) return;
+    auto cb = view->_on_action_fn;
+    cb("app", "home", "");
 }
 
 HaView::~HaView()
 {
-    // Drop any swipe-up exit callback queued but not yet dispatched, so it can't
-    // run against this freed object.
-    lv_async_call_cancel(_exit_async_cb, this);
+    // Signal any in-flight/queued _exit_async_cb that this instance is gone.
+    // Must be first: everything below (deleting _scr etc.) can itself pump
+    // the LVGL event loop and re-enter async callbacks.
+    *_alive = false;
     if (_gesture_indev) {
-        lv_indev_remove_event_cb_with_user_data(_gesture_indev, nullptr, this);
+        // Best-effort: removal isn't guaranteed to beat an event already in
+        // flight (see the alive-check in the gesture callback in
+        // _build_skeleton, which is what actually makes that case safe).
+        lv_indev_remove_event_cb_with_user_data(_gesture_indev, nullptr, _gesture_ctx);
         _gesture_indev = nullptr;
     }
+    // _gesture_ctx is intentionally not freed here — see its allocation site.
     if (_scr) {
         lv_obj_delete(_scr);
         _scr = nullptr;
@@ -1509,15 +1642,29 @@ void HaView::_build_skeleton()
     lv_indev_t* indev = lv_indev_get_next(NULL);
     while (indev) {
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            // user_data is a heap ExitCbCtx (view + weak_ptr<bool> alive), not a raw
+            // `this`: lv_indev_remove_event_cb_with_user_data() in the destructor was
+            // observed in production to not always stop this callback before HaView
+            // is freed (indev is a persistent global object outliving any one HaView
+            // instance). Checking `alive` before ever touching `ctx->view` makes a
+            // stale callback firing after destruction a safe no-op instead of a crash
+            // (Guru Meditation, Store address misaligned, right on this line).
+            // `_gesture_ctx` is intentionally never freed (see ~HaView): a stale
+            // callback might still hold this exact pointer, so freeing it would just
+            // trade a HaView-sized UAF for an ExitCbCtx-sized one. It's ~24 bytes,
+            // leaked once per HA-panel open — not worth chasing.
+            _gesture_ctx = new ExitCbCtx{this, _alive};
             lv_indev_add_event_cb(indev, [](lv_event_t* e) {
+                auto* ctx = static_cast<ExitCbCtx*>(lv_event_get_user_data(e));
+                auto alive = ctx->alive.lock();
+                if (!alive || !*alive) return;  // HaView already destroyed
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
                     // Defer to avoid re-entrancy: removing from within indev dispatch
-                    // silently fails, leaving a dangling callback after HaView is freed.
-                    // Cancellable in ~HaView via the named _exit_async_cb pointer.
-                    lv_async_call(_exit_async_cb, lv_event_get_user_data(e));
+                    // silently fails. Reuses the same ctx contents for the async call.
+                    lv_async_call(_exit_async_cb, new ExitCbCtx{ctx->view, ctx->alive});
                 }
-            }, LV_EVENT_GESTURE, this);
+            }, LV_EVENT_GESTURE, _gesture_ctx);
             _gesture_indev = indev;
             break;
         }

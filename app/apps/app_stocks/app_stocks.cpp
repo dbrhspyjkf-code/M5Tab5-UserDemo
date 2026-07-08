@@ -140,7 +140,18 @@ void AppStocks::onClose()
 void AppStocks::_requestClose()
 {
     _teardownHardware();
-    _destroyUi();
+    // Do NOT _destroyUi()/delete _scr here. _close_cb is
+    // mooncake::GetMooncake().openApp(tools_id) — that's async (just flags
+    // StateGoOpen; the tools app's onOpen()/lv_screen_load() doesn't run
+    // until the next mooncake tick), so _scr would still be the *active*
+    // screen at the moment of deletion — LVGL warns "the active screen was
+    // deleted" and a later layout pass on the dangling pointer panics
+    // (Guru Meditation, lv_obj_align_to/lv_obj_update_layout). Matches
+    // AppUnitPuzzle::_requestClose(), which has the same openApp()-based
+    // close_cb and the same reasoning. Leave _scr in place — harmless, gets
+    // covered by the tools screen once it loads — and let the existing
+    // idempotent `if (_scr) _destroyUi();` guard at the top of onOpen()
+    // reap it next time this app is reopened.
     if (_close_cb) _close_cb();
 }
 
@@ -185,24 +196,15 @@ void AppStocks::_buildUi()
     lv_obj_set_style_pad_all(_header, 0, 0);
     lv_obj_clear_flag(_header, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* back = lv_label_create(_header);
-    lv_label_set_text(back, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_font(back, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(back, lv_color_hex(C_TEXT), 0);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 24, 0);
-    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
-    // 点击在 LVGL 线程上, _requestClose 会删 _scr (back 的祖先), 同步删会 UAF.
-    // 用 lv_async_call 延后到事件处理完再关.
-    lv_obj_add_event_cb(back, [](lv_event_t* e) {
-        auto* self = static_cast<AppStocks*>(lv_event_get_user_data(e));
-        lv_async_call([](void* u) { static_cast<AppStocks*>(u)->_requestClose(); }, self);
-    }, LV_EVENT_CLICKED, this);
-
+    // 退出改用上拨手势 (见 _installSwipeGesture), 不再放返回按钮 —— 返回按钮点击时
+    // 若详情弹窗还开着, _requestClose 删 _scr 早于 _close_cb 切回主屏, LVGL
+    // active-screen 指针悬空, 之后任意一次布局计算就崩 (Guru Meditation,
+    // lv_obj_update_layout). 手势统一走同一个已修复顺序的 _requestClose。
     lv_obj_t* title = lv_label_create(_header);
     lv_label_set_text(title, "自选股");
     lv_obj_set_style_text_font(title, stock_row_font(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 84, 0);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 24, 0);
 
     _status_text = lv_label_create(_header);
     lv_label_set_text(_status_text, "● 加载中...");
@@ -292,11 +294,14 @@ void AppStocks::_buildUi()
     }, LV_EVENT_CLICKED, this);
 
     lv_screen_load(_scr);
+    _installSwipeGesture();
 }
 
 void AppStocks::_destroyUi()
 {
     LvglLockGuard lock;
+    *_alive = false;  // any stale/in-flight gesture callback must no-op from here on
+    _removeSwipeGesture();
     _closeDetail();
     if (_scr) {
         lv_obj_delete(_scr);
@@ -306,6 +311,61 @@ void AppStocks::_destroyUi()
     _header = _status_bar = _status_dot = _status_text = nullptr;
     _refresh_btn = _col_header = nullptr;
     if (_poll_timer) { lv_timer_delete(_poll_timer); _poll_timer = nullptr; }
+    _alive = std::make_shared<bool>(true);  // fresh flag for the next _buildUi/_installSwipeGesture
+}
+
+// Swipe-up-to-exit, registered on the persistent global pointer indev instead
+// of a back button (see the comment where the old button used to be built).
+// user_data is a heap SwipeCtx (app + weak_ptr<bool> alive), not a raw `this`:
+// lv_indev_remove_event_cb_with_user_data isn't guaranteed to win the race
+// against an event already in flight, and touching `app` from a stale
+// callback after teardown is exactly the crash this whole change fixes.
+// SwipeCtx is intentionally never freed — see app_ha/view/view.cpp's
+// ExitCbCtx for the identical, already-proven pattern and rationale.
+namespace {
+struct SwipeCtx {
+    AppStocks* app;
+    std::weak_ptr<bool> alive;
+};
+}  // namespace
+
+void AppStocks::_installSwipeGesture()
+{
+    _removeSwipeGesture();
+    lv_indev_t* indev = lv_indev_get_next(nullptr);
+    while (indev) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            _gesture_ctx = new SwipeCtx{this, _alive};
+            lv_indev_add_event_cb(indev, [](lv_event_t* e) {
+                auto* ctx = static_cast<SwipeCtx*>(lv_event_get_user_data(e));
+                auto alive = ctx->alive.lock();
+                if (!alive || !*alive) return;
+                lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+                if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
+                    // Defer: don't tear down _scr synchronously from inside indev dispatch.
+                    auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
+                    lv_async_call([](void* u) {
+                        auto* c = static_cast<SwipeCtx*>(u);
+                        auto a = c->alive.lock();
+                        if (a && *a) c->app->_requestClose();
+                        delete c;
+                    }, app_ctx);
+                }
+            }, LV_EVENT_GESTURE, _gesture_ctx);
+            _gesture_indev = indev;
+            break;
+        }
+        indev = lv_indev_get_next(indev);
+    }
+}
+
+void AppStocks::_removeSwipeGesture()
+{
+    if (_gesture_indev) {
+        lv_indev_remove_event_cb_with_user_data(_gesture_indev, nullptr, _gesture_ctx);
+        _gesture_indev = nullptr;
+    }
+    // _gesture_ctx intentionally not freed — see its allocation site.
 }
 
 void AppStocks::_setCellText(lv_obj_t* row, int col, const char* text, uint32_t color)

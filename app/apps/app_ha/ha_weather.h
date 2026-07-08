@@ -8,10 +8,10 @@ namespace ha_weather {
 
 // HA long-lived access token — set via Settings app (stored in NVS).
 // Generate one in HA → Profile → Long-Lived Access Tokens.
-inline const char* TOKEN = "";
+inline const char* TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI0NWZkMTg4ZmUyMTQ0ODVmODI2YjljNGQxYzgxMjRhMyIsImlhdCI6MTc4MzIyNDI1MCwiZXhwIjoyMDk4NTg0MjUwfQ.YOGEndo1vSDVhpH2suQ6Mt2xG4EflX6BbVvSTeHk3Uw";
 
-// Local home forecast entity (met.no, °C, has temperature + humidity).
-inline const char* ENTITY = "weather.forecast_wo_de_jia";
+// Local home forecast entity (和风天气 HeWeather, °C, has temperature + humidity).
+inline const char* ENTITY = "weather.he_feng_tian_qi_heweather";
 
 // HA weather condition (English state string) → short Chinese label.
 inline std::string condZh(const std::string& s)
