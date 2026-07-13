@@ -30,6 +30,15 @@ public:
     using OpenEmailCb = std::function<void()>;
     void setOpenEmailHandler(OpenEmailCb cb) { _open_email = std::move(cb); }
 
+    // Cached weather (refreshed every 15 min by AppHome's own status bar) —
+    // read by AppIdleScreen so it doesn't need its own fetch/cache/timer.
+    void getWeather(std::string& temp, std::string& cond)
+    {
+        std::lock_guard<std::mutex> lk(_weather_mutex);
+        temp = _weather_temp;
+        cond = _weather_cond;
+    }
+
     void onCreate()  override;
     void onOpen()    override;
     void onRunning() override;

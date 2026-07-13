@@ -50,14 +50,14 @@ static std::string ha_host()
 static std::string ha_url()    { return "http://" + ha_host()  + ":8123"; }
 
 // ─── Entity config ────────────────────────────────────────────────────────────
-// HA long-lived token — shared with app_home via ha_weather.h (single source).
-static const char* HA_TOKEN = ha_weather::TOKEN;
+// HA long-lived token — shared with app_home via ha_weather.h (single source,
+// reads NVS "ha_token"; see ha_weather.h for why it's never a constant).
 // 客厅电视机（2026-06 HA 重新集成，实体名变更）。
 //   播放控制（音量/静音/音源）走 media_player，开关按钮映射到"是否为音箱模式"开关。
 static const char* TV_EID        = "media_player.xiaomi_esprh1_0bc4_play_control";
 static const char* TV_SWITCH_EID = "switch.xiaomi_esprh1_0bc4_is_on";
 // Sonos 客厅音响 — 直连 HA 的 media_player 实体（不再经 hermes :8900 桥）。
-static const char* SONOS_EID = "media_player.ke_ting_ke_ting";
+static const char* SONOS_EID = "media_player.ke_ting";
 
 // 家电 tab
 static const char* VACUUM_EID        = "vacuum.yun_jing_xiao_yao_002_max_cx7_vacuum";
@@ -135,7 +135,7 @@ void AppHA::onOpen()
         _ha = std::make_shared<HaClient>();
         HaClient::Config cfg;
         cfg.url   = ha_url();
-        cfg.token = HA_TOKEN;
+        cfg.token = ha_weather::token();
         _ha->init(cfg);
     }
 

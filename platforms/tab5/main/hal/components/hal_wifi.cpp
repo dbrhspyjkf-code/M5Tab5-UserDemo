@@ -83,7 +83,8 @@ void HalEsp32::setConfig(const std::string& key, const std::string& value)
     nvs_set_str(h, key.c_str(), value.c_str());
     nvs_commit(h);
     nvs_close(h);
-    ESP_LOGI(TAG, "setConfig: %s = %s", key.c_str(), key == "wifi_pass" ? "***" : value.c_str());
+    bool is_secret = (key == "wifi_pass" || key == "ha_token");
+    ESP_LOGI(TAG, "setConfig: %s = %s", key.c_str(), is_secret ? "***" : value.c_str());
 }
 
 void HalEsp32::reboot()

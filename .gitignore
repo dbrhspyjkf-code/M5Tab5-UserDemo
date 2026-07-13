@@ -10,3 +10,5 @@ var/project_assistant/results/*.json
 var/project_assistant/requests/*.json
 var/project_assistant/execution/*.md
 docs/superpowers/
+# Local-only secrets — never commit. See app/apps/app_ha/secrets.h.example.
+app/apps/app_ha/secrets.h

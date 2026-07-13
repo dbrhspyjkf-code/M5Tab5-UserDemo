@@ -20,6 +20,7 @@
 #include "app_lora_chat/app_lora_chat.h"
 #include "app_email_led/app_email_led.h"
 #include "app_stocks/app_stocks.h"
+#include "app_idle_screen/app_idle_screen.h"
 /* Header files locator (Don't remove) */
 
 // Start boot anim app and wait for it to finish
@@ -131,6 +132,14 @@ inline void on_install_apps()
     int el_id = mooncake::GetMooncake().extensionManager()->createAbility(
         std::make_unique<AppEmailLed>());
     mooncake::GetMooncake().extensionManager()->resumeWorkerAbility(el_id);
+
+    // ── Idle screensaver WorkerAbility (always-on) ──
+    // 20s 无操作后全屏显示时间/日期/天气, 碰屏幕即关闭。天气数据复用 AppHome
+    // 状态栏已有的缓存, 不额外发请求。
+    auto is_uptr = std::make_unique<AppIdleScreen>();
+    is_uptr->setHomeApp(home);
+    int is_id = mooncake::GetMooncake().extensionManager()->createAbility(std::move(is_uptr));
+    mooncake::GetMooncake().extensionManager()->resumeWorkerAbility(is_id);
 
     // WiFi / HA configuration moved to the home status-bar WiFi popup; the
     // red WiFi icon there signals a failed connection, so there's no longer a

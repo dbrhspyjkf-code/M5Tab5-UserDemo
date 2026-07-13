@@ -343,8 +343,9 @@ void AppHome::_fetch_weather()
     // writes strings — it must not touch LVGL — onRunning copies them to labels.
     std::string url = "http://" + GetHAL()->getConfig("ha_host", "")
                     + ":8123/api/states/" + ha_weather::ENTITY;
-    GetHAL()->tryRunDetached([this, url]() {
-        auto resp = GetHAL()->httpGet(url, {{"Authorization", std::string("Bearer ") + ha_weather::TOKEN}});
+    std::string tok = ha_weather::token();
+    GetHAL()->tryRunDetached([this, url, tok]() {
+        auto resp = GetHAL()->httpGet(url, {{"Authorization", std::string("Bearer ") + tok}});
         if (!resp.ok) return;
         try {
             auto j = nlohmann::json::parse(resp.body);
@@ -502,7 +503,7 @@ void AppHome::_openWeatherDialog()
 void AppHome::_fetchWeatherDetail()
 {
     std::string base = "http://" + GetHAL()->getConfig("ha_host", "") + ":8123";
-    std::string tok  = std::string("Bearer ") + ha_weather::TOKEN;
+    std::string tok  = std::string("Bearer ") + ha_weather::token();
     GetHAL()->tryRunDetached([this, base, tok]() {
         std::string out;
         // ── Current conditions ──
@@ -745,6 +746,9 @@ void AppHome::_openNetworkDialog()
 
     // Server host — HA (:8123) + hermes/weather/Claude bridge (:8766/:8770) now
     // all run on the same box, so one field drives both NVS keys.
+    // HA token is not entered here — too long for the on-screen keyboard. It
+    // falls back to a local, gitignored secrets.h at compile time (or can
+    // still be set via NVS "ha_token" some other way); see ha_weather.h.
     mk_label("服务器", y);
     _net_host = mk_ta(y, FLD_W, false);
     lv_textarea_set_text(_net_host, hal->getConfig("ha_host", "").c_str());
@@ -795,9 +799,9 @@ void AppHome::_doNetworkScan()
 void AppHome::_doNetworkSave()
 {
     auto* hal = GetHAL();
-    std::string ssid = lv_textarea_get_text(_net_ssid);
-    std::string pass = lv_textarea_get_text(_net_pass);
-    std::string host = lv_textarea_get_text(_net_host);
+    std::string ssid  = lv_textarea_get_text(_net_ssid);
+    std::string pass  = lv_textarea_get_text(_net_pass);
+    std::string host  = lv_textarea_get_text(_net_host);
     if (ssid.empty()) {
         lv_label_set_text(_net_status, "请填写 WiFi 名称");
         return;
