@@ -5,7 +5,8 @@
 // secrets.h is gitignored (see .gitignore + secrets.h.example) — a local-only
 // compile-time fallback for the HA token, since it's too long to type on the
 // on-screen keyboard. Falls back to "" if the file doesn't exist (fresh
-// clone), which just means ha_token must be set via 主屏 → 网络设置 instead.
+// clone), which just means NVS "ha_token" must be set some other way (e.g.
+// a one-off script over serial/USB — there's no on-device UI for it).
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -17,11 +18,11 @@ inline const char* LOCAL_HA_TOKEN_DEFAULT = "";
 // weather.* entity instead of the Mac-side Hermes :8766 service.
 namespace ha_weather {
 
-// HA long-lived access token. Preferred path: NVS "ha_token", set via 主屏 →
-// 网络设置 → HA Token. Falls back to LOCAL_HA_TOKEN_DEFAULT (secrets.h,
-// gitignored) when NVS is empty — see that file for why this exists instead
-// of just hardcoding it here again: a real token got committed to this exact
-// spot once before (leaked to the public fork, since revoked).
+// HA long-lived access token. Preferred path: NVS key "ha_token". Falls back
+// to LOCAL_HA_TOKEN_DEFAULT (secrets.h, gitignored) when NVS is empty — see
+// that file for why this exists instead of just hardcoding it here again: a
+// real token got committed to this exact spot once before (leaked to the
+// public fork, since revoked).
 inline std::string token() { return GetHAL()->getConfig("ha_token", LOCAL_HA_TOKEN_DEFAULT); }
 
 // Local home forecast entity (和风天气 HeWeather, °C, has temperature + humidity).
