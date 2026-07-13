@@ -7,6 +7,7 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <cstring>
+#include <ctime>
 #include "../app_settings/app_settings.h"
 #endif
 
@@ -48,6 +49,17 @@ static constexpr int SCROLL_RANGE     = TOTAL_W + 40;    // 完全滚出 40 宽�
 AppEmailLed*       AppEmailLed::s_instance = nullptr;
 std::atomic<bool>  AppEmailLed::s_app_owns_porta{false};
 
+// 显示时段 07:00–00:00（含），00:01–06:59 熄屏不打扰。
+static bool _inActiveWindow()
+{
+    time_t t = time(nullptr);
+    struct tm lt = {};
+    localtime_r(&t, &lt);
+    if (lt.tm_hour >= 7) return true;
+    if (lt.tm_hour == 0 && lt.tm_min == 0) return true;  // 00:00 整点仍算前一晚
+    return false;
+}
+
 #endif  // !PLATFORM_BUILD_DESKTOP
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,7 +97,7 @@ void AppEmailLed::onRunning()
 
     bool app_owns = s_app_owns_porta.load();
     int  unread   = AppSettings::email_unread_total.load();
-    bool want     = (!app_owns && unread > 0);
+    bool want     = (!app_owns && unread > 0 && _inActiveWindow());
 
     if (!want) {
         if (_active) _standDown();
