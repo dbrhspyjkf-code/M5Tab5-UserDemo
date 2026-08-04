@@ -48,6 +48,12 @@ void AppIdleScreen::onCreate() {}
 
 void AppIdleScreen::onResume() {}
 
+void AppIdleScreen::dismiss()
+{
+    lv_display_trigger_activity(NULL);
+    _hide();
+}
+
 void AppIdleScreen::onPause()
 {
     _hide();

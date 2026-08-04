@@ -13,6 +13,10 @@ class TvActionTests(unittest.TestCase):
         for service in ["turn_on", "turn_off", "volume_down", "volume_up", "volume_mute", "select_source"]:
             self.assertIn(service, SRC)
 
+    def test_sonos_uses_current_home_assistant_entity(self):
+        self.assertIn('SONOS_EID = "media_player.ke_ting_ke_ting"', SRC)
+        self.assertNotIn('SONOS_EID = "media_player.ke_ting"', SRC)
+
     def test_tv_card_renders_sources(self):
         view = Path("app/apps/app_ha/view/view.cpp").read_text()
         tv_section = view.split("_build_tv_card", 1)[1].split("// ─── Build tab content", 1)[0]

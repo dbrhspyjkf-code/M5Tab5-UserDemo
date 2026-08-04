@@ -13,6 +13,19 @@ void xiaozhi_start_task(void);
 /** Activate xiaozhi's dedicated LVGL screen on the bridge display. */
 void xiaozhi_activate_screen(void);
 
+/** Hide xiaozhi's dedicated screen while keeping the audio pipeline alive.
+ *  Counterpart of xiaozhi_activate_screen(). Safe to call from any context. */
+void xiaozhi_deactivate_screen(void);
+
+/** Return the current xiaozhi DeviceState (kDeviceStateUnknown=0 before init). */
+int xiaozhi_get_device_state(void);
+
+/** Ensure output + opus tasks are running (idempotent if already started). */
+void xiaozhi_ensure_output(void);
+
+/** Stop only the output + opus tasks, keeping input + AFE alive. */
+void xiaozhi_stop_output(void);
+
 /**
  * Suspend xiaozhi when leaving the app: stop the audio input/output/opus tasks,
  * clear their queues, and close the network/audio channel. This stops the mic
@@ -153,4 +166,15 @@ void xiaozhi_close_audio_channel(void);
  * supported. The string is owned by xiaozhi; copy if needed.
  */
 void xiaozhi_register_stt_callback(std::function<void(const std::string&)> cb);
+
+/**
+ * Register a callback invoked when any wake word is detected. Runs on xiaozhi's
+ * main task. Only one callback supported; pass nullptr to unregister. Use this
+ * to react to wake words globally (e.g. open the xiaozhi app).
+ */
+void xiaozhi_register_wake_callback(std::function<void(const std::string&)> cb);
+
+// Internal helper invoked from Application::HandleWakeWordDetectedEvent.
+// Not part of the stable public API.
+void xiaozhi_ctl_fire_wake_callback(const std::string& word);
 #endif

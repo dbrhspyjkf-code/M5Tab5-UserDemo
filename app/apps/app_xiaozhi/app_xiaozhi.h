@@ -27,6 +27,8 @@ public:
 private:
     std::function<void()> _close_cb;
     bool _initialized = false;
+    bool _was_active = false;   // set true once conversation begins, cleared on open
+    int64_t _opened_at_ms = 0;  // timestamp of last onOpen, for min-display grace period
     lv_indev_t* _gesture_indev = nullptr;
 
     void _installSwipeGesture();

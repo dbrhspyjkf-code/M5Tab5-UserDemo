@@ -21,6 +21,7 @@
 #include "app_email_led/app_email_led.h"
 #include "app_stocks/app_stocks.h"
 #include "app_idle_screen/app_idle_screen.h"
+#include "xiaozhi_ctl.h"
 /* Header files locator (Don't remove) */
 
 // Start boot anim app and wait for it to finish
@@ -45,6 +46,11 @@ inline void on_startup_anim()
  */
 inline void on_install_apps()
 {
+    // ── Start xiaozhi's audio task at boot ───────────────────────────────
+    // Audio pipeline + AFE wake word stay resident for the life of the
+    // device. xiaozhi_start_task() is idempotent.
+    xiaozhi_start_task();
+
     // ── Create instances and save raw pointers before moving into Mooncake ──
     auto home_uptr = std::make_unique<AppHome>();
     AppHome* home  = home_uptr.get();
@@ -69,6 +75,9 @@ inline void on_install_apps()
 
     auto st_uptr = std::make_unique<AppStocks>();
     AppStocks* stocks = st_uptr.get();
+
+    auto is_uptr = std::make_unique<AppIdleScreen>();
+    AppIdleScreen* idle = is_uptr.get();
 
     // ── Install (AppHome auto-opens via onCreate → open()) ──
     mooncake::GetMooncake().installApp(std::move(home_uptr));
@@ -114,6 +123,24 @@ inline void on_install_apps()
         settings->openEmailPage();
     });
 
+    // ── Global wake-word callback ─────────────────────────────────────
+    // When the always-on AFE detects "你好小智", switch to the xiaozhi app
+    // regardless of which screen is currently active. The callback runs on
+    // xiaozhi's main task, so defer to LVGL thread via lv_async_call.
+    struct WakeOpenContext {
+        AppIdleScreen* idle;
+        int xz_id;
+    };
+    static WakeOpenContext wake_open_ctx;
+    wake_open_ctx = {idle, xz_id};
+    xiaozhi_register_wake_callback([](const std::string&) {
+        lv_async_call([](void* ud) {
+            auto* ctx = static_cast<WakeOpenContext*>(ud);
+            if (ctx && ctx->idle) ctx->idle->dismiss();
+            if (ctx) mooncake::GetMooncake().openApp(ctx->xz_id);
+        }, &wake_open_ctx);
+    });
+
     // ── Register apps in the home screen ──
     home->addApp("智能家居", ha_id);
     home->addApp("小  智", xz_id);
@@ -136,7 +163,6 @@ inline void on_install_apps()
     // ── Idle screensaver WorkerAbility (always-on) ──
     // 20s 无操作后全屏显示时间/日期/天气, 碰屏幕即关闭。天气数据复用 AppHome
     // 状态栏已有的缓存, 不额外发请求。
-    auto is_uptr = std::make_unique<AppIdleScreen>();
     is_uptr->setHomeApp(home);
     int is_id = mooncake::GetMooncake().extensionManager()->createAbility(std::move(is_uptr));
     mooncake::GetMooncake().extensionManager()->resumeWorkerAbility(is_id);

@@ -16,6 +16,7 @@ public:
     // AppHome already fetches+caches weather for its own status bar; reuse
     // that instead of running a second HTTP poller.
     void setHomeApp(AppHome* home) { _home = home; }
+    void dismiss();
 
     void onCreate()  override;
     void onResume()  override;

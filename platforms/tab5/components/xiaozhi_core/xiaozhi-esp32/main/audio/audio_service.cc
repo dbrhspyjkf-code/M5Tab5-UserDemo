@@ -122,67 +122,122 @@ void AudioService::Initialize(AudioCodec* codec) {
     esp_timer_create(&audio_power_timer_args, &audio_power_timer_);
 }
 
-void AudioService::Start() {
+void AudioService::Start(StartMode mode) {
     service_stopped_ = false;
-    xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING | AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+    // Only clear the testing bit. AS_EVENT_WAKE_WORD_RUNNING and
+    // AS_EVENT_AUDIO_PROCESSOR_RUNNING are managed by their respective
+    // Enable…() functions — clearing them here breaks always-on wake word.
+    xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING);
 
     esp_timer_start_periodic(audio_power_timer_, 1000000);
 
+    // Input task + AFE are persistent — only spawn the first time.
+    if (audio_input_task_handle_ == nullptr) {
 #if CONFIG_USE_AUDIO_PROCESSOR
-    /* Start the audio input task */
-    xTaskCreatePinnedToCore([](void* arg) {
-        AudioService* audio_service = (AudioService*)arg;
-        audio_service->AudioInputTask();
-        vTaskDelete(NULL);
-    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
-
-    /* Start the audio output task */
-    xTaskCreate([](void* arg) {
-        AudioService* audio_service = (AudioService*)arg;
-        audio_service->AudioOutputTask();
-        vTaskDelete(NULL);
-    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
+        xTaskCreatePinnedToCore([](void* arg) {
+            AudioService* audio_service = (AudioService*)arg;
+            audio_service->AudioInputTask();
+            vTaskDelete(NULL);
+        }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
 #else
-    /* Start the audio input task */
-    xTaskCreate([](void* arg) {
-        AudioService* audio_service = (AudioService*)arg;
-        audio_service->AudioInputTask();
-        vTaskDelete(NULL);
-    }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
-
-    /* Start the audio output task */
-    // 2048 bytes overflowed in practice (Guru Meditation: Stack protection
-    // fault in "audio_output", stack bounds only 2044 bytes) while handling
-    // a TTS playback path. Matches the CONFIG_USE_AUDIO_PROCESSOR branch's
-    // already-proven 2048*2 size above.
-    xTaskCreate([](void* arg) {
-        AudioService* audio_service = (AudioService*)arg;
-        audio_service->AudioOutputTask();
-        vTaskDelete(NULL);
-    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
+        xTaskCreate([](void* arg) {
+            AudioService* audio_service = (AudioService*)arg;
+            audio_service->AudioInputTask();
+            vTaskDelete(NULL);
+        }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
 #endif
+    }
 
-    /* Start the opus codec task */
-    xTaskCreate([](void* arg) {
-        AudioService* audio_service = (AudioService*)arg;
-        audio_service->OpusCodecTask();
-        vTaskDelete(NULL);
-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+    // Output + opus tasks are lazily created the first time a conversation begins.
+    if (mode == StartMode::kAll) {
+        /* Start the audio output task */
+        if (audio_output_task_handle_ == nullptr) {
+#if CONFIG_USE_AUDIO_PROCESSOR
+            xTaskCreate([](void* arg) {
+                AudioService* audio_service = (AudioService*)arg;
+                audio_service->AudioOutputTask();
+                vTaskDelete(NULL);
+            }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
+#else
+            xTaskCreate([](void* arg) {
+                AudioService* audio_service = (AudioService*)arg;
+                audio_service->AudioOutputTask();
+                vTaskDelete(NULL);
+            }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
+#endif
+        }
+
+        /* Start the opus codec task */
+        if (opus_codec_task_handle_ == nullptr) {
+            xTaskCreate([](void* arg) {
+                AudioService* audio_service = (AudioService*)arg;
+                audio_service->OpusCodecTask();
+                vTaskDelete(NULL);
+            }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+        }
+    }
 }
 
-void AudioService::Stop() {
+void AudioService::Stop(StopMode mode) {
     esp_timer_stop(audio_power_timer_);
-    service_stopped_ = true;
-    xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING |
-        AS_EVENT_WAKE_WORD_RUNNING |
-        AS_EVENT_AUDIO_PROCESSOR_RUNNING);
 
-    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-    audio_encode_queue_.clear();
-    audio_decode_queue_.clear();
-    audio_playback_queue_.clear();
-    audio_testing_queue_.clear();
-    audio_queue_cv_.notify_all();
+    // Only set the "should exit" signals when stopping input task (kAll).
+    // kOutputOnly keeps audio_input_task + AFE alive.
+    if (mode == StopMode::kAll) {
+        service_stopped_ = true;
+        xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING |
+            AS_EVENT_WAKE_WORD_RUNNING |
+            AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        if (mode == StopMode::kAll || mode == StopMode::kOutputOnly) {
+            audio_encode_queue_.clear();
+            audio_testing_queue_.clear();
+        }
+        audio_decode_queue_.clear();
+        audio_playback_queue_.clear();
+        audio_queue_cv_.notify_all();
+    }
+
+    if (mode == StopMode::kOutputOnly) {
+        if (codec_) codec_->EnableOutput(false);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        if (audio_output_task_handle_) {
+            vTaskDelete(audio_output_task_handle_);
+            audio_output_task_handle_ = nullptr;
+        }
+        if (opus_codec_task_handle_) {
+            vTaskDelete(opus_codec_task_handle_);
+            opus_codec_task_handle_ = nullptr;
+        }
+        return;
+    }
+
+    if (audio_input_task_handle_) {
+        vTaskDelete(audio_input_task_handle_);
+        audio_input_task_handle_ = nullptr;
+    }
+    if (audio_output_task_handle_) {
+        vTaskDelete(audio_output_task_handle_);
+        audio_output_task_handle_ = nullptr;
+    }
+    if (opus_codec_task_handle_) {
+        vTaskDelete(opus_codec_task_handle_);
+        opus_codec_task_handle_ = nullptr;
+    }
+}
+
+void AudioService::SetMicEnabled(bool enabled) {
+    if (!codec_) return;
+    if (enabled && !codec_->input_enabled()) {
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+        codec_->EnableInput(true);
+    } else if (!enabled && codec_->input_enabled()) {
+        codec_->EnableInput(false);
+    }
 }
 
 bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples) {
@@ -555,7 +610,7 @@ void AudioService::EnableWakeWordDetection(bool enable) {
         return;
     }
 
-    ESP_LOGD(TAG, "%s wake word detection", enable ? "Enabling" : "Disabling");
+    ESP_LOGI(TAG, "%s wake word detection", enable ? "Enabling" : "Disabling");
     if (enable) {
         if (!wake_word_initialized_) {
             if (!wake_word_->Initialize(codec_, models_list_)) {
@@ -564,8 +619,7 @@ void AudioService::EnableWakeWordDetection(bool enable) {
             }
             wake_word_initialized_ = true;
         }
-        // Reset input resampler to clear cached data from previous mode (e.g. AudioProcessor)
-        // This prevents buffer overflow when switching between different feed sizes
+        // Reset input resampler to clear cached data from previous mode
         {
             std::lock_guard<std::mutex> lock(input_resampler_mutex_);
             if (input_resampler_ != nullptr) {

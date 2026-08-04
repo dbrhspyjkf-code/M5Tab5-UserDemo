@@ -105,6 +105,13 @@ void Tab5BridgeLcdDisplay::ActivateScreen()
     lv_screen_load(scr_);
 }
 
+void Tab5BridgeLcdDisplay::DeactivateScreen()
+{
+    // The active screen is restored by the AppXiaoZhi close callback
+    // (home->restoreScreen()). This method exists solely as an
+    // entrypoint for xiaozhi_ctl; no LVGL action is needed here.
+}
+
 // ─── UI construction ──────────────────────────────────────────────────────────
 
 void Tab5BridgeLcdDisplay::BuildRichUi()

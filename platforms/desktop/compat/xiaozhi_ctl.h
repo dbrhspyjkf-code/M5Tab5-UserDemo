@@ -12,6 +12,10 @@ extern "C" {
 void xiaozhi_start_task(void);
 bool xiaozhi_is_initialized(void);
 void xiaozhi_activate_screen(void);
+void xiaozhi_deactivate_screen(void);
+int  xiaozhi_get_device_state(void);
+void xiaozhi_ensure_output(void);
+void xiaozhi_stop_output(void);
 void xiaozhi_suspend(void);
 void xiaozhi_resume(void);
 void xiaozhi_set_battery_percent(int percent);
@@ -22,4 +26,12 @@ bool xiaozhi_is_active(void);
 
 #ifdef __cplusplus
 }
+#endif
+
+#ifdef __cplusplus
+#include <functional>
+#include <string>
+void xiaozhi_register_stt_callback(std::function<void(const std::string&)> cb);
+void xiaozhi_register_wake_callback(std::function<void(const std::string&)> cb);
+void xiaozhi_ctl_fire_wake_callback(const std::string& word);
 #endif

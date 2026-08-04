@@ -83,6 +83,16 @@ struct AudioServiceCallbacks {
 };
 
 
+enum class StartMode {
+    kAll,         // input + output + opus tasks (legacy "warm everything")
+    kInputOnly,   // only audio_input_task + AFE; output tasks stay stopped
+};
+
+enum class StopMode {
+    kAll,         // stop everything (legacy default)
+    kOutputOnly,  // stop only audio_output_task + opus_codec_task, KEEP input/AFE
+};
+
 enum AudioTaskType {
     kAudioTaskTypeEncodeToSendQueue,
     kAudioTaskTypeEncodeToTestingQueue,
@@ -108,8 +118,9 @@ public:
     ~AudioService();
 
     void Initialize(AudioCodec* codec);
-    void Start();
-    void Stop();
+    void Start(StartMode mode = StartMode::kAll);
+    void Stop(StopMode mode = StopMode::kAll);
+    void SetMicEnabled(bool enabled);
     void EncodeWakeWord();
     std::unique_ptr<AudioStreamPacket> PopWakeWordPacket();
     const std::string& GetLastWakeWord() const;

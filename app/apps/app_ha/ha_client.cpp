@@ -168,12 +168,13 @@ void HaClient::callService(const std::string& domain, const std::string& service
     body += "}";
 
     std::string token = _cfg.token;
-    _start_worker([url, body, token]() {
+    _start_worker([url, body, token, entity_id, service]() {
         auto resp = GetHAL()->httpPost(url, body,
             {{"Authorization", "Bearer " + token},
              {"Content-Type", "application/json"}});
         if (!resp.ok) {
-            mclog::tagWarn(_tag, "service call failed: {} {}", url, resp.status);
+            mclog::tagWarn(_tag, "service call failed: {} entity={} status={}",
+                           service, entity_id, resp.status);
         }
     });
 
@@ -183,14 +184,13 @@ void HaClient::callService(const std::string& domain, const std::string& service
 
 void HaClient::_start_worker(std::function<void()> fn)
 {
-    // Workers capture url/body/token by value (no shared state), and only
-    // call GetHAL() which is a singleton that outlives this client. Detach is
-    // safe and avoids accumulating joinable threads.
     if (!_running.load()) return;
-    try {
-        std::thread(std::move(fn)).detach();
-    } catch (const std::system_error& e) {
-        mclog::tagWarn(_tag, "worker thread creation failed (OOM?): {}", e.what());
+
+    bool ok = GetHAL()->tryRunDetached([fn = std::move(fn)]() {
+        fn();
+    });
+    if (!ok) {
+        mclog::tagWarn(_tag, "service worker spawn failed");
     }
 }
 

@@ -33,12 +33,27 @@ static SemaphoreHandle_t s_open_sem  = nullptr;
 static std::atomic<bool> s_open_done{false};
 static std::atomic<bool> s_open_ok{false};
 
+// Wake callback: registered externally (app_installer), fired on every
+// wake-word event in addition to the normal protocol flow.
+static std::function<void(const std::string&)> s_wake_callback;
+
 static void xiaozhi_task_fn(void*)
 {
     auto& app = Application::GetInstance();
     app.Initialize();
     s_initialized = true;
     s_running = true;
+
+    // Always-on: keep the input + AFE pipeline running for the life of the
+    // device. Output + opus tasks are spun up lazily when a conversation begins.
+    app.GetAudioService().Start(StartMode::kInputOnly);
+
+    // Ensure the wake word is enabled even if no models were downloaded yet.
+    if (!app.GetAudioService().IsAfeWakeWord()) {
+        app.GetAudioService().SetLocalWakeWord();
+    }
+    app.GetAudioService().EnableWakeWordDetection(true);
+
     app.Run();
     vTaskDelete(nullptr);
 }
@@ -57,15 +72,9 @@ extern "C" void xiaozhi_suspend(void)
     s_running = false;
     ESP_LOGI(TAG, "suspend: stopping audio service + closing protocol");
     auto& app = Application::GetInstance();
-    // Mirror the OTA-failure path (Application::UpgradeFirmware): just stop the
-    // audio service (frees the input/output/opus task stacks + stops the mic/AFE),
-    // keeping the protocol ALIVE. Do NOT ResetProtocol(): with protocol_ == null,
-    // HandleWakeWordDetectedEvent()/ToggleChat() early-return, so a reset would
-    // make xiaozhi unable to wake or talk after resume. Runs on the xiaozhi main
-    // task so it is serialized with the event loop.
     app.Schedule([&app]() {
         app.AbortSpeaking(kAbortReasonNone);
-        app.GetAudioService().Stop();   // stop input/output/opus tasks, clear queues
+        app.GetAudioService().Stop(StopMode::kAll);   // stop everything
     });
 }
 
@@ -77,8 +86,8 @@ extern "C" void xiaozhi_resume(void)
     auto& app = Application::GetInstance();
     app.Schedule([&app]() {
         auto& as = app.GetAudioService();
-        as.Start();                      // recreate input/output/opus tasks
-        as.EnableWakeWordDetection(true);// start listening for "你好小智" again
+        as.Start(StartMode::kAll);        // full input+output+opus
+        as.EnableWakeWordDetection(true);
         app.SetDeviceState(kDeviceStateIdle);
     });
 }
@@ -325,5 +334,53 @@ void xiaozhi_close_audio_channel(void)
         if (p != nullptr && p->IsAudioChannelOpened()) {
             p->CloseAudioChannel();
         }
+    });
+}
+
+extern "C" void xiaozhi_deactivate_screen(void)
+{
+    auto* display = static_cast<Tab5BridgeLcdDisplay*>(
+        Board::GetInstance().GetDisplay()
+    );
+    if (display) {
+        display->DeactivateScreen();
+    }
+}
+
+extern "C" int xiaozhi_get_device_state(void)
+{
+    if (!s_initialized) return 0;  // kDeviceStateUnknown
+    return (int)Application::GetInstance().GetDeviceState();
+}
+
+// C++-only wake callback — fires in addition to the internal protocol flow.
+void xiaozhi_register_wake_callback(std::function<void(const std::string&)> cb)
+{
+    s_wake_callback = std::move(cb);
+}
+
+// Internal helper: fired from Application::HandleWakeWordDetectedEvent.
+void xiaozhi_ctl_fire_wake_callback(const std::string& word)
+{
+    if (s_wake_callback) {
+        s_wake_callback(word);
+    }
+}
+
+extern "C" void xiaozhi_ensure_output(void)
+{
+    if (!s_initialized) return;
+    auto& app = Application::GetInstance();
+    app.GetAudioService().Start(StartMode::kAll);
+}
+
+extern "C" void xiaozhi_stop_output(void)
+{
+    // Tasks stay alive — onClose only needs to deactivate the screen.
+    // Abort any in-flight conversation so the server-side cancels TTS/VAD.
+    if (!s_initialized) return;
+    auto& app = Application::GetInstance();
+    app.Schedule([&app]() {
+        app.AbortSpeaking(kAbortReasonNone);
     });
 }

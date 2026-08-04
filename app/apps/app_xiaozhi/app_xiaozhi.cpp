@@ -1,5 +1,6 @@
 #include "app_xiaozhi.h"
 #include "xiaozhi_ctl.h"
+#include "device_state.h"
 
 #include <mooncake_log.h>
 #include <hal/hal.h>
@@ -21,14 +22,10 @@ void AppXiaoZhi::onCreate()
 
 void AppXiaoZhi::onOpen()
 {
-    mclog::tagInfo(TAG, "open — start (if needed) + activate xiaozhi screen");
-    // Spawn the xiaozhi task on first open (guarded internally so repeated
-    // opens don't spawn it again).
     xiaozhi_start_task();
-    // Resume the audio pipeline if a previous close suspended it (no-op on the
-    // very first open / while already running).
-    xiaozhi_resume();
     xiaozhi_activate_screen();
+    _was_active = false;
+    _opened_at_ms = esp_timer_get_time() / 1000;
     _installSwipeGesture();
 }
 
@@ -43,7 +40,6 @@ void AppXiaoZhi::onRunning()
         if (hal) {
             hal->updatePowerMonitorData();
             float v = hal->powerMonitorData.busVoltage;
-            // NP-F550 7.4 V pack: 8.4 V = 100 %, 6.0 V = 0 %
             int pct = -1;
             if (v > 0.5f) {
                 if      (v >= 8.4f) pct = 100;
@@ -53,15 +49,25 @@ void AppXiaoZhi::onRunning()
             xiaozhi_set_battery_percent(pct);
         }
     }
+
+    // Auto-dismiss when conversation ends (state→Idle after being active).
+    // 3 s minimum display time prevents the initial wake-word echo from
+    // closing the app before the user can interact.
+    if (_was_active && now_ms - _opened_at_ms > 3000) {
+        if (xiaozhi_get_device_state() == kDeviceStateIdle) {
+            mclog::tagInfo(TAG, "auto-dismiss after conversation ended");
+            close();
+            return;
+        }
+    }
+    if (xiaozhi_is_active()) {
+        _was_active = true;
+    }
 }
 
 void AppXiaoZhi::onClose()
 {
-    mclog::tagInfo(TAG, "close — suspend xiaozhi + restore home screen");
-    // Fully suspend the audio pipeline so it stops listening/talking in the
-    // background and frees its task stacks + DMA. Otherwise a heavy app like HA
-    // could exhaust internal RAM and crash/reboot the device.
-    xiaozhi_suspend();
+    xiaozhi_deactivate_screen();
     _removeSwipeGesture();
     if (_close_cb) {
         _close_cb();

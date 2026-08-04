@@ -20,6 +20,7 @@ public:
     ~Tab5BridgeLcdDisplay() override;
 
     void ActivateScreen();
+    void DeactivateScreen();  // restores control to Mooncake (screen restored by AppHome callback)
     lv_obj_t* GetScreen() const { return scr_; }
 
     // ── Overrides ──────────────────────────────────────────────────────────────

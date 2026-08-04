@@ -341,8 +341,8 @@ void AppHome::_fetch_weather()
     // Home has no HA client, so read the HA weather entity directly via the REST
     // API (GET /api/states/<entity> with the shared token). The worker only
     // writes strings — it must not touch LVGL — onRunning copies them to labels.
-    std::string url = "http://" + GetHAL()->getConfig("ha_host", "")
-                    + ":8123/api/states/" + ha_weather::ENTITY;
+    std::string url = ha_weather::baseUrl(GetHAL()->getConfig("ha_host", ""))
+                    + "/api/states/" + ha_weather::ENTITY;
     std::string tok = ha_weather::token();
     GetHAL()->tryRunDetached([this, url, tok]() {
         auto resp = GetHAL()->httpGet(url, {{"Authorization", std::string("Bearer ") + tok}});
@@ -502,7 +502,7 @@ void AppHome::_openWeatherDialog()
 
 void AppHome::_fetchWeatherDetail()
 {
-    std::string base = "http://" + GetHAL()->getConfig("ha_host", "") + ":8123";
+    std::string base = ha_weather::baseUrl(GetHAL()->getConfig("ha_host", ""));
     std::string tok  = std::string("Bearer ") + ha_weather::token();
     GetHAL()->tryRunDetached([this, base, tok]() {
         std::string out;
@@ -801,7 +801,7 @@ void AppHome::_doNetworkSave()
     auto* hal = GetHAL();
     std::string ssid  = lv_textarea_get_text(_net_ssid);
     std::string pass  = lv_textarea_get_text(_net_pass);
-    std::string host  = lv_textarea_get_text(_net_host);
+    std::string host  = ha_weather::hostOnly(lv_textarea_get_text(_net_host));
     if (ssid.empty()) {
         lv_label_set_text(_net_status, "请填写 WiFi 名称");
         return;

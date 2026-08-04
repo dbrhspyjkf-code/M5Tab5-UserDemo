@@ -5,6 +5,9 @@ from pathlib import Path
 VIEW_H = Path("app/apps/app_ha/view/view.h").read_text()
 VIEW = Path("app/apps/app_ha/view/view.cpp").read_text()
 APP = Path("app/apps/app_ha/app_ha.cpp").read_text()
+HOME = Path("app/apps/app_home/app_home.cpp").read_text()
+HA_WEATHER = Path("app/apps/app_ha/ha_weather.h").read_text()
+HA_CLIENT = Path("app/apps/app_ha/ha_client.cpp").read_text()
 
 
 class HeaderAndLightsTests(unittest.TestCase):
@@ -32,6 +35,20 @@ class HeaderAndLightsTests(unittest.TestCase):
         self.assertIn("_tab5_battery_from_power", APP)
         self.assertIn("LV_SYMBOL_BATTERY", VIEW)
         self.assertIn("_lbl_battery", VIEW_H)
+
+    def test_ha_urls_accept_host_with_or_without_port(self):
+        self.assertIn("baseUrl(", HA_WEATHER)
+        self.assertIn('host.rfind("http://", 0)', HA_WEATHER)
+        self.assertIn('host.rfind("https://", 0)', HA_WEATHER)
+        self.assertIn('host += ":8123"', HA_WEATHER)
+        self.assertNotIn('"http://" + ha_host()  + ":8123"', APP)
+        self.assertNotIn('"http://" + GetHAL()->getConfig("ha_host", "")', HOME)
+
+    def test_ha_service_calls_use_hal_detached_worker_on_device(self):
+        worker = HA_CLIENT.split("void HaClient::_start_worker", 1)[1]
+        self.assertIn("GetHAL()->tryRunDetached", worker)
+        self.assertIn("service worker spawn failed", worker)
+        self.assertNotIn("std::thread(std::move(fn)).detach", worker)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,33 @@ namespace ha_weather {
 // public fork, since revoked).
 inline std::string token() { return GetHAL()->getConfig("ha_token", LOCAL_HA_TOKEN_DEFAULT); }
 
+inline std::string _strip_scheme_path(std::string host)
+{
+    if (host.rfind("http://", 0) == 0) host.erase(0, 7);
+    else if (host.rfind("https://", 0) == 0) host.erase(0, 8);
+
+    auto slash = host.find('/');
+    if (slash != std::string::npos) host.erase(slash);
+    while (!host.empty() && (host.back() == ' ' || host.back() == '\t')) host.pop_back();
+    while (!host.empty() && (host.front() == ' ' || host.front() == '\t')) host.erase(0, 1);
+    return host;
+}
+
+inline std::string hostOnly(const std::string& input)
+{
+    std::string host = _strip_scheme_path(input);
+    auto colon = host.find(':');
+    if (colon != std::string::npos) host.erase(colon);
+    return host;
+}
+
+inline std::string baseUrl(const std::string& input)
+{
+    std::string host = _strip_scheme_path(input);
+    if (host.find(':') == std::string::npos) host += ":8123";
+    return "http://" + host;
+}
+
 // Local home forecast entity (和风天气 HeWeather, °C, has temperature + humidity).
 inline const char* ENTITY = "weather.he_feng_tian_qi_heweather";
 

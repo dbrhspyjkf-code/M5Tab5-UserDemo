@@ -9,6 +9,7 @@
 #include "mcp_server.h"
 #include "assets.h"
 #include "settings.h"
+#include "xiaozhi_ctl.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -71,7 +72,6 @@ void Application::Initialize() {
     // Setup the audio service
     auto codec = board.GetAudioCodec();
     audio_service_.Initialize(codec);
-    audio_service_.Start();
 
     AudioServiceCallbacks callbacks;
     callbacks.on_send_queue_available = [this]() {
@@ -736,6 +736,7 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
     // Switch to performance mode before connecting to reduce latency
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    xiaozhi_ensure_output();
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
@@ -795,12 +796,15 @@ void Application::HandleStopListeningEvent() {
 }
 
 void Application::HandleWakeWordDetectedEvent() {
+    auto wake_word = audio_service_.GetLastWakeWord();
+    // Fire external wake callback (e.g. app_installer to open xiaozhi app).
+    xiaozhi_ctl_fire_wake_callback(wake_word);
+
     if (!protocol_) {
         return;
     }
 
     auto state = GetDeviceState();
-    auto wake_word = audio_service_.GetLastWakeWord();
     ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);
 
     if (state == kDeviceStateIdle) {
@@ -849,6 +853,7 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     // Switch to performance mode before connecting to reduce latency
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    xiaozhi_ensure_output();
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
@@ -933,9 +938,12 @@ void Application::HandleStateChangedEvent() {
 
             if (listening_mode_ != kListeningModeRealtime) {
                 audio_service_.EnableVoiceProcessing(false);
-                // Only AFE wake word can be detected in speaking mode
-                audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
             }
+            // Disable wake word during TTS playback — the AFE can't detect
+            // speech through the speaker output anyway (AEC is disabled for
+            // memory reasons), and the AFE's background CPU load causes audio
+            // stuttering on ESP32-P4.
+            audio_service_.EnableWakeWordDetection(false);
             audio_service_.ResetDecoder();
             break;
         case kDeviceStateWifiConfiguring:

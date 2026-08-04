@@ -1596,11 +1596,15 @@ void AppSettings::fetchEmail()
         email_fetching.store(false);
     });
     if (!spawned) {
-        // 之前这里只 store(false) 不设 error → UI 永远"加载中". 修.
         mclog::tagWarn(_tag, "emailFetch: tryRunDetached failed (pthread_create?)");
         email_error.store(true);
         email_error_msg = "本地线程创建失败 (内存不足?)";
-        email_fetching.store(false);
+        // Do NOT reset email_fetching here — that would allow the next
+        // onRunning frame (~16 ms later) to call fetchEmail() again, creating
+        // a tight retry loop that burns CPU and prevents the idle task from
+        // ever freeing memory. Keep the flag set; the worker (if ever spawned)
+        // will clear it on completion, and the 60 s poll cycle will naturally
+        // retry later.
     }
 }
 
