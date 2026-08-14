@@ -66,6 +66,8 @@ public:
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
     HttpResponse_t httpPost(const std::string& url, const std::string& body,
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
+    HttpResponse_t httpPut(const std::string& url, const std::string& body,
+        const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
 
 private:
     uint8_t _current_lcd_brightness = 100;

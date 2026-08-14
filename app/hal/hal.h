@@ -401,6 +401,11 @@ public:
     {
         return {};
     }
+    virtual HttpResponse_t httpPut(const std::string& url, const std::string& body,
+        const std::vector<std::pair<std::string, std::string>>& headers = {})
+    {
+        return {};
+    }
 
     /* ------------------------------ UART monitor ------------------------------ */
     struct UartMonitorData_t {

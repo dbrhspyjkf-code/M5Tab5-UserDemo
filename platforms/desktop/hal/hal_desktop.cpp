@@ -292,3 +292,40 @@ hal::HalBase::HttpResponse_t HalDesktop::httpPost(
     curl_easy_cleanup(curl);
     return resp;
 }
+
+hal::HalBase::HttpResponse_t HalDesktop::httpPut(
+    const std::string& url,
+    const std::string& put_data,
+    const std::vector<std::pair<std::string, std::string>>& headers)
+{
+    HttpResponse_t resp;
+    CURL* curl = curl_easy_init();
+    if (!curl) return resp;
+
+    std::string body;
+    struct curl_slist* hdr_list = nullptr;
+    for (auto& [k, v] : headers)
+        hdr_list = curl_slist_append(hdr_list, (k + ": " + v).c_str());
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdr_list);
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, put_data.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)put_data.size());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res == CURLE_OK) {
+        long code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+        resp.status = (int)code;
+        resp.ok     = (resp.status >= 200 && resp.status < 300);
+        resp.body   = std::move(body);
+    }
+
+    curl_slist_free_all(hdr_list);
+    curl_easy_cleanup(curl);
+    return resp;
+}

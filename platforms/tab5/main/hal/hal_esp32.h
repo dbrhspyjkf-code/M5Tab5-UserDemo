@@ -102,6 +102,8 @@ public:
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
     HttpResponse_t httpPost(const std::string& url, const std::string& body,
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
+    HttpResponse_t httpPut(const std::string& url, const std::string& body,
+        const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
 
 private:
     void set_gpio_output_capability();

@@ -107,3 +107,42 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPost(
     esp_http_client_cleanup(client);
     return resp;
 }
+
+hal::HalBase::HttpResponse_t HalEsp32::httpPut(
+    const std::string& url,
+    const std::string& put_data,
+    const std::vector<std::pair<std::string, std::string>>& headers)
+{
+    HttpResponse_t resp;
+    std::string body;
+    body.reserve(512);
+
+    esp_http_client_config_t config = {};
+    config.url            = url.c_str();
+    config.method         = HTTP_METHOD_PUT;
+    config.event_handler  = _http_event_handler;
+    config.user_data      = &body;
+    config.timeout_ms     = 10000;
+    config.buffer_size    = 1024;
+    config.buffer_size_tx = 2048;
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) { mclog::tagWarn(_tag, "init failed"); return resp; }
+
+    for (auto& [k, v] : headers)
+        esp_http_client_set_header(client, k.c_str(), v.c_str());
+
+    esp_http_client_set_post_field(client, put_data.c_str(), (int)put_data.size());
+
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        resp.status = esp_http_client_get_status_code(client);
+        resp.ok     = (resp.status >= 200 && resp.status < 300);
+        resp.body   = std::move(body);
+    } else {
+        mclog::tagWarn(_tag, "PUT {} failed: {}", url, esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+    return resp;
+}
