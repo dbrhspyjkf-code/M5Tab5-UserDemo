@@ -95,6 +95,7 @@ void AppReachy::onCreate() {
 }
 
 void AppReachy::onOpen() {
+    _open_generation.fetch_add(1);
     if (_scr) {
         lv_screen_load(_scr);
         _installSwipeGesture();
@@ -105,6 +106,7 @@ void AppReachy::onOpen() {
 }
 
 void AppReachy::onClose() {
+    _open_generation.fetch_add(1);
     _removeSwipeGesture();
     if (_close_cb) _close_cb();
     // LVGL screen is destroyed by the framework when we close the app.
@@ -120,7 +122,8 @@ void AppReachy::onRunning() {
     // 1) Drain any completed background fetch into the UI.
     bool fetched_now = _fetched_ok.load();
     uint32_t fetched_at = _fetched_at_ms.load();
-    if (fetched_now && fetched_at != 0 && _rendered_at_ms != fetched_at) {
+    if (fetched_now && fetched_at != 0 && _rendered_at_ms != fetched_at &&
+        _completed_generation.load() == _open_generation.load()) {
         // Re-render the active tab from the cache.
         switch (_active) {
         case Tab::Status: _renderStatus(); break;
@@ -173,6 +176,7 @@ void AppReachy::_buildUI() {
 }
 
 void AppReachy::_requestClose() {
+    _open_generation.fetch_add(1);
     if (_close_cb) _close_cb();
 }
 
@@ -262,7 +266,6 @@ void AppReachy::_buildTabBar() {
 }
 
 void AppReachy::_switchTab(Tab t) {
-    if (t == _active) return;
     _active = t;
 
     for (int i = 0; i < (int)Tab::Count; i++) {
@@ -294,7 +297,8 @@ void AppReachy::_refreshActiveTab() {
     // be held during a 10 s timeout, freezing the UI.
     _fetch_inflight.store(true);
     _fetch_pending.store((int)_active);
-    bool ok = GetHAL()->tryRunDetached([this, tab = _active]() {
+    uint32_t generation = _open_generation.load();
+    bool ok = GetHAL()->tryRunDetached([this, tab = _active, generation]() {
         Operation operation;
         if (_operation_pending.load()) {
             {
@@ -358,28 +362,48 @@ void AppReachy::_refreshActiveTab() {
         }
         case Tab::System: {
             auto s = reachy_client::fetchSystemState();
+            reachy_client::Status st;
+            bool need_status;
+            {
+                std::lock_guard<std::mutex> lk(_cache_mutex);
+                need_status = !_has_status;
+            }
+            if (need_status) st = reachy_client::fetchStatus();
             std::lock_guard<std::mutex> lk(_cache_mutex);
             _sys = s;
             _has_sys = true;
-            // We also cached 'status' earlier for the daemon status field;
-            // reuse the last good value if status hasn't been fetched yet
-            // this session.
-            if (!_has_status) {
-                auto st = reachy_client::fetchStatus();
-                std::lock_guard<std::mutex> lk2(_cache_mutex);
+            if (need_status) {
                 _status = st;
                 _has_status = true;
             }
             break;
         }
         case Tab::Logs: {
-            // Logs returns raw JSON; we don't cache it, just expose a refresh
-            // button and let the worker pre-parse if needed. For now do
-            // nothing here — the Logs tab reads fresh on each refresh.
+            auto raw = reachy_client::fetchLogsRaw(200);
+            std::string out;
+            try {
+                auto j = nlohmann::json::parse(raw);
+                if (j.contains("logs") && j["logs"].is_array()) {
+                    for (auto& item : j["logs"]) {
+                        if (!out.empty()) out += "\n";
+                        out += item.value("timestamp", "");
+                        out += "  [" + item.value("level", "") + "]  ";
+                        out += item.value("message", "");
+                    }
+                }
+            } catch (...) { out = "(日志解析失败)"; }
+            std::lock_guard<std::mutex> lk(_cache_mutex);
+            _logs_text = std::move(out);
+            _has_logs = true;
             break;
         }
         default: break;
         }
+        if (generation != _open_generation.load()) {
+            _fetch_inflight.store(false);
+            return;
+        }
+        _completed_generation.store(generation);
         _fetched_ok.store(true);
         _fetched_at_ms.store(GetHAL()->millis());
         _fetch_inflight.store(false);
@@ -733,8 +757,10 @@ void AppReachy::_renderAudio() {
 }
 
 bool AppReachy::_queueOperation(Operation operation) {
+    lv_obj_t* status = _active == Tab::Control ? _ct_status :
+                       _active == Tab::System ? _sy_state : _au_status;
     if (_fetch_inflight.load() || _operation_pending.load()) {
-        if (_au_status) lv_label_set_text(_au_status, "正在处理，请稍候");
+        if (status) lv_label_set_text(status, "正在处理，请稍候");
         return false;
     }
     {
@@ -742,7 +768,7 @@ bool AppReachy::_queueOperation(Operation operation) {
         _pending_operation = std::move(operation);
         _operation_pending.store(true);
     }
-    if (_au_status) lv_label_set_text(_au_status, "处理中…");
+    if (status) lv_label_set_text(status, "处理中…");
     _last_poll_ms = 0;
     return true;
 }
@@ -1011,6 +1037,13 @@ void AppReachy::_renderSystem() {
     setv(_sy_state, sbuf);
     setv(_sy_daemon, has_status ? (st.daemon_state.empty() ? "—" : st.daemon_state)
                                 : std::string("—"));
+    {
+        std::lock_guard<std::mutex> lk(_cache_mutex);
+        if (_operation_result_ready) {
+            setv(_sy_state, _operation_result.ok ? "重启请求已发送" : _operation_result.error);
+            _operation_result_ready = false;
+        }
+    }
 }
 
 void AppReachy::_confirmAndRestart() {
@@ -1049,7 +1082,7 @@ void AppReachy::_confirmOperation(Operation operation, const char* message) {
     lv_obj_set_style_text_font(t, zh_font_lg(), 0);
 
     lv_obj_t* note = lv_label_create(dlg);
-    lv_label_set_text(note, "对话将被中断，机器人头部将复位。\nReachy 大约 5 秒后恢复在线。");
+    lv_label_set_text(note, "此操作可能短暂中断对话或运动。\n确认后将立即发送到 Reachy。");
     lv_obj_set_pos(note, 0, 56);
     lv_obj_set_style_text_color(note, lv_color_hex(C_TEXT2), 0);
     lv_obj_set_style_text_font(note, zh_font_lg(), 0);
@@ -1065,7 +1098,7 @@ void AppReachy::_confirmOperation(Operation operation, const char* message) {
     lv_obj_clear_flag(yes, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(yes, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_t* yes_lbl = lv_label_create(yes);
-    lv_label_set_text(yes_lbl, "重启");
+    lv_label_set_text(yes_lbl, "确认");
     lv_obj_center(yes_lbl);
     lv_obj_set_style_text_color(yes_lbl, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(yes_lbl, zh_font_lg(), 0);
@@ -1136,56 +1169,13 @@ void AppReachy::_buildLogsPage() {
 }
 
 void AppReachy::_renderLogs() {
-    // Logs fetch is heavy — always go async to avoid blocking the LVGL thread.
-    if (_fetch_inflight.load()) return;
-    _fetch_inflight.store(true);
-    if (_lg_text) lv_label_set_text(_lg_text, "(加载中…)");
-    bool ok = GetHAL()->tryRunDetached([this]() {
-        auto raw = reachy_client::fetchLogsRaw(200);
-        if (raw.empty()) {
-            _fetched_ok.store(false);
-            _fetched_at_ms.store(GetHAL()->millis());
-            _fetch_inflight.store(false);
-            if (_lg_text) lv_label_set_text(_lg_text, "(无法连接 Reachy 或无日志)");
-            return;
-        }
-        std::string out;
-        try {
-            auto j = nlohmann::json::parse(raw);
-            if (j.is_array()) {
-                int max = std::min((int)j.size(), 200);
-                for (int i = 0; i < max; i++) {
-                    auto& e = j[i];
-                    std::string ts = e.value("ts", "");
-                    std::string lvl = e.value("level", "");
-                    std::string msg = e.value("msg", "");
-                    if (!out.empty()) out += "\n";
-                    out += ts;
-                    out += "  [";
-                    out += lvl;
-                    out += "]  ";
-                    out += msg;
-                }
-            }
-        } catch (...) {
-            out = "(日志解析失败)";
-        }
-        // Push the result back onto the LVGL thread.
-        auto* ptext = new std::string(std::move(out));
-        lv_async_call([](void* ud) {
-            auto* pair = static_cast<std::pair<AppReachy*, std::string*>*>(ud);
-            if (pair->first->_lg_text) lv_label_set_text(pair->first->_lg_text, pair->second->c_str());
-            delete pair->second;
-            delete pair;
-        }, new std::pair<AppReachy*, std::string*>(this, ptext));
-        _fetched_ok.store(true);
-        _fetched_at_ms.store(GetHAL()->millis());
-        _fetch_inflight.store(false);
-    });
-    if (!ok) {
-        _fetch_inflight.store(false);
-        if (_lg_text) lv_label_set_text(_lg_text, "(后台资源紧张，跳过本次刷新)");
+    std::string text;
+    {
+        std::lock_guard<std::mutex> lk(_cache_mutex);
+        if (!_has_logs) return;
+        text = _logs_text;
     }
+    lv_label_set_text(_lg_text, text.empty() ? "(无日志)" : text.c_str());
 }
 
 // ── Callbacks ──────────────────────────────────────────────────────────────
@@ -1274,7 +1264,8 @@ void AppReachy::_restartCb(lv_event_t* e) {
 
 void AppReachy::_logsRefreshCb(lv_event_t* e) {
     auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
-    self->_renderLogs();
+    self->_last_poll_ms = 0;
+    if (!self->_fetch_inflight.load()) self->_refreshActiveTab();
 }
 
 void AppReachy::_confirmYesCb(lv_event_t* e) {

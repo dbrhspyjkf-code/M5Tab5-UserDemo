@@ -35,6 +35,22 @@ class ReachyLifecycleTests(unittest.TestCase):
         self.assertIn("LV_DIR_TOP", self.source)
         self.assertIn("self->_requestClose()", self.source)
 
+    def test_stale_worker_results_are_generation_guarded(self):
+        self.assertIn("_open_generation", self.header)
+        self.assertIn("_completed_generation", self.header)
+        self.assertIn("generation != _open_generation.load()", self.source)
+
+    def test_logs_worker_only_updates_cache(self):
+        refresh = self.source.split("void AppReachy::_refreshActiveTab", 1)[1]
+        refresh = refresh.split("void AppReachy::_refreshHeader", 1)[0]
+        logs = refresh.split("case Tab::Logs", 1)[1]
+        self.assertIn("_logs_text", logs)
+        self.assertNotIn("lv_label_set_text", logs)
+        render = self.source.split("void AppReachy::_renderLogs", 1)[1]
+        render = render.split("// ── Callbacks", 1)[0]
+        self.assertNotIn("tryRunDetached", render)
+        self.assertNotIn("lv_async_call", render)
+
 
 if __name__ == "__main__":
     unittest.main()

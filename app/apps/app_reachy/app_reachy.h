@@ -148,6 +148,10 @@ private:
     std::atomic<uint32_t> _fetched_at_ms{0};     // last successful fetch stamp
     std::atomic<bool> _fetched_ok{false};        // last fetch result
     uint32_t _rendered_at_ms = 0;                 // last response consumed by LVGL
+    std::atomic<uint32_t> _open_generation{0};
+    std::atomic<uint32_t> _completed_generation{0};
+    std::string _logs_text;
+    bool _has_logs = false;
 
     enum class OperationKind {
         None, SetVolume, SetMic, SetVad, SetBackend, SetVideo, SetVoice,
