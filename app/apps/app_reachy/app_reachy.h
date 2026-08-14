@@ -48,15 +48,15 @@ private:
     static constexpr uint32_t C_ERR       = 0xFF6B6B;
     static constexpr uint32_t C_OK        = 0xA3F7BF;
 
-    enum class Tab : int { Status = 0, Motion = 1, Audio = 2, System = 3, Logs = 4, Count = 5 };
+    enum class Tab : int { Status, Motion, Audio, Control, Chat, System, Logs, Count };
 
     std::function<void()> _close_cb;
 
     // ── UI roots ──────────────────────────────────────────────────────────
     lv_obj_t* _scr = nullptr;
     lv_obj_t* _tab_bar = nullptr;
-    lv_obj_t* _tab_btns[5] = {};
-    lv_obj_t* _tab_pages[5] = {};
+    lv_obj_t* _tab_btns[(int)Tab::Count] = {};
+    lv_obj_t* _tab_pages[(int)Tab::Count] = {};
     Tab       _active = Tab::Status;
     lv_indev_t* _gesture_indev = nullptr;
 
@@ -99,6 +99,19 @@ private:
     lv_obj_t* _au_control       = nullptr;
     lv_obj_t* _au_status        = nullptr;
     int _last_nonzero_volume = 50;
+    // Control tab
+    lv_obj_t* _ct_xiaozhi_btn = nullptr;
+    lv_obj_t* _ct_qwen_btn = nullptr;
+    lv_obj_t* _ct_video_btn = nullptr;
+    lv_obj_t* _ct_video_lbl = nullptr;
+    lv_obj_t* _ct_voice_dropdown = nullptr;
+    lv_obj_t* _ct_camera_btn = nullptr;
+    lv_obj_t* _ct_camera_lbl = nullptr;
+    lv_obj_t* _ct_wake_btn = nullptr;
+    lv_obj_t* _ct_sleep_btn = nullptr;
+    lv_obj_t* _ct_daemon_restart_btn = nullptr;
+    lv_obj_t* _ct_backend_state = nullptr;
+    lv_obj_t* _ct_status = nullptr;
     // System tab
     lv_obj_t* _sy_state = nullptr;
     lv_obj_t* _sy_daemon = nullptr;
@@ -111,10 +124,12 @@ private:
     reachy_client::Status    _status;
     reachy_client::Motion    _motion;
     reachy_client::Audio     _audio;
+    reachy_client::ControlState _control;
     reachy_client::SystemState _sys;
     bool _has_status = false;
     bool _has_motion = false;
     bool _has_audio  = false;
+    bool _has_control = false;
     bool _has_sys    = false;
 
     // ── Cached fetcher thread state ───────────────────────────────────────
@@ -128,17 +143,22 @@ private:
     std::atomic<bool> _fetched_ok{false};        // last fetch result
     uint32_t _rendered_at_ms = 0;                 // last response consumed by LVGL
 
-    enum class OperationKind { None, SetVolume, SetMic, SetVad };
+    enum class OperationKind {
+        None, SetVolume, SetMic, SetVad, SetBackend, SetVideo, SetVoice,
+        SetCamera, DaemonWake, DaemonSleep, DaemonRestart, RestartYRobot
+    };
     struct Operation {
         OperationKind kind = OperationKind::None;
         int int_value = 0;
         float float_value = 0.f;
         bool bool_value = false;
+        std::string text_value;
     };
     Operation _pending_operation;
     std::atomic<bool> _operation_pending{false};
     reachy_client::OperationResult _operation_result;
     bool _operation_result_ready = false;
+    Operation _confirmed_operation;
 
     // ── UI helpers ────────────────────────────────────────────────────────
     void _buildUI();
@@ -147,6 +167,8 @@ private:
     void _buildStatusPage();
     void _buildMotionPage();
     void _buildAudioPage();
+    void _buildControlPage();
+    void _buildChatPage();
     void _buildSystemPage();
     void _buildLogsPage();
     void _showOfflineBanner();
@@ -156,8 +178,11 @@ private:
     void _renderStatus();
     void _renderMotion();
     void _renderAudio();
+    void _renderControl();
     bool _queueOperation(Operation operation);
     reachy_client::OperationResult _executeOperation(const Operation& operation);
+    reachy_client::OperationResult _switchBackend(const std::string& target);
+    void _confirmOperation(Operation operation, const char* message);
     void _renderSystem();
     void _renderLogs();
     void _confirmAndRestart();
@@ -168,6 +193,7 @@ private:
 
     static void _tabCb(lv_event_t* e);
     static void _audioEventCb(lv_event_t* e);
+    static void _controlEventCb(lv_event_t* e);
     static void _restartCb(lv_event_t* e);
     static void _logsRefreshCb(lv_event_t* e);
     static void _confirmYesCb(lv_event_t* e);

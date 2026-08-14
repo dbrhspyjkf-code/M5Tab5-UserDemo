@@ -126,6 +126,7 @@ void AppReachy::onRunning() {
         case Tab::Status: _renderStatus(); break;
         case Tab::Motion: _renderMotion(); break;
         case Tab::Audio:  _renderAudio();  break;
+        case Tab::Control: _renderControl(); break;
         case Tab::System: _renderSystem(); break;
         case Tab::Logs:   _renderLogs();   break;
         default: break;
@@ -159,6 +160,8 @@ void AppReachy::_buildUI() {
     _buildStatusPage();
     _buildMotionPage();
     _buildAudioPage();
+    _buildControlPage();
+    _buildChatPage();
     _buildSystemPage();
     _buildLogsPage();
 
@@ -226,9 +229,9 @@ void AppReachy::_buildTabBar() {
     lv_obj_set_style_border_width(_tab_bar, 0, 0);
     lv_obj_set_style_pad_all(_tab_bar, 0, 0);
 
-    static const char* LABELS[5] = {"状态", "运动", "音频", "系统", "日志"};
-    int btn_w = W / 5;
-    for (int i = 0; i < 5; i++) {
+    static const char* LABELS[(int)Tab::Count] = {"状态", "运动", "音频", "控制", "聊天", "系统", "日志"};
+    int btn_w = W / (int)Tab::Count;
+    for (int i = 0; i < (int)Tab::Count; i++) {
         lv_obj_t* b = lv_obj_create(_tab_bar);
         lv_obj_set_size(b, btn_w - 16, TAB_BAR_H - 16);
         lv_obj_set_pos(b, i * btn_w + 8, 8);
@@ -260,7 +263,7 @@ void AppReachy::_switchTab(Tab t) {
     if (t == _active) return;
     _active = t;
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < (int)Tab::Count; i++) {
         bool active = (i == (int)t);
         lv_obj_set_style_bg_color(_tab_btns[i],
             lv_color_hex(active ? C_TAB_ACTIVE : C_TAB_BG), 0);
@@ -337,6 +340,14 @@ void AppReachy::_refreshActiveTab() {
             _has_audio = true;
             break;
         }
+        case Tab::Control: {
+            auto c = reachy_client::fetchControlState();
+            std::lock_guard<std::mutex> lk(_cache_mutex);
+            _control = std::move(c);
+            _has_control = true;
+            break;
+        }
+        case Tab::Chat: break;
         case Tab::System: {
             auto s = reachy_client::fetchSystemState();
             std::lock_guard<std::mutex> lk(_cache_mutex);
@@ -406,6 +417,11 @@ void AppReachy::_showOfflineBanner() {
     case Tab::Audio:
         if (_au_volume_lbl) lv_label_set_text(_au_volume_lbl, "—");
         dash(_au_vad_lbl); dash(_au_control); dash(_au_status);
+        break;
+    case Tab::Control:
+        dash(_ct_backend_state); dash(_ct_status);
+        break;
+    case Tab::Chat:
         break;
     case Tab::System:
         dash(_sy_state); dash(_sy_daemon);
@@ -728,7 +744,125 @@ reachy_client::OperationResult AppReachy::_executeOperation(const Operation& ope
     case OperationKind::SetVolume: return reachy_client::setVolume(operation.int_value);
     case OperationKind::SetMic:    return reachy_client::setMicEnabled(operation.bool_value);
     case OperationKind::SetVad:    return reachy_client::setVad(operation.float_value);
+    case OperationKind::SetBackend: return _switchBackend(operation.text_value);
+    case OperationKind::SetVideo: return reachy_client::setVideoEnabled(operation.bool_value);
+    case OperationKind::SetVoice: return reachy_client::setVoice(operation.text_value);
+    case OperationKind::SetCamera: return reachy_client::setCameraRunning(operation.bool_value);
+    case OperationKind::DaemonWake: return reachy_client::daemonAction("wake");
+    case OperationKind::DaemonSleep: return reachy_client::daemonAction("sleep");
+    case OperationKind::DaemonRestart: return reachy_client::daemonAction("restart");
+    case OperationKind::RestartYRobot: return reachy_client::restartYRobot();
     default: return {false, 0, "无效操作"};
+    }
+}
+
+reachy_client::OperationResult AppReachy::_switchBackend(const std::string& target) {
+    auto saved = reachy_client::setBackend(target);
+    if (!saved.ok) return saved;
+    auto restarted = reachy_client::restartYRobot();
+    if (!restarted.ok) return restarted;
+    for (int second = 0; second < 30; ++second) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        auto status = reachy_client::fetchStatus();
+        if (status.ok && status.configured_backend == target && status.runtime_backend == target)
+            return {true, 200, ""};
+    }
+    return {false, 0, "切换超时；未自动回退"};
+}
+
+// ── CONTROL page ───────────────────────────────────────────────────────────
+void AppReachy::_buildControlPage() {
+    lv_obj_t* page = lv_obj_create(_scr);
+    lv_obj_set_size(page, W, H - HEADER_H - TAB_BAR_H);
+    lv_obj_set_pos(page, 0, HEADER_H + TAB_BAR_H);
+    lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(page, 0, 0);
+    lv_obj_set_style_pad_all(page, 12, 0);
+    lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+    _tab_pages[(int)Tab::Control] = page;
+
+    auto button = [this, page](const char* text, int x, int y, int w, uint32_t color) {
+        lv_obj_t* b = lv_obj_create(page);
+        lv_obj_set_size(b, w, 58);
+        lv_obj_set_pos(b, x, y);
+        lv_obj_set_style_bg_color(b, lv_color_hex(color), 0);
+        lv_obj_set_style_radius(b, 12, 0);
+        lv_obj_set_style_border_width(b, 0, 0);
+        lv_obj_set_style_pad_all(b, 0, 0);
+        lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        auto* lbl = lv_label_create(b);
+        lv_label_set_text(lbl, text);
+        lv_obj_center(lbl);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(C_TEXT), 0);
+        lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);
+        lv_obj_add_event_cb(b, _controlEventCb, LV_EVENT_CLICKED, this);
+        return b;
+    };
+
+    _kv_row(page, 0, "对话后端", &_ct_backend_state, 58, 220, 450);
+    _ct_xiaozhi_btn = button("XIAOZHI", 780, 0, 180, C_CARD_PR);
+    _ct_qwen_btn = button("QWEN", 980, 0, 180, C_CARD_PR);
+    _ct_video_btn = button("视频", 0, 72, 250, C_CARD_PR);
+    _ct_video_lbl = lv_obj_get_child(_ct_video_btn, 0);
+    _ct_camera_btn = button("摄像头", 270, 72, 250, C_CARD_PR);
+    _ct_camera_lbl = lv_obj_get_child(_ct_camera_btn, 0);
+
+    _ct_voice_dropdown = lv_dropdown_create(page);
+    lv_obj_set_size(_ct_voice_dropdown, 620, 58);
+    lv_obj_set_pos(_ct_voice_dropdown, 540, 72);
+    lv_dropdown_set_options(_ct_voice_dropdown, "读取 QWEN 音色…");
+    lv_obj_set_style_text_font(_ct_voice_dropdown, zh_font_lg(), 0);
+    lv_obj_add_event_cb(_ct_voice_dropdown, _controlEventCb, LV_EVENT_VALUE_CHANGED, this);
+
+    _ct_wake_btn = button("Daemon 唤醒", 0, 148, 280, C_CARD_PR);
+    _ct_sleep_btn = button("Daemon 休眠", 300, 148, 280, C_ERR);
+    _ct_daemon_restart_btn = button("Daemon 重启", 600, 148, 280, C_ERR);
+    _kv_row(page, 224, "操作状态", &_ct_status, 58);
+}
+
+void AppReachy::_buildChatPage() {
+    lv_obj_t* page = lv_obj_create(_scr);
+    lv_obj_set_size(page, W, H - HEADER_H - TAB_BAR_H);
+    lv_obj_set_pos(page, 0, HEADER_H + TAB_BAR_H);
+    lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(page, 0, 0);
+    _tab_pages[(int)Tab::Chat] = page;
+}
+
+void AppReachy::_renderControl() {
+    reachy_client::ControlState state;
+    {
+        std::lock_guard<std::mutex> lk(_cache_mutex);
+        if (!_has_control) return;
+        state = _control;
+    }
+    if (!state.ok) { _showOfflineBanner(); return; }
+    std::string backend = "配置: " + state.configured_backend + " / 运行: " + state.running_backend;
+    if (!state.backend_error.empty()) backend += " / 错误: " + state.backend_error;
+    lv_label_set_text(_ct_backend_state, backend.c_str());
+    lv_label_set_text(_ct_video_lbl, state.video_enabled ? "关闭视频" : "开启视频");
+    lv_label_set_text(_ct_camera_lbl, state.camera_running ? "关闭摄像头" : "开启摄像头");
+    if (!state.available_voices.empty()) {
+        std::string options;
+        int selected = 0;
+        for (size_t i = 0; i < state.available_voices.size(); ++i) {
+            if (!options.empty()) options += "\n";
+            options += state.available_voices[i];
+            if (state.available_voices[i] == state.configured_voice) selected = (int)i;
+        }
+        lv_dropdown_set_options(_ct_voice_dropdown, options.c_str());
+        lv_dropdown_set_selected(_ct_voice_dropdown, selected);
+    }
+    {
+        std::lock_guard<std::mutex> lk(_cache_mutex);
+        if (_operation_result_ready) {
+            lv_label_set_text(_ct_status,
+                _operation_result.ok ? "操作成功" : _operation_result.error.c_str());
+            lv_obj_set_style_text_color(_ct_status,
+                lv_color_hex(_operation_result.ok ? C_OK : C_ERR), 0);
+            _operation_result_ready = false;
+        }
     }
 }
 
@@ -742,7 +876,7 @@ void AppReachy::_buildSystemPage() {
     lv_obj_set_style_pad_all(page, 12, 0);
     lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
-    _tab_pages[3] = page;
+    _tab_pages[(int)Tab::System] = page;
 
     int y = 0;
     const int RH = 52;
@@ -820,6 +954,13 @@ void AppReachy::_renderSystem() {
 }
 
 void AppReachy::_confirmAndRestart() {
+    Operation operation;
+    operation.kind = OperationKind::RestartYRobot;
+    _confirmOperation(operation, "确认重启 YRobot 服务？");
+}
+
+void AppReachy::_confirmOperation(Operation operation, const char* message) {
+    _confirmed_operation = std::move(operation);
     // Modal backdrop
     lv_obj_t* bg = lv_obj_create(lv_layer_top());
     lv_obj_set_size(bg, W, H);
@@ -842,7 +983,7 @@ void AppReachy::_confirmAndRestart() {
     lv_obj_clear_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* t = lv_label_create(dlg);
-    lv_label_set_text(t, "确认重启 YRobot 服务？");
+    lv_label_set_text(t, message);
     lv_obj_set_pos(t, 0, 0);
     lv_obj_set_style_text_color(t, lv_color_hex(C_ACCENT), 0);
     lv_obj_set_style_text_font(t, zh_font_lg(), 0);
@@ -897,7 +1038,7 @@ void AppReachy::_buildLogsPage() {
     lv_obj_set_style_pad_all(page, 12, 0);
     lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
-    _tab_pages[4] = page;
+    _tab_pages[(int)Tab::Logs] = page;
 
     // Log text card
     lv_obj_t* card = lv_obj_create(page);
@@ -1030,6 +1171,42 @@ void AppReachy::_audioEventCb(lv_event_t* e) {
     }
 }
 
+void AppReachy::_controlEventCb(lv_event_t* e) {
+    auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
+    auto* target = static_cast<lv_obj_t*>(lv_event_get_target(e));
+    Operation operation;
+    if (target == self->_ct_xiaozhi_btn || target == self->_ct_qwen_btn) {
+        operation.kind = OperationKind::SetBackend;
+        operation.text_value = target == self->_ct_qwen_btn ? "qwen" : "xiaozhi";
+        self->_confirmOperation(operation,
+            target == self->_ct_qwen_btn ? "切换到 QWEN 并重启 YRobot？"
+                                         : "切换到 XIAOZHI 并重启 YRobot？");
+    } else if (target == self->_ct_sleep_btn) {
+        operation.kind = OperationKind::DaemonSleep;
+        self->_confirmOperation(operation, "让 Reachy Daemon 休眠？");
+    } else if (target == self->_ct_daemon_restart_btn) {
+        operation.kind = OperationKind::DaemonRestart;
+        self->_confirmOperation(operation, "重启 Reachy Daemon？");
+    } else if (target == self->_ct_wake_btn) {
+        operation.kind = OperationKind::DaemonWake;
+        self->_queueOperation(operation);
+    } else if (target == self->_ct_video_btn) {
+        operation.kind = OperationKind::SetVideo;
+        operation.bool_value = std::string(lv_label_get_text(self->_ct_video_lbl)) == "开启视频";
+        self->_queueOperation(operation);
+    } else if (target == self->_ct_camera_btn) {
+        operation.kind = OperationKind::SetCamera;
+        operation.bool_value = std::string(lv_label_get_text(self->_ct_camera_lbl)) == "开启摄像头";
+        self->_queueOperation(operation);
+    } else if (target == self->_ct_voice_dropdown) {
+        char voice[64] = {};
+        lv_dropdown_get_selected_str(self->_ct_voice_dropdown, voice, sizeof(voice));
+        operation.kind = OperationKind::SetVoice;
+        operation.text_value = voice;
+        self->_queueOperation(operation);
+    }
+}
+
 void AppReachy::_restartCb(lv_event_t* e) {
     auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
     self->_confirmAndRestart();
@@ -1042,20 +1219,19 @@ void AppReachy::_logsRefreshCb(lv_event_t* e) {
 
 void AppReachy::_confirmYesCb(lv_event_t* e) {
     auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
-    bool ok = reachy_client::postRestart();
-    if (self->_sy_state) {
-        lv_label_set_text(self->_sy_state, ok ? "重启已请求" : "重启失败");
-    }
+    self->_queueOperation(self->_confirmed_operation);
+    self->_confirmed_operation = {};
     // Dismiss the modal — find backdrop on top layer and delete it.
     auto top = lv_layer_top();
     if (top) {
         // The modal is the only child added recently.
         lv_obj_clean(top);
     }
-    mclog::tagInfo(_tag, "restart POST result: {}", ok);
 }
 
 void AppReachy::_confirmNoCb(lv_event_t* e) {
+    auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
+    self->_confirmed_operation = {};
     auto top = lv_layer_top();
     if (top) lv_obj_clean(top);
 }
