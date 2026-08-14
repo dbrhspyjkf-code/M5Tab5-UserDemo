@@ -127,6 +127,7 @@ void AppReachy::onRunning() {
         case Tab::Motion: _renderMotion(); break;
         case Tab::Audio:  _renderAudio();  break;
         case Tab::Control: _renderControl(); break;
+        case Tab::Chat: _renderChat(); break;
         case Tab::System: _renderSystem(); break;
         case Tab::Logs:   _renderLogs();   break;
         default: break;
@@ -137,7 +138,8 @@ void AppReachy::onRunning() {
 
     // 2) Maybe kick a new fetch (every POLL_MS, or the first time).
     uint32_t now = GetHAL()->millis();
-    if (_operation_pending.load() || _last_poll_ms == 0 || (now - _last_poll_ms) >= POLL_MS) {
+    uint32_t poll_ms = _active == Tab::Chat ? CHAT_POLL_MS : POLL_MS;
+    if (_operation_pending.load() || _last_poll_ms == 0 || (now - _last_poll_ms) >= poll_ms) {
         _last_poll_ms = now;
         if (_fetch_inflight.load()) return;  // skip — already running
         _refreshActiveTab();
@@ -347,7 +349,13 @@ void AppReachy::_refreshActiveTab() {
             _has_control = true;
             break;
         }
-        case Tab::Chat: break;
+        case Tab::Chat: {
+            auto messages = reachy_client::fetchChat(200, 6);
+            std::lock_guard<std::mutex> lk(_cache_mutex);
+            _chat_messages = std::move(messages);
+            _has_chat = true;
+            break;
+        }
         case Tab::System: {
             auto s = reachy_client::fetchSystemState();
             std::lock_guard<std::mutex> lk(_cache_mutex);
@@ -827,7 +835,59 @@ void AppReachy::_buildChatPage() {
     lv_obj_set_pos(page, 0, HEADER_H + TAB_BAR_H);
     lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(page, 0, 0);
+    lv_obj_set_style_pad_all(page, 12, 0);
+    lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
     _tab_pages[(int)Tab::Chat] = page;
+
+    _chat_container = lv_obj_create(page);
+    lv_obj_set_size(_chat_container, 1180, 560);
+    lv_obj_set_pos(_chat_container, 0, 0);
+    lv_obj_set_style_bg_opa(_chat_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_chat_container, 0, 0);
+    lv_obj_set_style_pad_all(_chat_container, 10, 0);
+    lv_obj_set_scroll_dir(_chat_container, LV_DIR_VER);
+}
+
+void AppReachy::_renderChat() {
+    std::vector<reachy_client::ChatMessage> messages;
+    {
+        std::lock_guard<std::mutex> lk(_cache_mutex);
+        if (!_has_chat) return;
+        messages = _chat_messages;
+    }
+    std::string signature;
+    for (auto& message : messages) {
+        signature += message.role == reachy_client::ChatMessage::Role::User ? "U:" : "A:";
+        signature += message.text;
+        signature.push_back('\n');
+    }
+    if (signature == _chat_signature) return;
+    _chat_signature = std::move(signature);
+    lv_obj_clean(_chat_container);
+    int y = 0;
+    for (auto& message : messages) {
+        bool user = message.role == reachy_client::ChatMessage::Role::User;
+        lv_obj_t* bubble = lv_obj_create(_chat_container);
+        lv_obj_set_width(bubble, 820);
+        lv_obj_set_height(bubble, LV_SIZE_CONTENT);
+        lv_obj_set_style_min_height(bubble, 54, 0);
+        lv_obj_set_style_bg_color(bubble, lv_color_hex(user ? C_CARD_PR : C_CARD), 0);
+        lv_obj_set_style_radius(bubble, 16, 0);
+        lv_obj_set_style_border_width(bubble, 0, 0);
+        lv_obj_set_style_pad_all(bubble, 14, 0);
+        lv_obj_clear_flag(bubble, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_align(bubble, user ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_TOP_LEFT, 0, y);
+        lv_obj_t* text = lv_label_create(bubble);
+        lv_label_set_text(text, message.text.c_str());
+        lv_label_set_long_mode(text, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(text, 790);
+        lv_obj_set_style_text_color(text, lv_color_hex(C_TEXT), 0);
+        lv_obj_set_style_text_font(text, zh_font_sm(), 0);
+        lv_obj_update_layout(bubble);
+        y += lv_obj_get_height(bubble) + 12;
+    }
+    lv_obj_set_height(_chat_container, 560);
+    lv_obj_scroll_to_y(_chat_container, y, LV_ANIM_OFF);
 }
 
 void AppReachy::_renderControl() {

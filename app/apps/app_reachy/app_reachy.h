@@ -32,6 +32,7 @@ private:
     static constexpr int HEADER_H = 56;
     static constexpr int TAB_BAR_H = 64;
     static constexpr int POLL_MS = 5000;
+    static constexpr int CHAT_POLL_MS = 3000;
 
     // ── Palette (matches AppHA / AppSettings) ─────────────────────────────
     static constexpr uint32_t C_BG        = 0x0E1A2B;
@@ -112,6 +113,9 @@ private:
     lv_obj_t* _ct_daemon_restart_btn = nullptr;
     lv_obj_t* _ct_backend_state = nullptr;
     lv_obj_t* _ct_status = nullptr;
+    // Chat tab
+    lv_obj_t* _chat_container = nullptr;
+    std::string _chat_signature;
     // System tab
     lv_obj_t* _sy_state = nullptr;
     lv_obj_t* _sy_daemon = nullptr;
@@ -125,11 +129,13 @@ private:
     reachy_client::Motion    _motion;
     reachy_client::Audio     _audio;
     reachy_client::ControlState _control;
+    std::vector<reachy_client::ChatMessage> _chat_messages;
     reachy_client::SystemState _sys;
     bool _has_status = false;
     bool _has_motion = false;
     bool _has_audio  = false;
     bool _has_control = false;
+    bool _has_chat = false;
     bool _has_sys    = false;
 
     // ── Cached fetcher thread state ───────────────────────────────────────
@@ -179,6 +185,7 @@ private:
     void _renderMotion();
     void _renderAudio();
     void _renderControl();
+    void _renderChat();
     bool _queueOperation(Operation operation);
     reachy_client::OperationResult _executeOperation(const Operation& operation);
     reachy_client::OperationResult _switchBackend(const std::string& target);
