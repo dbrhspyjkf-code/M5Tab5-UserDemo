@@ -600,4 +600,144 @@ inline bool ping() {
     return resp.ok;
 }
 
+// ── Mobile base remote control (parity with the iOS Base Control) ──────────
+// Every call goes through the audited YRobot :8042 proxy, which alone holds
+// the HMAC gateway credentials. The Tab5 never talks to the mobile-base
+// gateway directly and never signs anything. Semantics mirror the desktop
+// baseMoveClient.ts: fail-closed interlocks, deadman-gated motion, 20 Hz
+// frames, and zero+release on every exit path. The server re-validates and
+// owns the final caps (lease TTL 250 ms, velocity clamps, watchdog).
+struct BaseMoveStatus {
+    bool ok = false;             // remote/status reachable
+    bool lease_active = false;   // some remote lease exists (any owner)
+    int  remaining_ms = 0;
+    bool goto_known = false;     // goto-mode query succeeded
+    bool goto_on = false;
+    bool gamepad_known = false;  // gamepad-mode query succeeded
+    bool gamepad_on = false;
+    std::string error;
+};
+
+struct BaseMoveLease {
+    bool ok = false;
+    std::string session_id;      // opaque server token, [A-Za-z0-9_-]{1,128}
+    int  remaining_ms = 0;
+    std::string error;
+};
+
+struct BaseMoveResult {
+    bool ok = false;
+    int  status = 0;
+    std::string error;
+};
+
+inline BaseMoveResult _baseResult(const hal::HalBase::HttpResponse_t& resp) {
+    BaseMoveResult result{resp.ok, resp.status, ""};
+    if (!resp.ok) {
+        std::string detail;
+        try {
+            auto j = nlohmann::json::parse(resp.body);
+            detail = j.value("detail", "");
+        } catch (...) {}
+        result.error = detail.empty()
+            ? (resp.body.empty() ? "HTTP " + std::to_string(resp.status) : resp.body)
+            : detail;
+    }
+    return result;
+}
+
+// Client-side velocity caps mirror the iOS virtual joystick mapping so both
+// remotes steer identically; the gateway still re-clamps everything.
+constexpr float BASE_MAX_LINEAR_X  = 0.12f;   // m/s
+constexpr float BASE_MAX_ANGULAR_Z = 0.45f;   // rad/s
+
+inline BaseMoveStatus fetchBaseStatus() {
+    BaseMoveStatus s;
+    auto resp = GetHAL()->httpGet(_base() + "/api/mobile-base/remote/status");
+    if (!resp.ok) { s.error = "无法读取底盘状态"; return s; }
+    try {
+        auto j = nlohmann::json::parse(resp.body);
+        s.ok            = j.value("ok", false);
+        s.lease_active  = j.value("lease_active", j.value("active", false));
+        s.remaining_ms  = j.value("remaining_ms",
+            static_cast<int>(j.value("lease_expires_in_s", 0.0) * 1000.0));
+    } catch (...) { s.error = "底盘状态解析失败"; return s; }
+    auto gotoResp = GetHAL()->httpGet(_base() + "/api/mobile-base/goto-mode");
+    if (gotoResp.ok) {
+        try {
+            auto j = nlohmann::json::parse(gotoResp.body);
+            s.goto_known = true;
+            s.goto_on    = j.value("on", false);
+        } catch (...) {}
+    }
+    auto padResp = GetHAL()->httpGet(_base() + "/api/mobile-base/gamepad-mode");
+    if (padResp.ok) {
+        try {
+            auto j = nlohmann::json::parse(padResp.body);
+            s.gamepad_known = true;
+            s.gamepad_on    = j.value("on", false);
+        } catch (...) {}
+    }
+    return s;
+}
+
+inline BaseMoveLease baseAcquire() {
+    BaseMoveLease lease;
+    // The fixed proxy API requires an explicit empty JSON object here.
+    auto resp = GetHAL()->httpPost(_base() + "/api/mobile-base/remote/acquire", "{}",
+                                   _jsonHeaders());
+    auto result = _baseResult(resp);
+    lease.ok = result.ok;
+    lease.error = result.error;
+    if (!result.ok) return lease;
+    try {
+        auto j = nlohmann::json::parse(resp.body);
+        lease.session_id = j.value("session_id", "");
+        if (lease.session_id.empty() || lease.session_id.size() > 128 ||
+            lease.session_id.find_first_not_of(
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+                != std::string::npos) {
+            return {false, "", 0, "底盘返回了无效的会话标识"};
+        }
+        lease.remaining_ms = j.value("remaining_ms",
+            static_cast<int>(j.value("lease_expires_in_s", 0.0) * 1000.0));
+    } catch (...) {
+        return {false, "", 0, "底盘响应解析失败"};
+    }
+    return lease;
+}
+
+inline BaseMoveResult baseFrame(const std::string& session_id, uint32_t sequence,
+                                float linear_x, float angular_z, bool deadman) {
+    // Mirror the server's 422 contract client-side: exact schema, positive
+    // sequence, and deadman must gate any non-zero velocity.
+    if (session_id.empty() || session_id.size() > 128) return {false, 0, "无效会话"};
+    if (sequence == 0) return {false, 0, "sequence 必须为正整数"};
+    if (!deadman && (linear_x != 0.f || angular_z != 0.f))
+        return {false, 0, "非零速度需要按住 Deadman"};
+    auto body = nlohmann::json{
+        {"session_id", session_id},
+        {"sequence", sequence},
+        {"linear_x", linear_x},
+        {"angular_z", angular_z},
+        {"deadman", deadman},
+    }.dump();
+    return _baseResult(GetHAL()->httpPost(_base() + "/api/mobile-base/remote/frame",
+                                          body, _jsonHeaders()));
+}
+
+inline BaseMoveResult baseRelease(const std::string& session_id) {
+    if (session_id.empty() || session_id.size() > 128) return {false, 0, "无效会话"};
+    auto body = nlohmann::json{{"session_id", session_id}}.dump();
+    return _baseResult(GetHAL()->httpPost(_base() + "/api/mobile-base/remote/release",
+                                          body, _jsonHeaders()));
+}
+
+inline BaseMoveResult baseStop() {
+    // Remote R2 semantics: STOP only — this can never re-arm autonomy or the
+    // physical gamepad; it parks the base through the audited proxy path.
+    return _baseResult(GetHAL()->httpPost(_base() + "/api/mobile-base/remote/stop",
+                                          "{}", _jsonHeaders()));
+}
+
 }  // namespace reachy_client

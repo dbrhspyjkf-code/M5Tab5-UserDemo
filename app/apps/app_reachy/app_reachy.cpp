@@ -8,6 +8,7 @@
 #include <chrono>
 #include <thread>
 #include <cstdio>
+#include <cmath>
 #include <utility>
 
 using namespace reachy_ui;
@@ -87,6 +88,7 @@ void AppReachy::onOpen() {
 
 void AppReachy::onClose() {
     _open_generation.fetch_add(1);
+    _baseEndDrive(false);
     _stopVideoPreview();
     _removeSwipeGesture();
     if (_close_cb) _close_cb();
@@ -108,6 +110,41 @@ void AppReachy::onRunning() {
         }
     }
 
+    if (_active == Tab::Base) {
+        // Drain a completed acquire, then run the 20 Hz deadman-gated frame
+        // loop. Any frame failure fail-safes into zero + release.
+        if (_base_arm_result_ready.exchange(false)) {
+            reachy_client::BaseMoveLease lease;
+            {
+                std::lock_guard<std::mutex> lock(_cache_mutex);
+                lease = _base_arm_result;
+                _base_arm_result = {};
+            }
+            if (lease.ok && _base_arm_wanted.load() && _base_session.empty()) {
+                _base_session = lease.session_id;
+                _base_seq = 0;
+                set_label(_ba_state, "已接管底盘，按住 Deadman 驾驶", kOk);
+            } else if (lease.ok) {
+                _base_arm_wanted.store(false);
+                reachy_client::baseRelease(lease.session_id);
+            } else {
+                _base_arm_wanted.store(false);
+                set_label(_ba_state, "接入失败：「" + lease.error + "」", kError);
+            }
+            _baseUpdateControls();
+        }
+        if (_base_fail.exchange(false)) {
+            set_label(_ba_state, "通信中断，已释放底盘", kError);
+            _baseEndDrive(false);
+        }
+        const uint32_t now = GetHAL()->millis();
+        if (!_base_session.empty() && _base_deadman && !_base_frame_inflight.load() &&
+            now - _last_base_frame_ms >= BASE_FRAME_MS) {
+            _last_base_frame_ms = now;
+            _baseTickFrame();
+        }
+    }
+
     const uint32_t fetched_at = _fetched_at_ms.load();
     if (_fetched_ok.load() && fetched_at && _rendered_at_ms != fetched_at &&
         _completed_generation.load() == _open_generation.load()) {
@@ -119,6 +156,7 @@ void AppReachy::onRunning() {
             case Tab::Voice: _renderVoice(); break;
             case Tab::Interaction: _renderInteraction(); break;
             case Tab::Camera: break;
+            case Tab::Base: _renderBase(); break;
             case Tab::Maintenance: _renderMaintenance(); break;
             default: break;
             }
@@ -148,6 +186,7 @@ void AppReachy::_buildUI() {
     _buildVoicePage();
     _buildInteractionPage();
     _buildCameraPage();
+    _buildBasePage();
     _buildMaintenancePage();
     _selectDestination(Tab::Overview);
     lv_scr_load(_scr);
@@ -195,7 +234,7 @@ void AppReachy::_buildHeader() {
 
 void AppReachy::_buildBottomDock() {
     _bottom_dock = makeSurface(_scr, 16, H - DOCK_H + 8, W - 32, DOCK_H - 16, kSurfaceAlt, 28);
-    static const char* labels[(int)Tab::Count] = {"概览", "语音", "互动", "相机", "维护"};
+    static const char* labels[(int)Tab::Count] = {"概览", "语音", "互动", "相机", "底盘", "维护"};
     const int dock_w = (W - 64) / (int)Tab::Count;
     for (int i = 0; i < (int)Tab::Count; ++i) {
         lv_obj_t* button = makeButton(_bottom_dock, labels[i], i * dock_w + 8, 8,
@@ -354,6 +393,219 @@ void AppReachy::_buildCameraPage() {
     makeLabel(page, "相机预览", 0, 514, zh_font_lg());
 }
 
+// ── Base (mobile chassis) control page ──────────────────────────
+void AppReachy::_buildBasePage() {
+    lv_obj_t* page = make_page(_scr);
+    _tab_pages[(int)Tab::Base] = page;
+
+    // Left: virtual joystick card (560x574).
+    lv_obj_t* joy = makeSurface(page, 0, 0, 560, 574);
+    makeLabel(joy, "虚拟摇杆", 20, 18, zh_font_lg());
+    makeLabel(joy, "上 = 前进　下 = 后退\n左/右 = 原地转向", 20, 56, zh_font_sm(), kTextMuted);
+    constexpr int PAD_SIZE = 340;
+    constexpr int PAD_X = (560 - PAD_SIZE) / 2;
+    constexpr int PAD_Y = 170;
+    _ba_joy_pad = makeSurface(joy, PAD_X, PAD_Y, PAD_SIZE, PAD_SIZE, kSurfaceAlt, PAD_SIZE / 2);
+    lv_obj_set_style_border_color(_ba_joy_pad, lv_color_hex(kStroke), 0);
+    constexpr int KNOB_SIZE = 96;
+    _ba_joy_knob = makeSurface(_ba_joy_pad,
+                               (PAD_SIZE - KNOB_SIZE) / 2, (PAD_SIZE - KNOB_SIZE) / 2,
+                               KNOB_SIZE, KNOB_SIZE, kAccentSoft, KNOB_SIZE / 2);
+    lv_obj_clear_flag(_ba_joy_pad, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(_ba_joy_pad, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_PRESSED, this);
+    lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_PRESSING, this);
+    lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_RELEASED, this);
+    _ba_hint = value_label(joy, "驾驶时请一直按住右侧 Deadman。", 20, 530, 516, kTextMuted);
+
+    // Right top: status card (672x150).
+    lv_obj_t* status = makeSurface(page, 576, 0, 672, 150);
+    makeLabel(status, "底盘状态", 20, 16, zh_font_lg());
+    _ba_state  = value_label(status, "未接管", 20, 60, 620, kAccent);
+    _ba_goto   = value_label(status, "Goto 巡航：—", 20, 88, 300, kTextMuted);
+    _ba_gamepad = value_label(status, "物理手柄：—", 340, 88, 300, kTextMuted);
+    _ba_lease  = value_label(status, "远端租约：—", 20, 116, 620, kTextMuted);
+
+    // Deadman hold zone (672x120).
+    _ba_deadman_btn = makeSurface(page, 576, 166, 672, 120, kSurfaceAlt, 20);
+    lv_obj_set_style_border_color(_ba_deadman_btn, lv_color_hex(kStroke), 0);
+    lv_obj_add_flag(_ba_deadman_btn, LV_OBJ_FLAG_CLICKABLE);
+    _ba_deadman_lbl = lv_label_create(_ba_deadman_btn);
+    lv_label_set_text(_ba_deadman_lbl, "按住 Deadman 驾驶");
+    lv_obj_center(_ba_deadman_lbl);
+    lv_obj_set_style_text_color(_ba_deadman_lbl, lv_color_hex(kTextMuted), 0);
+    lv_obj_set_style_text_font(_ba_deadman_lbl, zh_font_lg(), 0);
+    lv_obj_add_event_cb(_ba_deadman_btn, _baseDeadmanCb, LV_EVENT_PRESSED, this);
+    lv_obj_add_event_cb(_ba_deadman_btn, _baseDeadmanCb, LV_EVENT_RELEASED, this);
+    lv_obj_add_event_cb(_ba_deadman_btn, _baseDeadmanCb, LV_EVENT_PRESS_LOST, this);
+
+    // Arm toggle + emergency stop (row at y=302).
+    _ba_arm_btn = makeButton(page, "启用底盘控制", 576, 302, 400, 90, zh_font_lg(), kAccentSoft);
+    _ba_arm_lbl = lv_obj_get_child(_ba_arm_btn, 0);
+    lv_obj_add_event_cb(_ba_arm_btn, _baseArmCb, LV_EVENT_CLICKED, this);
+    _ba_stop_btn = makeButton(page, "紧急停止", 992, 302, 256, 90, zh_font_lg(), kError);
+    lv_obj_add_event_cb(_ba_stop_btn, _baseStopCb, LV_EVENT_CLICKED, this);
+
+    // Usage / safety card (672x166).
+    lv_obj_t* usage = makeSurface(page, 576, 408, 672, 166);
+    makeLabel(usage, "安全说明", 20, 16, zh_font_lg());
+    makeLabel(usage,
+              "· Goto 巡航或物理手柄占用时禁止遥控\n"
+              "· 松开 Deadman 立即零速并释放租约\n"
+              "· 离开本页或关闭应用自动停车",
+              20, 58, zh_font_sm(), kTextMuted);
+}
+
+void AppReachy::_renderBase() {
+    reachy_client::BaseMoveStatus st;
+    {
+        std::lock_guard<std::mutex> lock(_cache_mutex);
+        if (!_has_base_status) return;
+        st = _base_status;
+    }
+    if (!st.ok) {
+        set_label(_ba_goto, "Goto 巡航：未知", kWarn);
+        set_label(_ba_gamepad, "物理手柄：未知", kWarn);
+        set_label(_ba_lease, "远端租约：不可达", kWarn);
+        return;
+    }
+    set_label(_ba_goto, std::string("Goto 巡航：") + (st.goto_on ? "开启（禁止遥控）" : "关闭"),
+              st.goto_on ? kError : (st.goto_known ? kOk : kWarn));
+    set_label(_ba_gamepad, std::string("物理手柄：") + (st.gamepad_on ? "占用中" : "空闲"),
+              st.gamepad_on ? kError : (st.gamepad_known ? kOk : kWarn));
+    if (_base_session.empty())
+        set_label(_ba_lease, st.lease_active ? "远端租约：他方持有中" : "远端租约：空闲", kTextMuted);
+    else
+        set_label(_ba_lease, "远端租约：本机持有", kOk);
+}
+
+void AppReachy::_baseUpdateControls() {
+    if (_ba_arm_lbl)
+        lv_label_set_text(_ba_arm_lbl, _base_armed ? "停用底盘控制" : "启用底盘控制");
+    if (_ba_arm_btn)
+        lv_obj_set_style_bg_color(_ba_arm_btn,
+            lv_color_hex(_base_armed ? kWarn : kAccentSoft), 0);
+    if (_ba_deadman_btn)
+        lv_obj_set_style_bg_color(_ba_deadman_btn,
+            lv_color_hex(_base_deadman && !_base_session.empty() ? kAccent : kSurfaceAlt), 0);
+    if (_ba_deadman_lbl)
+        lv_obj_set_style_text_color(_ba_deadman_lbl,
+            lv_color_hex(_base_deadman && !_base_session.empty() ? kBg : kTextMuted), 0);
+}
+
+void AppReachy::_baseStartAcquire() {
+    if (_base_acquire_inflight.exchange(true)) return;
+    _base_arm_wanted.store(true);
+    const uint32_t generation = _open_generation.load();
+    const bool started = GetHAL()->tryRunDetached([this, generation]() {
+        reachy_client::BaseMoveLease lease;
+        if (_base_arm_wanted.load()) {
+            // Fail-closed interlocks first — exactly the iOS order.
+            auto status = reachy_client::fetchBaseStatus();
+            if (!status.ok) {
+                lease.error = status.error.empty() ? "无法读取底盘状态" : status.error;
+            } else if (status.goto_on) {
+                lease.error = "Goto 巡航开启中，禁止遥控";
+            } else if (!status.goto_known) {
+                lease.error = "无法确认 Goto 巡逻状态";
+            } else if (status.gamepad_on) {
+                lease.error = "物理手柄占用中";
+            } else if (!status.gamepad_known) {
+                lease.error = "无法确认手柄控制源";
+            } else {
+                lease = reachy_client::baseAcquire();
+            }
+        }
+        if (!lease.ok || !_base_arm_wanted.load() ||
+            generation != _open_generation.load()) {
+            // Abandoned mid-flight (page left / disarmed): drop the lease.
+            if (lease.ok) reachy_client::baseRelease(lease.session_id);
+            if (!lease.ok) {
+                std::lock_guard<std::mutex> lock(_cache_mutex);
+                _base_arm_result = lease;
+                _base_arm_result_ready.store(true);
+            }
+        } else {
+            std::lock_guard<std::mutex> lock(_cache_mutex);
+            _base_arm_result = lease;
+            _base_arm_result_ready.store(true);
+        }
+        _base_acquire_inflight.store(false);
+    });
+    if (!started) {
+        _base_acquire_inflight.store(false);
+        _base_arm_wanted.store(false);
+        set_label(_ba_state, "无法启动底盘任务", kError);
+    }
+}
+
+void AppReachy::_baseTickFrame() {
+    _base_frame_inflight.store(true);
+    const std::string session = _base_session;
+    const uint32_t seq = ++_base_seq;
+    // Same mapping as the iOS virtual stick: up = forward, right = clockwise
+    // (negative ROS angular_z). Server re-clamps both axes.
+    const float linear_x = _base_lin * reachy_client::BASE_MAX_LINEAR_X;
+    const float angular_z = -_base_ang * reachy_client::BASE_MAX_ANGULAR_Z;
+    const uint32_t generation = _open_generation.load();
+    const bool started = GetHAL()->tryRunDetached([this, session, seq, linear_x, angular_z, generation]() {
+        auto result = reachy_client::baseFrame(session, seq, linear_x, angular_z, true);
+        if (!result.ok && generation == _open_generation.load()) _base_fail.store(true);
+        _base_frame_inflight.store(false);
+    });
+    if (!started) {
+        _base_frame_inflight.store(false);
+        _base_fail.store(true);
+    }
+}
+
+void AppReachy::_baseEndDrive(bool sendStop) {
+    _base_arm_wanted.store(false);
+    if (_base_session.empty()) {
+        _base_deadman = false;
+        _base_lin = _base_ang = 0.f;
+        return;
+    }
+    const std::string session = _base_session;
+    _base_session.clear();
+    _base_deadman = false;
+    _base_lin = _base_ang = 0.f;
+    _base_seq += 1;
+    const uint32_t seq = _base_seq;
+    set_label(_ba_state, sendStop ? "已紧急停止" : "已停车并释放底盘", kWarn);
+    _baseUpdateControls();
+    if (_ba_joy_knob)
+        lv_obj_set_pos(_ba_joy_knob, (340 - 96) / 2, (340 - 96) / 2);
+    // Neutral frame (deadman=false) → optional STOP → release. All best
+    // effort: the 250 ms server TTL zeroes and expires the lease anyway.
+    GetHAL()->tryRunDetached([session, seq, sendStop]() {
+        reachy_client::baseFrame(session, seq, 0.f, 0.f, false);
+        if (sendStop) reachy_client::baseStop();
+        reachy_client::baseRelease(session);
+    });
+}
+
+void AppReachy::_baseShowArmConfirm() {
+    lv_obj_t* bg = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(bg, W, H); lv_obj_set_pos(bg, 0, 0);
+    lv_obj_set_style_bg_color(bg, lv_color_hex(0), 0); lv_obj_set_style_bg_opa(bg, LV_OPA_50, 0);
+    lv_obj_set_style_border_width(bg, 0, 0); lv_obj_set_style_pad_all(bg, 0, 0);
+    lv_obj_clear_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(bg, _modalBgCb, LV_EVENT_CLICKED, this);
+    lv_obj_t* dlg = makeSurface(bg, 0, 0, 620, 340, kSurface, 22);
+    lv_obj_align(dlg, LV_ALIGN_CENTER, 0, 0);
+    makeLabel(dlg, "接管移动底盘？", 28, 28, zh_font_lg(), kAccent);
+    lv_obj_t* note = makeLabel(dlg,
+        "确认机器人周围无人和障碍物。\n"
+        "接管后需按住 Deadman 才会移动；\n"
+        "松开立即停车。最大速度 0.12 m/s。", 28, 96, zh_font_sm(), kTextMuted);
+    lv_obj_set_width(note, 560);
+    lv_obj_t* yes = makeButton(dlg, "确认接管", 28, 236, 258, 62, zh_font_lg(), kError);
+    lv_obj_t* no = makeButton(dlg, "取消", 326, 236, 258, 62, zh_font_lg(), kAccentSoft);
+    lv_obj_add_event_cb(yes, _baseArmConfirmYesCb, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(no, _baseArmConfirmNoCb, LV_EVENT_CLICKED, this);
+}
+
 void AppReachy::_buildMaintenancePage() {
     lv_obj_t* page = make_page(_scr);
     _tab_pages[(int)Tab::Maintenance] = page;
@@ -386,6 +638,13 @@ void AppReachy::_buildMaintenancePage() {
 
 void AppReachy::_selectDestination(Tab t) {
     if (_active == Tab::Camera && t != Tab::Camera) _stopVideoPreview();
+    if (_active == Tab::Base && t != Tab::Base) {
+        // Leaving the base page always parks the chassis and drops the arm.
+        _baseEndDrive(false);
+        _base_armed = false;
+        _base_arm_wanted.store(false);
+        _baseUpdateControls();
+    }
     _active = t;
     for (int i = 0; i < (int)Tab::Count; ++i) {
         const bool selected = i == (int)t;
@@ -449,6 +708,14 @@ void AppReachy::_refreshActiveTab() {
                 break;
             }
             case Tab::Camera: break;
+            case Tab::Base: {
+                if (!_base_session.empty()) break;  // driving: frames are the heartbeat
+                auto status = reachy_client::fetchBaseStatus();
+                std::lock_guard<std::mutex> lock(_cache_mutex);
+                _base_status = std::move(status);
+                _has_base_status = true;
+                break;
+            }
             case Tab::Maintenance: {
                 auto sys = reachy_client::fetchSystemState();
                 bool want_logs = _logs_requested.exchange(false);
@@ -824,4 +1091,83 @@ void AppReachy::_gestureCb(lv_event_t* e) {
     if (lv_indev_get_gesture_dir(dev) != LV_DIR_TOP) return;
     auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
     lv_async_call([](void* data) { static_cast<AppReachy*>(data)->_requestClose(); }, self);
+}
+
+// ── Base control callbacks ─────────────────────────────
+void AppReachy::_baseArmCb(lv_event_t* e) {
+    auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
+    if (self->_base_armed) {
+        self->_baseEndDrive(false);
+        self->_base_armed = false;
+        self->_base_arm_wanted.store(false);
+        set_label(self->_ba_state, "已停用，未接管", kTextMuted);
+        self->_baseUpdateControls();
+        return;
+    }
+    self->_baseShowArmConfirm();
+}
+
+void AppReachy::_baseArmConfirmYesCb(lv_event_t* e) {
+    auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
+    if (auto* top = lv_layer_top()) lv_obj_clean(top);
+    // Arming only latches user intent; the lease itself is acquired on the
+    // first Deadman press (iOS L2 semantics — a lease without held frames
+    // would just expire against the 250 ms server TTL).
+    self->_base_armed = true;
+    set_label(self->_ba_state, "已启用。按住 Deadman 接管底盘", kOk);
+    self->_baseUpdateControls();
+}
+
+void AppReachy::_baseArmConfirmNoCb(lv_event_t* e) {
+    if (auto* top = lv_layer_top()) lv_obj_clean(top);
+}
+
+void AppReachy::_baseDeadmanCb(lv_event_t* e) {
+    auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
+    const auto code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        self->_base_deadman = true;
+        // Fresh press acquires a fresh lease (iOS semantics: a released L2
+        // session cannot be reused within the 250 ms TTL).
+        if (self->_base_armed && self->_base_session.empty() &&
+            !self->_base_acquire_inflight.load()) {
+            self->_baseStartAcquire();
+        }
+    } else {
+        // RELEASED / PRESS_LOST: zero + release immediately.
+        self->_baseEndDrive(false);
+    }
+    self->_baseUpdateControls();
+}
+
+void AppReachy::_baseStopCb(lv_event_t* e) {
+    auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
+    self->_baseEndDrive(true);
+}
+
+void AppReachy::_baseJoyCb(lv_event_t* e) {
+    auto* app = static_cast<AppReachy*>(lv_event_get_user_data(e));
+    lv_obj_t* pad = app->_ba_joy_pad;
+    const auto code = lv_event_get_code(e);
+    if (code == LV_EVENT_RELEASED) {
+        app->_base_lin = app->_base_ang = 0.f;
+        lv_obj_set_pos(app->_ba_joy_knob, (340 - 96) / 2, (340 - 96) / 2);
+        return;
+    }
+    lv_point_t point;
+    lv_indev_get_point(lv_indev_active(), &point);
+    lv_area_t area;
+    lv_obj_get_coords(pad, &area);
+    const float cx = area.x1 + (area.x2 - area.x1) * 0.5f;
+    const float cy = area.y1 + (area.y2 - area.y1) * 0.5f;
+    const float radius = (area.x2 - area.x1) * 0.5f;
+    float dx = (point.x - cx) / radius;
+    float dy = (point.y - cy) / radius;
+    const float mag = std::sqrt(dx * dx + dy * dy);
+    if (mag > 1.f) { dx /= mag; dy /= mag; }
+    app->_base_ang = dx;          // stick right = clockwise
+    app->_base_lin = -dy;         // stick up = forward
+    lv_obj_set_pos(app->_ba_joy_knob,
+                   static_cast<int>(170 + dx * (170 - 48) - 48),
+                   static_cast<int>(170 + dy * (170 - 48) - 48));
 }

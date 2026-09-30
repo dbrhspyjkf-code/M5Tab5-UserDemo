@@ -31,8 +31,9 @@ private:
     static constexpr int POLL_MS = 5000;
     static constexpr int CHAT_POLL_MS = 3000;
     static constexpr int VIDEO_POLL_MS = 500;
+    static constexpr int BASE_FRAME_MS = 50;   // 20 Hz lease heartbeat, as iOS
 
-    enum class Tab : int { Overview, Voice, Interaction, Camera, Maintenance, Count };
+    enum class Tab : int { Overview, Voice, Interaction, Camera, Base, Maintenance, Count };
 
     std::function<void()> _close_cb;
     lv_obj_t* _scr = nullptr;
@@ -99,6 +100,35 @@ private:
     std::atomic<bool> _video_frame_ready{false};
     uint32_t _last_video_poll_ms = 0;
 
+    // Base (mobile chassis) remote control — iOS Base Control parity.
+    lv_obj_t* _ba_state = nullptr;
+    lv_obj_t* _ba_goto = nullptr;
+    lv_obj_t* _ba_gamepad = nullptr;
+    lv_obj_t* _ba_lease = nullptr;
+    lv_obj_t* _ba_joy_pad = nullptr;
+    lv_obj_t* _ba_joy_knob = nullptr;
+    lv_obj_t* _ba_deadman_btn = nullptr;
+    lv_obj_t* _ba_deadman_lbl = nullptr;
+    lv_obj_t* _ba_stop_btn = nullptr;
+    lv_obj_t* _ba_arm_btn = nullptr;
+    lv_obj_t* _ba_arm_lbl = nullptr;
+    lv_obj_t* _ba_hint = nullptr;
+    reachy_client::BaseMoveStatus _base_status;
+    bool _has_base_status = false;
+    std::string _base_session;        // empty = no active lease
+    bool _base_armed = false;         // user ran the arm toggle (interlocks passed)
+    bool _base_deadman = false;
+    float _base_lin = 0.f;            // normalized [-1, 1], up = forward
+    float _base_ang = 0.f;            // normalized [-1, 1], right = clockwise
+    uint32_t _base_seq = 0;
+    uint32_t _last_base_frame_ms = 0;
+    std::atomic<bool> _base_frame_inflight{false};
+    std::atomic<bool> _base_acquire_inflight{false};
+    std::atomic<bool> _base_fail{false};
+    reachy_client::BaseMoveLease _base_arm_result;
+    std::atomic<bool> _base_arm_result_ready{false};
+    std::atomic<bool> _base_arm_wanted{false};
+
     // Maintenance.
     lv_obj_t* _sy_state = nullptr;
     lv_obj_t* _sy_daemon = nullptr;
@@ -159,6 +189,7 @@ private:
     void _buildVoicePage();
     void _buildInteractionPage();
     void _buildCameraPage();
+    void _buildBasePage();
     void _buildMaintenancePage();
     void _selectDestination(Tab t);
     void _refreshActiveTab();
@@ -168,11 +199,17 @@ private:
     void _renderVoice();
     void _renderInteraction();
     void _renderChat();
+    void _renderBase();
     void _renderMaintenance();
     void _renderLogs();
     void _pollVideoFrame();
     void _renderVideoFrame();
     void _stopVideoPreview();
+    void _baseTickFrame();
+    void _baseStartAcquire();
+    void _baseEndDrive(bool sendStop);
+    void _baseShowArmConfirm();
+    void _baseUpdateControls();
     bool _queueOperation(Operation operation);
     reachy_client::OperationResult _executeOperation(const Operation& operation);
     reachy_client::OperationResult _switchBackend(const std::string& target);
@@ -192,4 +229,10 @@ private:
     static void _confirmNoCb(lv_event_t* e);
     static void _modalBgCb(lv_event_t* e);
     static void _gestureCb(lv_event_t* e);
+    static void _baseArmCb(lv_event_t* e);
+    static void _baseDeadmanCb(lv_event_t* e);
+    static void _baseStopCb(lv_event_t* e);
+    static void _baseJoyCb(lv_event_t* e);
+    static void _baseArmConfirmYesCb(lv_event_t* e);
+    static void _baseArmConfirmNoCb(lv_event_t* e);
 };

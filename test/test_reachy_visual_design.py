@@ -16,9 +16,9 @@ class ReachyVisualDesignTests(unittest.TestCase):
         for factory in ("makeSurface", "makeLabel", "makeButton", "makeStatusPill"):
             self.assertIn(factory, UI)
 
-    def test_five_destinations_replace_old_eight_tab_navigation(self):
-        self.assertIn("Overview, Voice, Interaction, Camera, Maintenance, Count", HEADER)
-        self.assertIn('{"概览", "语音", "互动", "相机", "维护"}', SOURCE)
+    def test_six_destinations_replace_old_eight_tab_navigation(self):
+        self.assertIn("Overview, Voice, Interaction, Camera, Base, Maintenance, Count", HEADER)
+        self.assertIn('{"概览", "语音", "互动", "相机", "底盘", "维护"}', SOURCE)
         self.assertIn("_buildBottomDock", SOURCE)
         self.assertNotIn('{"状态", "运动", "音频", "控制", "聊天", "视频", "系统", "日志"}', SOURCE)
 
