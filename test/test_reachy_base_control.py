@@ -55,12 +55,17 @@ class ReachyBaseControlTests(unittest.TestCase):
         self.assertIn("_base_lin * reachy_client::BASE_MAX_LINEAR_X", tick)
         self.assertIn("-_base_ang * reachy_client::BASE_MAX_ANGULAR_Z", tick)
 
-    def test_twenty_hz_single_flight_frame_loop(self):
+    def test_twenty_hz_pipelined_frame_loop(self):
+        # Each HAL HTTP call opens a fresh TCP connection (90-170 ms RTT), so
+        # a request-response loop starves the 250 ms server lease TTL. The
+        # loop therefore pipelines: fire every 50 ms with up to three frames
+        # in flight, renewing the server lease at a steady 50 ms cadence.
         self.assertIn("BASE_FRAME_MS = 50", HEADER)
-        self.assertIn("_base_frame_inflight", HEADER)
+        self.assertIn("BASE_MAX_INFLIGHT = 3", HEADER)
+        self.assertIn("_base_frames_inflight", HEADER)
         running = SOURCE.split("void AppReachy::onRunning()", 1)[1]
         running = running.split("void AppReachy::_buildUI", 1)[0]
-        self.assertIn("_base_frame_inflight.load()", running)
+        self.assertIn("_base_frames_inflight.load() < BASE_MAX_INFLIGHT", running)
         self.assertIn("BASE_FRAME_MS", running)
 
     def test_deadman_release_zeroes_and_releases(self):

@@ -124,7 +124,12 @@ private:
     uint32_t _last_base_frame_ms = 0;
     uint32_t _base_frame_scheduled_ms = 0;
     int _base_reacquire_fails = 0;
-    std::atomic<bool> _base_frame_inflight{false};
+    // Pipelined frames: the proxy adds 90-170 ms RTT per request (fresh TCP
+    // per HAL call), so waiting for each response starves the 250 ms server
+    // lease TTL. Send every 50 ms regardless and allow up to three frames in
+    // flight — the server then sees a steady 50 ms renewal cadence.
+    static constexpr int BASE_MAX_INFLIGHT = 3;
+    std::atomic<int> _base_frames_inflight{0};
     std::atomic<bool> _base_acquire_inflight{false};
     std::string _base_frame_error;
     std::atomic<bool> _base_frame_error_ready{false};

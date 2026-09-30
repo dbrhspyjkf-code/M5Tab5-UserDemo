@@ -124,6 +124,8 @@ void AppReachy::onRunning() {
                 _base_session = lease.session_id;
                 _base_seq = 0;
                 _base_reacquire_fails = 0;
+                _last_base_frame_ms = 0;   // first frame leaves immediately
+                mclog::tagInfo(_tag, "base lease acquired: %.16s", lease.session_id.c_str());
                 set_label(_ba_state, "已接管底盘，按住 Deadman 驾驶", kOk);
             } else if (lease.ok) {
                 _base_arm_wanted.store(false);
@@ -134,6 +136,7 @@ void AppReachy::onRunning() {
             } else {
                 _base_arm_wanted.store(false);
                 _base_reacquire_fails += 1;
+                mclog::tagWarn(_tag, "base acquire failed: %s", lease.error.c_str());
                 set_label(_ba_state, "接管失败：「" + lease.error + "」", kError);
             }
             _baseUpdateControls();
@@ -161,20 +164,22 @@ void AppReachy::onRunning() {
             }
         }
         const uint32_t now = GetHAL()->millis();
-        // Watchdog: a frame stuck in flight (slow timeout) must not leave the
+        // Watchdog: frames stuck in flight (slow timeout) must not leave the
         // UI pretending to drive — the server watchdog has already parked.
-        if (_base_frame_inflight.load() &&
+        if (_base_frames_inflight.load() > 0 &&
             now - _base_frame_scheduled_ms > 1200) {
-            _base_frame_inflight.store(false);
+            _base_frames_inflight.store(0);
             {
                 std::lock_guard<std::mutex> lock(_cache_mutex);
                 _base_frame_error = "帧响应超时";
             }
             _base_frame_error_ready.store(true);
         }
-        if (!_base_session.empty() && _base_deadman && !_base_frame_inflight.load() &&
+        if (!_base_session.empty() && _base_deadman &&
+            _base_frames_inflight.load() < BASE_MAX_INFLIGHT &&
             now - _last_base_frame_ms >= BASE_FRAME_MS) {
             _last_base_frame_ms = now;
+            _base_frame_scheduled_ms = now;
             _baseTickFrame();
         }
     }
@@ -583,8 +588,7 @@ void AppReachy::_baseStartAcquire(bool interlocks) {
 }
 
 void AppReachy::_baseTickFrame() {
-    _base_frame_inflight.store(true);
-    _base_frame_scheduled_ms = GetHAL()->millis();
+    _base_frames_inflight.fetch_add(1);
     const std::string session = _base_session;
     const uint32_t seq = ++_base_seq;
     // Same mapping as the iOS virtual stick: up = forward, right = clockwise
@@ -595,14 +599,16 @@ void AppReachy::_baseTickFrame() {
     const bool started = GetHAL()->tryRunDetached([this, session, seq, linear_x, angular_z, generation]() {
         auto result = reachy_client::baseFrame(session, seq, linear_x, angular_z, true);
         if (!result.ok && generation == _open_generation.load()) {
+            mclog::tagWarn(_tag, "base frame seq=%lu failed: %d %s",
+                           static_cast<unsigned long>(seq), result.status, result.error.c_str());
             std::lock_guard<std::mutex> lock(_cache_mutex);
             _base_frame_error = result.error;
             _base_frame_error_ready.store(true);
         }
-        _base_frame_inflight.store(false);
+        _base_frames_inflight.fetch_sub(1);
     });
     if (!started) {
-        _base_frame_inflight.store(false);
+        _base_frames_inflight.fetch_sub(1);
         {
             std::lock_guard<std::mutex> lock(_cache_mutex);
             _base_frame_error = "无法启动底盘任务";
