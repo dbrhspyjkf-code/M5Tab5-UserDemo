@@ -74,10 +74,14 @@ class ReachyBaseControlTests(unittest.TestCase):
         self.assertIn("baseStop()", body)
         self.assertIn("baseRelease(session)", body)
         self.assertIn("sendStop", body)
-        deadman = function_body(SOURCE, "_baseDeadmanCb")
-        self.assertIn("LV_EVENT_PRESSED", deadman)
-        self.assertIn("_baseEndDrive(false)", deadman)
-        self.assertIn("LV_EVENT_PRESS_LOST", SOURCE)
+        # Touch-to-drive: the joystick press is the deadman and its release
+        # must park immediately (single-pointer LVGL cannot do two-finger).
+        joy = function_body(SOURCE, "_baseJoyCb")
+        self.assertIn("LV_EVENT_PRESSED", joy)
+        self.assertIn("_base_deadman = true", joy)
+        self.assertIn("_baseStartAcquire(true)", joy)
+        self.assertIn("LV_EVENT_PRESS_LOST", joy)
+        self.assertIn("_baseEndDrive(false)", joy)
 
     def test_lease_loss_reacquires_while_deadman_held(self):
         # The server lease TTL is 250 ms while proxied frame RTT is 90-170 ms,
@@ -145,6 +149,14 @@ class ReachyBaseControlTests(unittest.TestCase):
         self.assertIn("_buildBasePage()", SOURCE)
         self.assertIn("Camera, Base, Maintenance, Count", HEADER)
         self.assertIn("Tab::Base", SOURCE)
+
+    def test_knob_does_not_eat_pad_touches(self):
+        # LVGL9 base objects are CLICKABLE by default; the knob must let
+        # presses fall through to the pad that owns the joystick events.
+        build = SOURCE.split("void AppReachy::_buildBasePage()", 1)[1]
+        build = build.split("void AppReachy::_buildMaintenancePage", 1)[0]
+        self.assertIn("lv_obj_clear_flag(_ba_joy_knob, LV_OBJ_FLAG_CLICKABLE)", build)
+        self.assertNotIn("_ba_deadman_btn", SOURCE)
 
 
 if __name__ == "__main__":

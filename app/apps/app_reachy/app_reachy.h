@@ -107,8 +107,6 @@ private:
     lv_obj_t* _ba_lease = nullptr;
     lv_obj_t* _ba_joy_pad = nullptr;
     lv_obj_t* _ba_joy_knob = nullptr;
-    lv_obj_t* _ba_deadman_btn = nullptr;
-    lv_obj_t* _ba_deadman_lbl = nullptr;
     lv_obj_t* _ba_stop_btn = nullptr;
     lv_obj_t* _ba_arm_btn = nullptr;
     lv_obj_t* _ba_arm_lbl = nullptr;
@@ -238,7 +236,6 @@ private:
     static void _modalBgCb(lv_event_t* e);
     static void _gestureCb(lv_event_t* e);
     static void _baseArmCb(lv_event_t* e);
-    static void _baseDeadmanCb(lv_event_t* e);
     static void _baseStopCb(lv_event_t* e);
     static void _baseJoyCb(lv_event_t* e);
     static void _baseArmConfirmYesCb(lv_event_t* e);

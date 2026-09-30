@@ -450,12 +450,17 @@ void AppReachy::_buildBasePage() {
     _ba_joy_knob = makeSurface(_ba_joy_pad,
                                (PAD_SIZE - KNOB_SIZE) / 2, (PAD_SIZE - KNOB_SIZE) / 2,
                                KNOB_SIZE, KNOB_SIZE, kAccentSoft, KNOB_SIZE / 2);
-    lv_obj_clear_flag(_ba_joy_pad, LV_OBJ_FLAG_CLICKABLE);
+    // LVGL9 base objects are CLICKABLE by default; the knob must never eat
+    // touches aimed at the pad underneath.
+    lv_obj_clear_flag(_ba_joy_knob, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(_ba_joy_pad, LV_OBJ_FLAG_CLICKABLE);
+    // Touch-to-drive: pressing the pad is the deadman (single-pointer safe —
+    // a second finger would never reach LVGL while another control is held).
     lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_PRESSED, this);
     lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_PRESSING, this);
     lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_RELEASED, this);
-    _ba_hint = value_label(joy, "驾驶时请一直按住右侧 Deadman。", 20, 530, 516, kTextMuted);
+    lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_PRESS_LOST, this);
+    _ba_hint = value_label(joy, "按住摇杆即驾驶（集成 Deadman）\n松开立即停车", 20, 500, 516, kTextMuted);
 
     // Right top: status card (672x150).
     lv_obj_t* status = makeSurface(page, 576, 0, 672, 150);
@@ -465,33 +470,21 @@ void AppReachy::_buildBasePage() {
     _ba_gamepad = value_label(status, "物理手柄：—", 340, 88, 300, kTextMuted);
     _ba_lease  = value_label(status, "远端租约：—", 20, 116, 620, kTextMuted);
 
-    // Deadman hold zone (672x120).
-    _ba_deadman_btn = makeSurface(page, 576, 166, 672, 120, kSurfaceAlt, 20);
-    lv_obj_set_style_border_color(_ba_deadman_btn, lv_color_hex(kStroke), 0);
-    lv_obj_add_flag(_ba_deadman_btn, LV_OBJ_FLAG_CLICKABLE);
-    _ba_deadman_lbl = lv_label_create(_ba_deadman_btn);
-    lv_label_set_text(_ba_deadman_lbl, "按住 Deadman 驾驶");
-    lv_obj_center(_ba_deadman_lbl);
-    lv_obj_set_style_text_color(_ba_deadman_lbl, lv_color_hex(kTextMuted), 0);
-    lv_obj_set_style_text_font(_ba_deadman_lbl, zh_font_lg(), 0);
-    lv_obj_add_event_cb(_ba_deadman_btn, _baseDeadmanCb, LV_EVENT_PRESSED, this);
-    lv_obj_add_event_cb(_ba_deadman_btn, _baseDeadmanCb, LV_EVENT_RELEASED, this);
-    lv_obj_add_event_cb(_ba_deadman_btn, _baseDeadmanCb, LV_EVENT_PRESS_LOST, this);
-
-    // Arm toggle + emergency stop (row at y=302).
-    _ba_arm_btn = makeButton(page, "启用底盘控制", 576, 302, 400, 90, zh_font_lg(), kAccentSoft);
+    // Arm toggle + emergency stop (row at y=166).
+    _ba_arm_btn = makeButton(page, "启用底盘控制", 576, 166, 400, 90, zh_font_lg(), kAccentSoft);
     _ba_arm_lbl = lv_obj_get_child(_ba_arm_btn, 0);
     lv_obj_add_event_cb(_ba_arm_btn, _baseArmCb, LV_EVENT_CLICKED, this);
-    _ba_stop_btn = makeButton(page, "紧急停止", 992, 302, 256, 90, zh_font_lg(), kError);
+    _ba_stop_btn = makeButton(page, "紧急停止", 992, 166, 256, 90, zh_font_lg(), kError);
     lv_obj_add_event_cb(_ba_stop_btn, _baseStopCb, LV_EVENT_CLICKED, this);
 
-    // Usage / safety card (672x166).
-    lv_obj_t* usage = makeSurface(page, 576, 408, 672, 166);
+    // Usage / safety card (672x272).
+    lv_obj_t* usage = makeSurface(page, 576, 272, 672, 272);
     makeLabel(usage, "安全说明", 20, 16, zh_font_lg());
     makeLabel(usage,
+              "· 启用后，按住摇杆即接管并驾驶\n"
+              "· 松开摇杆、离开本页立即零速并释放\n"
               "· Goto 巡航或物理手柄占用时禁止遥控\n"
-              "· 松开 Deadman 立即零速并释放租约\n"
-              "· 离开本页或关闭应用自动停车",
+              "· 最大速度 0.12 m/s，服务端双重限幅",
               20, 58, zh_font_sm(), kTextMuted);
 }
 
@@ -524,12 +517,9 @@ void AppReachy::_baseUpdateControls() {
     if (_ba_arm_btn)
         lv_obj_set_style_bg_color(_ba_arm_btn,
             lv_color_hex(_base_armed ? kWarn : kAccentSoft), 0);
-    if (_ba_deadman_btn)
-        lv_obj_set_style_bg_color(_ba_deadman_btn,
-            lv_color_hex(_base_deadman && !_base_session.empty() ? kAccent : kSurfaceAlt), 0);
-    if (_ba_deadman_lbl)
-        lv_obj_set_style_text_color(_ba_deadman_lbl,
-            lv_color_hex(_base_deadman && !_base_session.empty() ? kBg : kTextMuted), 0);
+    if (_ba_joy_knob)
+        lv_obj_set_style_bg_color(_ba_joy_knob,
+            lv_color_hex(_base_deadman && !_base_session.empty() ? kAccent : kAccentSoft), 0);
 }
 
 void AppReachy::_baseStartAcquire(bool interlocks) {
@@ -1181,25 +1171,6 @@ void AppReachy::_baseArmConfirmNoCb(lv_event_t* e) {
     if (auto* top = lv_layer_top()) lv_obj_clean(top);
 }
 
-void AppReachy::_baseDeadmanCb(lv_event_t* e) {
-    auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
-    const auto code = lv_event_get_code(e);
-    if (code == LV_EVENT_PRESSED) {
-        self->_base_deadman = true;
-        self->_base_reacquire_fails = 0;
-        // Fresh press acquires a fresh lease (iOS semantics: a released L2
-        // session cannot be reused within the 250 ms TTL).
-        if (self->_base_armed && self->_base_session.empty() &&
-            !self->_base_acquire_inflight.load()) {
-            self->_baseStartAcquire(true);
-        }
-    } else {
-        // RELEASED / PRESS_LOST: zero + release immediately.
-        self->_baseEndDrive(false);
-    }
-    self->_baseUpdateControls();
-}
-
 void AppReachy::_baseStopCb(lv_event_t* e) {
     auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
     self->_baseEndDrive(true);
@@ -1209,9 +1180,22 @@ void AppReachy::_baseJoyCb(lv_event_t* e) {
     auto* app = static_cast<AppReachy*>(lv_event_get_user_data(e));
     lv_obj_t* pad = app->_ba_joy_pad;
     const auto code = lv_event_get_code(e);
-    if (code == LV_EVENT_RELEASED) {
+    if (code == LV_EVENT_PRESSED) {
+        // Touch-to-drive: the pad press IS the deadman. LVGL delivers only
+        // one pointer, so a separate deadman button would lock out the
+        // joystick — integrate the latch here instead.
+        app->_base_deadman = true;
+        app->_base_reacquire_fails = 0;
+        if (app->_base_armed && app->_base_session.empty() &&
+            !app->_base_acquire_inflight.load()) {
+            app->_baseStartAcquire(true);
+        }
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        // Release = the deadman latch drops: zero + release immediately.
         app->_base_lin = app->_base_ang = 0.f;
         lv_obj_set_pos(app->_ba_joy_knob, (340 - 96) / 2, (340 - 96) / 2);
+        app->_baseEndDrive(false);
+        app->_baseUpdateControls();
         return;
     }
     lv_point_t point;
