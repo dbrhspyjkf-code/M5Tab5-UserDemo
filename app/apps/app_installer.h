@@ -14,7 +14,7 @@
 #include "app_home/app_home.h"
 #include "app_xiaozhi/app_xiaozhi.h"
 #include "app_settings/app_settings.h"
-#include "app_project_assistant/app_project_assistant.h"
+#include "app_reachy/app_reachy.h"
 #include "app_voice_input/app_voice_input.h"
 #include "app_unit_puzzle/app_unit_puzzle.h"
 #include "app_lora_chat/app_lora_chat.h"
@@ -64,9 +64,6 @@ inline void on_install_apps()
     auto set_uptr  = std::make_unique<AppSettings>();
     AppSettings* settings = set_uptr.get();
 
-    auto pa_uptr = std::make_unique<AppProjectAssistant>();
-    AppProjectAssistant* project_assistant = pa_uptr.get();
-
     auto up_uptr = std::make_unique<AppUnitPuzzle>();
     AppUnitPuzzle* unit_puzzle = up_uptr.get();
 
@@ -76,6 +73,9 @@ inline void on_install_apps()
     auto st_uptr = std::make_unique<AppStocks>();
     AppStocks* stocks = st_uptr.get();
 
+    auto re_uptr = std::make_unique<AppReachy>();
+    AppReachy* reachy = re_uptr.get();
+
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
 
@@ -84,16 +84,15 @@ inline void on_install_apps()
     int ha_id = mooncake::GetMooncake().installApp(std::move(ha_uptr));
     int xz_id = mooncake::GetMooncake().installApp(std::move(xz_uptr));
     int set_id = mooncake::GetMooncake().installApp(std::move(set_uptr));
-    int pa_id = mooncake::GetMooncake().installApp(std::move(pa_uptr));
     int up_id = mooncake::GetMooncake().installApp(std::move(up_uptr));
     int lc_id = mooncake::GetMooncake().installApp(std::move(lc_uptr));
     int st_id = mooncake::GetMooncake().installApp(std::move(st_uptr));
+    int re_id = mooncake::GetMooncake().installApp(std::move(re_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
     xz->setCloseCallback([home]() { home->restoreScreen(); });
     settings->setCloseCallback([home]() { home->restoreScreen(); });
-    project_assistant->setCloseCallback([home]() { home->restoreScreen(); });
     // 灯阵是从「工具」页 (AppSettings) 打开的, 上拨返回到工具页而非主屏.
     unit_puzzle->setCloseCallback([settings, set_id]() {
         (void)settings;
@@ -107,11 +106,16 @@ inline void on_install_apps()
     stocks->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+    // Reachy 同样从「工具」页打开, 返回 (← / 上拨) 回到工具页.
+    reachy->setCloseCallback([set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+    });
 
     // 灯阵入口放到「工具」页第 2 行 (由 AppSettings 持有), 不再占 home 一格.
     settings->setPuzzleAppId(up_id);
     settings->setLoraChatAppId(lc_id);
     settings->setStocksAppId(st_id);
+    settings->setReachyAppId(re_id);
 
     // Status-bar mail icon → open the AppSettings email sub-page. The handler
     // (1) brings the AppSettings app to the foreground (its onOpen builds the
@@ -145,7 +149,6 @@ inline void on_install_apps()
     home->addApp("智能家居", ha_id);
     home->addApp("小  智", xz_id);
     home->addApp("工  具", set_id);
-    home->addApp("Hermes", pa_id);
     /* Install app locator (Don't remove) */
 
     // ── Voice input WorkerAbility (always-on, not a user-launchable app) ──

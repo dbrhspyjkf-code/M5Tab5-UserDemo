@@ -97,6 +97,7 @@ private:
     lv_obj_t* _net_ssid   = nullptr;  // network dialog: SSID textarea
     lv_obj_t* _net_pass   = nullptr;  // network dialog: password textarea
     lv_obj_t* _net_host   = nullptr;  // network dialog: server host textarea (writes both ha_host + svc_host)
+    lv_obj_t* _net_reachy = nullptr;  // network dialog: Reachy 主机 textarea (NVS reachy_host)
     lv_obj_t* _net_ssid_dd = nullptr; // network dialog: scan-result dropdown
     lv_obj_t* _net_kb     = nullptr;  // network dialog: on-screen keyboard
     lv_obj_t* _net_status = nullptr;  // network dialog: status line

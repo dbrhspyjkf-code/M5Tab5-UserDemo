@@ -45,6 +45,10 @@ public:
     void setStocksAppId(int id) { _stocks_id = id; }
     void openStocks();  // 工具页 tile → 打开自选股 app
 
+    // AppReachy (Reachy 仪表盘) 的 mooncake app id, 由 app_installer 注入.
+    void setReachyAppId(int id) { _reachy_id = id; }
+    void openReachy();  // 工具页 tile → 打开 Reachy app
+
     // ── Shared email cache (status-bar poll + sub-page both read these) ──
     // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
     // and reads email_unread_total to decide whether to show the icon.
@@ -72,6 +76,7 @@ private:
     int _puzzle_id    = -1;
     int _lora_chat_id = -1;
     int _stocks_id    = -1;
+    int _reachy_id    = -1;
 
     lv_indev_t* _gesture_indev = nullptr;
     lv_obj_t*   _scr        = nullptr;
@@ -162,5 +167,6 @@ private:
 
     static void _toolMail_cb(lv_event_t* e);   // tools tile → open email page
     static void _toolStocks_cb(lv_event_t* e); // tools tile → open 自选股
+    static void _toolReachy_cb(lv_event_t* e); // tools tile → open Reachy app
     static void _emailRefresh_cb(lv_event_t* e); // 邮件子页刷新按钮 → _emailFetch
 };

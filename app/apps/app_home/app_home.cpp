@@ -752,6 +752,13 @@ void AppHome::_openNetworkDialog()
     mk_label("服务器", y);
     _net_host = mk_ta(y, FLD_W, false);
     lv_textarea_set_text(_net_host, hal->getConfig("ha_host", "").c_str());
+    y += ROW_H;
+
+    // Reachy 主机 — Reachy Mini 跑 YRobot FastAPI 服务 (默认 :8042).
+    // 独立字段, 因为 Reachy 装在 192.168.1.14, 而 HA/SVC 装在 192.168.1.200/133.
+    mk_label("Reachy 主机", y);
+    _net_reachy = mk_ta(y, FLD_W, false);
+    lv_textarea_set_text(_net_reachy, hal->getConfig("reachy_host", "192.168.1.14").c_str());
     y += ROW_H + 6;
 
     // Save + status
@@ -802,6 +809,7 @@ void AppHome::_doNetworkSave()
     std::string ssid  = lv_textarea_get_text(_net_ssid);
     std::string pass  = lv_textarea_get_text(_net_pass);
     std::string host  = ha_weather::hostOnly(lv_textarea_get_text(_net_host));
+    std::string reachy_host = ha_weather::hostOnly(lv_textarea_get_text(_net_reachy));
     if (ssid.empty()) {
         lv_label_set_text(_net_status, "请填写 WiFi 名称");
         return;
@@ -812,8 +820,11 @@ void AppHome::_doNetworkSave()
         hal->setConfig("ha_host", host);
         hal->setConfig("svc_host", host);
     }
+    if (!reachy_host.empty()) {
+        hal->setConfig("reachy_host", reachy_host);
+    }
     lv_label_set_text(_net_status, "已保存，正在重启…");
-    mclog::tagInfo(_tag, "network saved ssid={} host={}, rebooting", ssid, host);
+    mclog::tagInfo(_tag, "network saved ssid={} host={} reachy={}, rebooting", ssid, host, reachy_host);
     hal->delay(800);
     hal->reboot();
 }
