@@ -544,6 +544,14 @@ inline std::vector<ChatMessage> fetchChat(int limit = 200, size_t max_user_turns
     return messages;
 }
 
+inline std::string fetchCameraFrame() {
+    auto resp = GetHAL()->httpGet(_base() + "/api/camera/frame");
+    if (!resp.ok || resp.body.size() < 4 ||
+        static_cast<uint8_t>(resp.body[0]) != 0xFF ||
+        static_cast<uint8_t>(resp.body[1]) != 0xD8) return {};
+    return std::move(resp.body);
+}
+
 // ── System (GET /api/system/state) ──────────────────────────────────────────
 // Real schema: { "state": { "service": "yrobot.service", "running": true,
 //                         "pid": 9998, "uptime_s": 2544 } }

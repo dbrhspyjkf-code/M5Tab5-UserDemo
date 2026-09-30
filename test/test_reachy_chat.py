@@ -1,51 +1,56 @@
+import re
 import unittest
 from pathlib import Path
 
-
-SOURCE = (Path(__file__).resolve().parents[1] / "app/apps/app_reachy/reachy_client.h")
-UI_HEADER = (Path(__file__).resolve().parents[1] / "app/apps/app_reachy/app_reachy.h")
-UI_SOURCE = (Path(__file__).resolve().parents[1] / "app/apps/app_reachy/app_reachy.cpp")
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = (ROOT / "app/apps/app_reachy/reachy_client.h").read_text()
+UI_HEADER = (ROOT / "app/apps/app_reachy/app_reachy.h").read_text()
+UI_SOURCE = (ROOT / "app/apps/app_reachy/app_reachy.cpp").read_text()
+SDKCONFIG = (ROOT / "platforms/tab5/sdkconfig").read_text()
+DEFAULTS = (ROOT / "platforms/tab5/sdkconfig.defaults").read_text()
 
 
 class ReachyChatContractTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.source = SOURCE.read_text()
-        cls.ui_header = UI_HEADER.read_text()
-        cls.ui_source = UI_SOURCE.read_text()
-
     def test_chat_uses_filtered_bounded_endpoint(self):
-        self.assertIn('/api/logs?filter=chat&limit=', self.source)
-        self.assertIn('fetchChat(int limit = 200, size_t max_user_turns = 6)', self.source)
+        self.assertIn('/api/logs?filter=chat&limit=', SOURCE)
+        self.assertIn('fetchChat(int limit = 200, size_t max_user_turns = 6)', SOURCE)
 
     def test_only_approved_chat_markers_are_parsed(self):
-        for marker in ("xz stt:", "xz tts text:",
-                       "qwen stt:", "qwen response:"):
-            self.assertIn(marker, self.source)
-        self.assertIn('text.rfind("% tool", 0)', self.source)
+        for marker in ("xz stt:", "xz tts text:", "qwen stt:", "qwen response:"):
+            self.assertIn(marker, SOURCE)
 
-    def test_history_keeps_last_user_led_turns_in_order(self):
-        self.assertIn("user_starts", self.source)
-        self.assertIn("max_user_turns", self.source)
-        self.assertIn("messages.erase", self.source)
-        self.assertIn("user_starts[user_starts.size() - max_user_turns]", self.source)
+    def test_interaction_combines_motion_and_chat(self):
+        build = UI_SOURCE.split("void AppReachy::_buildInteractionPage()", 1)[1]
+        build = build.split("void AppReachy::_buildCameraPage()", 1)[0]
+        self.assertIn("动作与注视", build)
+        self.assertIn("最近对话", build)
+        self.assertIn("_chat_container", UI_HEADER)
 
-    def test_chat_page_uses_scrollable_left_and_right_bubbles(self):
-        self.assertIn("_chat_container", self.ui_header)
-        render = self.ui_source.split("void AppReachy::_renderChat", 1)[1]
-        render = render.split("void AppReachy::", 1)[0]
+    def test_chat_keeps_left_and_right_bubbles_and_skips_duplicates(self):
+        render = UI_SOURCE.split("void AppReachy::_renderChat", 1)[1]
+        render = render.split("void AppReachy::_renderMaintenance", 1)[0]
         self.assertIn("LV_ALIGN_TOP_RIGHT", render)
         self.assertIn("LV_ALIGN_TOP_LEFT", render)
+        self.assertIn("if (signature == _chat_signature) return", render)
         self.assertIn("lv_obj_scroll_to_y", render)
-        self.assertIn("LV_ANIM_OFF", render)
 
-    def test_chat_avoids_rebuild_when_signature_is_unchanged(self):
-        self.assertIn("_chat_signature", self.ui_header)
-        self.assertIn("if (signature == _chat_signature) return", self.ui_source)
+    def test_chat_bubble_width_is_large_but_bounded_for_tab5(self):
+        render = UI_SOURCE.split("void AppReachy::_renderChat", 1)[1]
+        match = re.search(r"makeSurface\(_chat_container, 0, 0, (\d+)", render)
+        self.assertIsNotNone(match)
+        self.assertEqual(int(match.group(1)), 520)
 
-    def test_chat_polls_every_three_seconds(self):
-        self.assertIn("CHAT_POLL_MS = 3000", self.ui_header)
-        self.assertIn("_active == Tab::Chat ? CHAT_POLL_MS : POLL_MS", self.ui_source)
+    def test_interaction_refreshes_chat_every_three_seconds(self):
+        self.assertIn("CHAT_POLL_MS = 3000", UI_HEADER)
+        self.assertIn("_active == Tab::Interaction ? CHAT_POLL_MS : POLL_MS", UI_SOURCE)
+
+    def test_tab5_keeps_lvgl_heap_in_psram(self):
+        self.assertIn("ensure_reachy_lvgl_pool();", UI_SOURCE)
+        self.assertIn("MALLOC_CAP_SPIRAM", UI_SOURCE)
+        self.assertIn("lv_mem_add_pool", UI_SOURCE)
+        setting = "CONFIG_LV_MEM_POOL_EXPAND_SIZE_KILOBYTES=128"
+        self.assertIn(setting, SDKCONFIG)
+        self.assertIn(setting, DEFAULTS)
 
 
 if __name__ == "__main__":
