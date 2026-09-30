@@ -684,8 +684,10 @@ inline BaseMoveStatus fetchBaseStatus() {
 inline BaseMoveLease baseAcquire() {
     BaseMoveLease lease;
     // The fixed proxy API requires an explicit empty JSON object here.
-    auto resp = GetHAL()->httpPost(_base() + "/api/mobile-base/remote/acquire", "{}",
-                                   _jsonHeaders());
+    // Keep-alive transport: the lease/frame burst benefits from connection
+    // reuse the same way the 20 Hz frame stream does.
+    auto resp = GetHAL()->httpPostKeepAlive(_base() + "/api/mobile-base/remote/acquire", "{}",
+                                            _jsonHeaders());
     auto result = _baseResult(resp);
     lease.ok = result.ok;
     lease.error = result.error;
@@ -722,22 +724,22 @@ inline BaseMoveResult baseFrame(const std::string& session_id, uint32_t sequence
         {"angular_z", angular_z},
         {"deadman", deadman},
     }.dump();
-    return _baseResult(GetHAL()->httpPost(_base() + "/api/mobile-base/remote/frame",
-                                          body, _jsonHeaders()));
+    return _baseResult(GetHAL()->httpPostKeepAlive(_base() + "/api/mobile-base/remote/frame",
+                                                   body, _jsonHeaders()));
 }
 
 inline BaseMoveResult baseRelease(const std::string& session_id) {
     if (session_id.empty() || session_id.size() > 128) return {false, 0, "无效会话"};
     auto body = nlohmann::json{{"session_id", session_id}}.dump();
-    return _baseResult(GetHAL()->httpPost(_base() + "/api/mobile-base/remote/release",
-                                          body, _jsonHeaders()));
+    return _baseResult(GetHAL()->httpPostKeepAlive(_base() + "/api/mobile-base/remote/release",
+                                                   body, _jsonHeaders()));
 }
 
 inline BaseMoveResult baseStop() {
     // Remote R2 semantics: STOP only — this can never re-arm autonomy or the
     // physical gamepad; it parks the base through the audited proxy path.
-    return _baseResult(GetHAL()->httpPost(_base() + "/api/mobile-base/remote/stop",
-                                          "{}", _jsonHeaders()));
+    return _baseResult(GetHAL()->httpPostKeepAlive(_base() + "/api/mobile-base/remote/stop",
+                                                   "{}", _jsonHeaders()));
 }
 
 }  // namespace reachy_client

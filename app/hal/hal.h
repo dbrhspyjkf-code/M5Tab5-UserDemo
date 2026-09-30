@@ -406,6 +406,14 @@ public:
     {
         return {};
     }
+    // Same contract as httpPost, but implementations may reuse a persistent
+    // connection. Intended for high-frequency callers (e.g. the mobile-base
+    // 20 Hz lease frames) where per-request TCP handshakes dominate latency.
+    virtual HttpResponse_t httpPostKeepAlive(const std::string& url, const std::string& body,
+        const std::vector<std::pair<std::string, std::string>>& headers = {})
+    {
+        return httpPost(url, body, headers);
+    }
 
     /* ------------------------------ UART monitor ------------------------------ */
     struct UartMonitorData_t {

@@ -121,6 +121,18 @@ class ReachyBaseControlTests(unittest.TestCase):
         self.assertIn("tryRunDetached", tick)
         self.assertIn("reachy_client::baseFrame", tick)
 
+    def test_base_ops_use_keep_alive_transport(self):
+        # Per-request TCP handshakes dominated the frame RTT and dropped the
+        # short lease; the lease protocol must ride the persistent connection.
+        for fn in ("baseAcquire", "baseFrame", "baseRelease", "baseStop"):
+            body = function_body(CLIENT, fn)
+            self.assertIn("httpPostKeepAlive", body)
+        hal = (ROOT / "platforms/tab5/main/hal/components/hal_http.cpp").read_text()
+        self.assertIn("httpPostKeepAlive", hal)
+        self.assertIn("keep_alive_enable = true", hal)
+        header = (ROOT / "app/hal/hal.h").read_text()
+        self.assertIn("httpPostKeepAlive", header)
+
     def test_emergency_stop_is_stop_only(self):
         stop = function_body(CLIENT, "baseStop")
         self.assertIn("/api/mobile-base/remote/stop", stop)
