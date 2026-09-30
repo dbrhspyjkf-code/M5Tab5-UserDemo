@@ -74,6 +74,28 @@ class ReachyBaseControlTests(unittest.TestCase):
         self.assertIn("_baseEndDrive(false)", deadman)
         self.assertIn("LV_EVENT_PRESS_LOST", SOURCE)
 
+    def test_lease_loss_reacquires_while_deadman_held(self):
+        # The server lease TTL is 250 ms while proxied frame RTT is 90-170 ms,
+        # so jitter drops the lease; a held deadman must re-acquire (skipping
+        # interlocks — the server is authoritative) instead of parking.
+        running = SOURCE.split("void AppReachy::onRunning()", 1)[1]
+        running = running.split("void AppReachy::_buildUI", 1)[0]
+        self.assertIn("_base_frame_error_ready", running)
+        self.assertIn("_base_deadman && _base_armed && _base_reacquire_fails < 3", running)
+        self.assertIn("_baseStartAcquire(false)", running)
+        acquire = function_body(SOURCE, "_baseStartAcquire")
+        self.assertIn("if (interlocks)", acquire)
+        self.assertIn("status.goto_on", acquire)
+
+    def test_three_strikes_park_with_server_error(self):
+        running = SOURCE.split("void AppReachy::onRunning()", 1)[1]
+        running = running.split("void AppReachy::_buildUI", 1)[0]
+        self.assertIn("已停车：「", running)
+        tick = function_body(SOURCE, "_baseTickFrame")
+        self.assertIn("_base_frame_error = result.error", tick)
+        self.assertIn("_base_frame_scheduled_ms > 1200", running)
+        self.assertIn("帧响应超时", running)
+
     def test_leaving_page_or_closing_app_parks_the_base(self):
         select = SOURCE.split("void AppReachy::_selectDestination", 1)[1]
         select = select.split("void AppReachy::_refreshActiveTab", 1)[0]

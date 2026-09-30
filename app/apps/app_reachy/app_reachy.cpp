@@ -123,21 +123,55 @@ void AppReachy::onRunning() {
             if (lease.ok && _base_arm_wanted.load() && _base_session.empty()) {
                 _base_session = lease.session_id;
                 _base_seq = 0;
+                _base_reacquire_fails = 0;
                 set_label(_ba_state, "已接管底盘，按住 Deadman 驾驶", kOk);
             } else if (lease.ok) {
                 _base_arm_wanted.store(false);
-                reachy_client::baseRelease(lease.session_id);
+                // Abandoned mid-flight (page left / disarmed): drop the lease
+                // off the UI thread.
+                const std::string sid = lease.session_id;
+                GetHAL()->tryRunDetached([sid]() { reachy_client::baseRelease(sid); });
             } else {
                 _base_arm_wanted.store(false);
-                set_label(_ba_state, "接入失败：「" + lease.error + "」", kError);
+                _base_reacquire_fails += 1;
+                set_label(_ba_state, "接管失败：「" + lease.error + "」", kError);
             }
             _baseUpdateControls();
         }
-        if (_base_fail.exchange(false)) {
-            set_label(_ba_state, "通信中断，已释放底盘", kError);
-            _baseEndDrive(false);
+        if (_base_frame_error_ready.exchange(false)) {
+            std::string err;
+            {
+                std::lock_guard<std::mutex> lock(_cache_mutex);
+                err = std::move(_base_frame_error);
+                _base_frame_error.clear();
+            }
+            // The server lease TTL is 250 ms while a proxied frame round trip
+            // is 90-170 ms on this LAN, so any Wi-Fi jitter drops the lease.
+            // While the deadman is still held, re-acquire seamlessly (the iOS
+            // client applies the same fresh-lease-per-press rule); park with
+            // the real server error after three consecutive failures.
+            if (_base_deadman && _base_armed && _base_reacquire_fails < 3 &&
+                !_base_acquire_inflight.load()) {
+                _base_reacquire_fails += 1;
+                set_label(_ba_state, "信号波动，重新接管底盘…", kWarn);
+                _baseStartAcquire(false);
+            } else {
+                set_label(_ba_state, "已停车：「" + (err.empty() ? "通信中断" : err) + "」", kError);
+                _baseEndDrive(false);
+            }
         }
         const uint32_t now = GetHAL()->millis();
+        // Watchdog: a frame stuck in flight (slow timeout) must not leave the
+        // UI pretending to drive — the server watchdog has already parked.
+        if (_base_frame_inflight.load() &&
+            now - _base_frame_scheduled_ms > 1200) {
+            _base_frame_inflight.store(false);
+            {
+                std::lock_guard<std::mutex> lock(_cache_mutex);
+                _base_frame_error = "帧响应超时";
+            }
+            _base_frame_error_ready.store(true);
+        }
         if (!_base_session.empty() && _base_deadman && !_base_frame_inflight.load() &&
             now - _last_base_frame_ms >= BASE_FRAME_MS) {
             _last_base_frame_ms = now;
@@ -493,28 +527,37 @@ void AppReachy::_baseUpdateControls() {
             lv_color_hex(_base_deadman && !_base_session.empty() ? kBg : kTextMuted), 0);
 }
 
-void AppReachy::_baseStartAcquire() {
+void AppReachy::_baseStartAcquire(bool interlocks) {
     if (_base_acquire_inflight.exchange(true)) return;
     _base_arm_wanted.store(true);
     const uint32_t generation = _open_generation.load();
-    const bool started = GetHAL()->tryRunDetached([this, generation]() {
+    const bool started = GetHAL()->tryRunDetached([this, generation, interlocks]() {
         reachy_client::BaseMoveLease lease;
         if (_base_arm_wanted.load()) {
-            // Fail-closed interlocks first — exactly the iOS order.
-            auto status = reachy_client::fetchBaseStatus();
-            if (!status.ok) {
-                lease.error = status.error.empty() ? "无法读取底盘状态" : status.error;
-            } else if (status.goto_on) {
-                lease.error = "Goto 巡航开启中，禁止遥控";
-            } else if (!status.goto_known) {
-                lease.error = "无法确认 Goto 巡逻状态";
-            } else if (status.gamepad_on) {
-                lease.error = "物理手柄占用中";
-            } else if (!status.gamepad_known) {
-                lease.error = "无法确认手柄控制源";
-            } else {
-                lease = reachy_client::baseAcquire();
+            bool allowed = true;
+            if (interlocks) {
+                // Fail-closed interlocks first — exactly the iOS order. The
+                // seamless re-acquire path skips them: the server remains the
+                // authoritative gate and every refusal still surfaces below.
+                auto status = reachy_client::fetchBaseStatus();
+                if (!status.ok) {
+                    lease.error = status.error.empty() ? "无法读取底盘状态" : status.error;
+                    allowed = false;
+                } else if (status.goto_on) {
+                    lease.error = "Goto 巡航开启中，禁止遥控";
+                    allowed = false;
+                } else if (!status.goto_known) {
+                    lease.error = "无法确认 Goto 巡逻状态";
+                    allowed = false;
+                } else if (status.gamepad_on) {
+                    lease.error = "物理手柄占用中";
+                    allowed = false;
+                } else if (!status.gamepad_known) {
+                    lease.error = "无法确认手柄控制源";
+                    allowed = false;
+                }
             }
+            if (allowed) lease = reachy_client::baseAcquire();
         }
         if (!lease.ok || !_base_arm_wanted.load() ||
             generation != _open_generation.load()) {
@@ -541,6 +584,7 @@ void AppReachy::_baseStartAcquire() {
 
 void AppReachy::_baseTickFrame() {
     _base_frame_inflight.store(true);
+    _base_frame_scheduled_ms = GetHAL()->millis();
     const std::string session = _base_session;
     const uint32_t seq = ++_base_seq;
     // Same mapping as the iOS virtual stick: up = forward, right = clockwise
@@ -550,17 +594,26 @@ void AppReachy::_baseTickFrame() {
     const uint32_t generation = _open_generation.load();
     const bool started = GetHAL()->tryRunDetached([this, session, seq, linear_x, angular_z, generation]() {
         auto result = reachy_client::baseFrame(session, seq, linear_x, angular_z, true);
-        if (!result.ok && generation == _open_generation.load()) _base_fail.store(true);
+        if (!result.ok && generation == _open_generation.load()) {
+            std::lock_guard<std::mutex> lock(_cache_mutex);
+            _base_frame_error = result.error;
+            _base_frame_error_ready.store(true);
+        }
         _base_frame_inflight.store(false);
     });
     if (!started) {
         _base_frame_inflight.store(false);
-        _base_fail.store(true);
+        {
+            std::lock_guard<std::mutex> lock(_cache_mutex);
+            _base_frame_error = "无法启动底盘任务";
+        }
+        _base_frame_error_ready.store(true);
     }
 }
 
 void AppReachy::_baseEndDrive(bool sendStop) {
     _base_arm_wanted.store(false);
+    _base_reacquire_fails = 0;
     if (_base_session.empty()) {
         _base_deadman = false;
         _base_lin = _base_ang = 0.f;
@@ -1127,11 +1180,12 @@ void AppReachy::_baseDeadmanCb(lv_event_t* e) {
     const auto code = lv_event_get_code(e);
     if (code == LV_EVENT_PRESSED) {
         self->_base_deadman = true;
+        self->_base_reacquire_fails = 0;
         // Fresh press acquires a fresh lease (iOS semantics: a released L2
         // session cannot be reused within the 250 ms TTL).
         if (self->_base_armed && self->_base_session.empty() &&
             !self->_base_acquire_inflight.load()) {
-            self->_baseStartAcquire();
+            self->_baseStartAcquire(true);
         }
     } else {
         // RELEASED / PRESS_LOST: zero + release immediately.

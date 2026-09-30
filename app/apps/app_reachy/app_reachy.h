@@ -122,9 +122,12 @@ private:
     float _base_ang = 0.f;            // normalized [-1, 1], right = clockwise
     uint32_t _base_seq = 0;
     uint32_t _last_base_frame_ms = 0;
+    uint32_t _base_frame_scheduled_ms = 0;
+    int _base_reacquire_fails = 0;
     std::atomic<bool> _base_frame_inflight{false};
     std::atomic<bool> _base_acquire_inflight{false};
-    std::atomic<bool> _base_fail{false};
+    std::string _base_frame_error;
+    std::atomic<bool> _base_frame_error_ready{false};
     reachy_client::BaseMoveLease _base_arm_result;
     std::atomic<bool> _base_arm_result_ready{false};
     std::atomic<bool> _base_arm_wanted{false};
@@ -206,7 +209,7 @@ private:
     void _renderVideoFrame();
     void _stopVideoPreview();
     void _baseTickFrame();
-    void _baseStartAcquire();
+    void _baseStartAcquire(bool interlocks);
     void _baseEndDrive(bool sendStop);
     void _baseShowArmConfirm();
     void _baseUpdateControls();
