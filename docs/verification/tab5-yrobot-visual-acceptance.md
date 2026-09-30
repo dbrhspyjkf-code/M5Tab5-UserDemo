@@ -17,6 +17,8 @@
 | C++ 语法 | `clang++ -fsyntax-only app/apps/app_reachy/app_reachy.cpp` | 通过 |
 | 桌面 CMake 构建 | Xcode 26.5 SDK + `cmake --build build-mac-desktop -j8` | 通过 |
 | 桌面启动冒烟检查 | `SDL_VIDEODRIVER=dummy` 运行 5 秒 | 通过，进程稳定运行直至预期超时 |
+| ESP-IDF 目标构建 | ESP-IDF v5.5.2，`idf.py set-target esp32p4 && idf.py build` | 通过；固件 0xA826C0，最小应用分区剩余 4% |
+| Tab5 烧录与启动 | `/dev/cu.usbmodem12401`，`idf.py flash monitor` | 通过；写入哈希校验通过，设备启动至 App Home 并联网 |
 | 空白与冲突检查 | `git diff --check` | 通过 |
 
 ## 已实现的视觉验收点
@@ -43,5 +45,5 @@
 
 1. 在桌面窗口中人工查看 1280×720 的五个页面，记录中文显示、卡片不重叠、Dock 状态和离线提示截图。
 2. 在已加载 ESP-IDF 环境中执行 `idf.py build`，检查固件大小、PSRAM 与链接告警。当前 shell 没有 `idf.py` 或 `IDF_PATH`。
-3. 经操作者确认后烧录设备，仅做非破坏性检查：连接/断网状态、底部 Dock 点击、音量/Mic、聊天和相机启停。
+3. 已于 2026-09-30 14:27（GMT+8）完成 Tab5 烧录和启动日志检查；仍需在屏幕上人工检查连接/断网状态、底部 Dock 点击、音量/Mic、聊天和相机启停。
 4. 本视觉任务不执行重启、休眠、动作或移动底盘操作；这些操作仍需单独确认并在机器人旁验收。
