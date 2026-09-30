@@ -158,6 +158,14 @@ class ReachyBaseControlTests(unittest.TestCase):
         self.assertIn("lv_obj_clear_flag(_ba_joy_knob, LV_OBJ_FLAG_CLICKABLE)", build)
         self.assertNotIn("_ba_deadman_btn", SOURCE)
 
+    def test_driving_suppresses_swipe_up_exit(self):
+        # Joystick-forward is a fast upward drag; LVGL reports it as a
+        # gesture identical to the exit swipe — the app must not close while
+        # the base page is driving.
+        gesture = function_body(SOURCE, "_gestureCb")
+        self.assertIn("Tab::Base", gesture)
+        self.assertIn("_base_deadman || !self->_base_session.empty()", gesture)
+
 
 if __name__ == "__main__":
     unittest.main()

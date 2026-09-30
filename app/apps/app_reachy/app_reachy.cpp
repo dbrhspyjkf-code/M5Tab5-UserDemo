@@ -1139,6 +1139,14 @@ void AppReachy::_gestureCb(lv_event_t* e) {
     auto* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
     if (lv_indev_get_gesture_dir(dev) != LV_DIR_TOP) return;
     auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
+    // A joystick push toward the top of the pad is a fast upward drag —
+    // LVGL classifies it as a gesture exactly like the exit swipe. Driving
+    // forward must never close the app, so suppress the exit while the base
+    // page is actively driving (deadman latch held or a live lease).
+    if (self->_active == Tab::Base &&
+        (self->_base_deadman || !self->_base_session.empty())) {
+        return;
+    }
     lv_async_call([](void* data) { static_cast<AppReachy*>(data)->_requestClose(); }, self);
 }
 
