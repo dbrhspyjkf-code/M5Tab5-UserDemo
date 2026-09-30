@@ -12,3 +12,7 @@ var/project_assistant/execution/*.md
 docs/superpowers/
 # Local-only secrets — never commit. See app/apps/app_ha/secrets.h.example.
 app/apps/app_ha/secrets.h
+
+# Agent tooling artifacts
+memory/
+.superpowers/
