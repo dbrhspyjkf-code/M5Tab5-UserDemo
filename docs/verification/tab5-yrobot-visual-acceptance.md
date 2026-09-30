@@ -15,6 +15,8 @@
 | 对话解析与气泡布局 | `test_reachy_chat.py` | 通过 |
 | JPEG 相机预览生命周期 | `test_reachy_video.py` | 通过 |
 | C++ 语法 | `clang++ -fsyntax-only app/apps/app_reachy/app_reachy.cpp` | 通过 |
+| 桌面 CMake 构建 | Xcode 26.5 SDK + `cmake --build build-mac-desktop -j8` | 通过 |
+| 桌面启动冒烟检查 | `SDL_VIDEODRIVER=dummy` 运行 5 秒 | 通过，进程稳定运行直至预期超时 |
 | 空白与冲突检查 | `git diff --check` | 通过 |
 
 ## 已实现的视觉验收点
@@ -28,15 +30,18 @@
 - 相机预览在离开相机页或关闭应用时立即停止；日志只有点击“查看日志”后才请求。
 - 未增加 WebView、WebRTC、WebSocket、HMAC、直接 daemon 运动写接口或新的后台服务。
 
-## 当前构建环境限制
+## 桌面构建修复
 
-桌面 CMake 配置未能完成：本机编译器在 CMake 的 C 编译器探测阶段链接 `libSystem.tbd` 时出现 `tapi error: malformed file` / `unknown architecture arm64e.x1-macos`。该失败发生在项目源代码编译前。
+桌面配置此前有两个与 worktree 相关的问题：
 
-因此，本记录将桌面视觉截图和 ESP-IDF 产物列为待完成项，而不将静态/语法验证误写为完整设备构建验证。
+1. `platforms/desktop/CMakeLists.txt` 中的相对路径由仓库根解析，导致依赖、app 源码和 `lv_conf.h` 指向错误位置；现改为以该 CMake 文件所在目录为根的绝对 CMake 路径。
+2. 桌面 source glob 曾把 Tab5 的 ESP-IDF 组件一并加入桌面目标；现只收集 `platforms/desktop` 源码，并显式补充 desktop 所需的 `device_state.h` include 目录。
 
-## 待人工/设备验收
+使用完整 Xcode SDK 而不是陈旧 CommandLineTools sysroot 后，桌面模拟器已成功构建为 `build/desktop/app_desktop_build`。本轮未做屏幕级自动截图；冒烟检查确认 SDL dummy driver 下进程稳定运行 5 秒。
 
-1. 修复或切换到可工作的 Xcode/CommandLineTools SDK 后运行桌面模拟器，记录 1280×720 的五个页面截图。
-2. 在已加载 ESP-IDF 环境中执行 `idf.py build`，检查固件大小、PSRAM 与链接告警。
+## 待设备验收
+
+1. 在桌面窗口中人工查看 1280×720 的五个页面，记录中文显示、卡片不重叠、Dock 状态和离线提示截图。
+2. 在已加载 ESP-IDF 环境中执行 `idf.py build`，检查固件大小、PSRAM 与链接告警。当前 shell 没有 `idf.py` 或 `IDF_PATH`。
 3. 经操作者确认后烧录设备，仅做非破坏性检查：连接/断网状态、底部 Dock 点击、音量/Mic、聊天和相机启停。
 4. 本视觉任务不执行重启、休眠、动作或移动底盘操作；这些操作仍需单独确认并在机器人旁验收。
