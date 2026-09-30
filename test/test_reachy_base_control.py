@@ -166,6 +166,12 @@ class ReachyBaseControlTests(unittest.TestCase):
         self.assertIn("Tab::Base", gesture)
         self.assertIn("_base_deadman || !self->_base_session.empty()", gesture)
 
+    def test_background_tools_swipe_hook_ignores_foreign_screens(self):
+        # AppSettings keeps its swipe-up hook installed while the cockpit is
+        # foreground; its handler must not act unless its own screen shows.
+        settings = (ROOT / "app/apps/app_settings/app_settings.cpp").read_text()
+        self.assertIn("lv_screen_active() != app->_scr", settings)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -181,6 +181,11 @@ void AppSettings::_installSwipeGesture()
                     lv_async_call([](void* udata) {
                         auto* app = static_cast<AppSettings*>(udata);
                         if (!app) return;
+                        // Only act when our screen is actually on display. This
+                        // hook stays installed while another app opened from
+                        // the tools page (e.g. the YRobot cockpit) owns the
+                        // foreground — its joystick drags must not close us.
+                        if (!app->_scr || lv_screen_active() != app->_scr) return;
                         // Back out of the deepest open sub-page first.
                         if (app->_email_page)   app->_closeEmail();
                         else if (app->_unit_page)   app->_closeUnit();
