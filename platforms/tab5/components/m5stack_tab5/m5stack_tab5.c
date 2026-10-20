@@ -260,26 +260,30 @@ void bsp_io_expander_pi4ioe_init(i2c_master_bus_handle_t bus_handle)
     i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
     write_buf[0] = PI4IO_REG_CHIP_RESET;
     i2c_master_transmit_receive(i2c_dev_handle_pi4ioe1, write_buf, 1, read_buf, 1, I2C_MASTER_TIMEOUT_MS);
-    write_buf[0] = PI4IO_REG_IO_DIR;
-    write_buf[1] = 0b01111111;
-    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);  // 0: input 1: output
-    write_buf[0] = PI4IO_REG_OUT_H_IM;
-    write_buf[1] = 0b00000000;
-    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2,
-                        I2C_MASTER_TIMEOUT_MS);  // 使用到的引脚关闭 High-Impedance
+
+    /* 复位后默认 Hi-Z + 下拉。屏端 LCD_RST 无 1.8V 上拉，P4 不能推挽输出 3.3V，用输入上拉释放复位 */
     write_buf[0] = PI4IO_REG_PULL_SEL;
     write_buf[1] = 0b01111111;
     i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2,
                         I2C_MASTER_TIMEOUT_MS);  // pull up/down select, 0 down, 1 up
     write_buf[0] = PI4IO_REG_PULL_EN;
     write_buf[1] = 0b01111111;
-
-    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2,
-                        I2C_MASTER_TIMEOUT_MS);  // P7 中断使能 0 enable, 1 disable
-    /* Output Port Register P1(SPK_EN), P2(EXT5V_EN), P4(LCD_RST), P5(TP_RST), P6(CAM)RST 输出高电平 */
-    write_buf[0] = PI4IO_REG_OUT_SET;
-    write_buf[1] = 0b01110110;
     i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
+
+    write_buf[0] = PI4IO_REG_OUT_SET;
+    write_buf[1] = 0b01100110;
+    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);  // P4 锁存 0，拉低复位时不推 3.3V
+    write_buf[0] = PI4IO_REG_OUT_H_IM;
+    write_buf[1] = 0b00000000;
+    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    write_buf[1] = 0b01111111;
+    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);  // P4 先输出拉低复位
+    vTaskDelay(pdMS_TO_TICKS(10));
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    write_buf[1] = 0b01101111;
+    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);  // P4 输入上拉释放 RST
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     /* */
     i2c_device_config_t dev_cfg2 = {
@@ -514,20 +518,36 @@ void bsp_reset_tp()
     uint8_t write_buf[2] = {0};
     uint8_t read_buf[1]  = {0};
 
+    /* LCD_RST(P4) 锁存保持 0：输出时只拉低，释放时切回输入上拉，避免推挽 3.3V */
     write_buf[0] = PI4IO_REG_OUT_SET;
     i2c_master_transmit_receive(i2c_dev_handle_pi4ioe1, write_buf, 1, read_buf, 1, I2C_MASTER_TIMEOUT_MS);
-
     write_buf[0] = PI4IO_REG_OUT_SET;
     write_buf[1] = read_buf[0];
     clrbit(write_buf[1], 4);
     clrbit(write_buf[1], 5);
     i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
+
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    i2c_master_transmit_receive(i2c_dev_handle_pi4ioe1, write_buf, 1, read_buf, 1, I2C_MASTER_TIMEOUT_MS);
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    write_buf[1] = read_buf[0];
+    setbit(write_buf[1], 4);
+    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
     write_buf[0] = PI4IO_REG_OUT_SET;
+    i2c_master_transmit_receive(i2c_dev_handle_pi4ioe1, write_buf, 1, read_buf, 1, I2C_MASTER_TIMEOUT_MS);
+    write_buf[0] = PI4IO_REG_OUT_SET;
     write_buf[1] = read_buf[0];
-    setbit(write_buf[1], 4);
+    clrbit(write_buf[1], 4);
     setbit(write_buf[1], 5);
+    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
+
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    i2c_master_transmit_receive(i2c_dev_handle_pi4ioe1, write_buf, 1, read_buf, 1, I2C_MASTER_TIMEOUT_MS);
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    write_buf[1] = read_buf[0];
+    clrbit(write_buf[1], 4);
     i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
     vTaskDelay(100 / portTICK_PERIOD_MS);
 }
@@ -695,14 +715,19 @@ static bsp_codec_config_t g_codec_handle;
 static int volume;
 
 /* Can be used for `i2s_std_gpio_config_t` and/or `i2s_std_config_t` initialization */
-#define BSP_I2S_GPIO_CFG                                                                                           \
-    {                                                                                                              \
-        .mclk = BSP_I2S_MCLK, .bclk = BSP_I2S_SCLK, .ws = BSP_I2S_LCLK, .dout = BSP_I2S_DOUT, .din = BSP_I2S_DSIN, \
-        .invert_flags = {                                                                                          \
-            .mclk_inv = false,                                                                                     \
-            .bclk_inv = false,                                                                                     \
-            .ws_inv   = false,                                                                                     \
-        },                                                                                                         \
+#define BSP_I2S_GPIO_CFG           \
+    {                              \
+        .mclk = BSP_I2S_MCLK,      \
+        .bclk = BSP_I2S_SCLK,      \
+        .ws   = BSP_I2S_LCLK,      \
+        .dout = BSP_I2S_DOUT,      \
+        .din  = BSP_I2S_DSIN,      \
+        .invert_flags =            \
+            {                      \
+                .mclk_inv = false, \
+                .bclk_inv = false, \
+                .ws_inv   = false, \
+            },                     \
     }
 
 /* This configuration is used by default in `bsp_extra_audio_init()` */
@@ -1503,46 +1528,46 @@ static lv_display_t* bsp_display_lcd_init(const bsp_display_cfg_t* cfg)
 
     /* Add LCD screen */
     ESP_LOGD(TAG, "Add LCD screen");
-    const lvgl_port_display_cfg_t disp_cfg =
-    {.io_handle      = lcd_panels.io,
-     .panel_handle   = lcd_panels.panel,
-     .control_handle = lcd_panels.control,
-     .buffer_size    = cfg->buffer_size,
-     .double_buffer  = cfg->double_buffer,
-     .hres           = BSP_LCD_H_RES,
-     .vres           = BSP_LCD_V_RES,
-     .monochrome     = false,
-     /* Rotation values must be same as used in esp_lcd for initial settings of the screen */
-     .rotation =
-         {
-             .swap_xy  = false,
-             .mirror_x = false,
-             .mirror_y = false,
-         },
+    const lvgl_port_display_cfg_t disp_cfg = {
+        .io_handle      = lcd_panels.io,
+        .panel_handle   = lcd_panels.panel,
+        .control_handle = lcd_panels.control,
+        .buffer_size    = cfg->buffer_size,
+        .double_buffer  = cfg->double_buffer,
+        .hres           = BSP_LCD_H_RES,
+        .vres           = BSP_LCD_V_RES,
+        .monochrome     = false,
+        /* Rotation values must be same as used in esp_lcd for initial settings of the screen */
+        .rotation =
+            {
+                .swap_xy  = false,
+                .mirror_x = false,
+                .mirror_y = false,
+            },
 #if LVGL_VERSION_MAJOR >= 9
 #if CONFIG_BSP_LCD_COLOR_FORMAT_RGB888
-     .color_format = LV_COLOR_FORMAT_RGB888,
+        .color_format = LV_COLOR_FORMAT_RGB888,
 #else
-     .color_format = LV_COLOR_FORMAT_RGB565,
+        .color_format = LV_COLOR_FORMAT_RGB565,
 #endif
 #endif
-     .flags = {
-         .buff_dma    = cfg->flags.buff_dma,
-         .buff_spiram = cfg->flags.buff_spiram,
+        .flags = {
+            .buff_dma    = cfg->flags.buff_dma,
+            .buff_spiram = cfg->flags.buff_spiram,
 #if LVGL_VERSION_MAJOR >= 9
-         .swap_bytes = (BSP_LCD_BIGENDIAN ? true : false),
+            .swap_bytes = (BSP_LCD_BIGENDIAN ? true : false),
 #endif
 #if CONFIG_BSP_DISPLAY_LVGL_AVOID_TEAR
-         .sw_rotate = false, /* Avoid tearing is not supported for SW rotation */
+            .sw_rotate = false, /* Avoid tearing is not supported for SW rotation */
 #else
-         .sw_rotate   = cfg->flags.sw_rotate, /* Only SW rotation is supported for 90° and 270° */
+            .sw_rotate = cfg->flags.sw_rotate, /* Only SW rotation is supported for 90° and 270° */
 #endif
 #if CONFIG_BSP_DISPLAY_LVGL_FULL_REFRESH
-         .full_refresh = true,
+            .full_refresh = true,
 #elif CONFIG_BSP_DISPLAY_LVGL_DIRECT_MODE
-         .direct_mode = true,
+            .direct_mode = true,
 #endif
-     } };
+        }};
 
     const lvgl_port_display_dsi_cfg_t dpi_cfg = {.flags = {
 #if CONFIG_BSP_DISPLAY_LVGL_AVOID_TEAR
