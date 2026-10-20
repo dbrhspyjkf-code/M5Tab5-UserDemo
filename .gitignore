@@ -16,3 +16,7 @@ app/apps/app_ha/secrets.h
 # Agent tooling artifacts
 memory/
 .superpowers/
+
+# Reference clones used while porting the ST25R3916 driver (not part of the build)
+var/M5Unit-NFC/
+var/M5Utility/

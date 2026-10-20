@@ -20,6 +20,7 @@
 #include "app_lora_chat/app_lora_chat.h"
 #include "app_email_led/app_email_led.h"
 #include "app_stocks/app_stocks.h"
+#include "app_rfid/app_rfid.h"
 #include "app_idle_screen/app_idle_screen.h"
 #include "xiaozhi_ctl.h"
 /* Header files locator (Don't remove) */
@@ -76,6 +77,9 @@ inline void on_install_apps()
     auto re_uptr = std::make_unique<AppReachy>();
     AppReachy* reachy = re_uptr.get();
 
+    auto rf_uptr = std::make_unique<AppRfid>();
+    AppRfid* rfid = rf_uptr.get();
+
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
 
@@ -88,6 +92,7 @@ inline void on_install_apps()
     int lc_id = mooncake::GetMooncake().installApp(std::move(lc_uptr));
     int st_id = mooncake::GetMooncake().installApp(std::move(st_uptr));
     int re_id = mooncake::GetMooncake().installApp(std::move(re_uptr));
+    int rf_id = mooncake::GetMooncake().installApp(std::move(rf_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
@@ -110,12 +115,17 @@ inline void on_install_apps()
     reachy->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+    // RFID 读写器 (Unit NFC, PORT A I2C) 同样从「工具」页打开, 上拨返回工具页.
+    rfid->setCloseCallback([set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+    });
 
     // 灯阵入口放到「工具」页第 2 行 (由 AppSettings 持有), 不再占 home 一格.
     settings->setPuzzleAppId(up_id);
     settings->setLoraChatAppId(lc_id);
     settings->setStocksAppId(st_id);
     settings->setReachyAppId(re_id);
+    settings->setRfidAppId(rf_id);
 
     // Status-bar mail icon → open the AppSettings email sub-page. The handler
     // (1) brings the AppSettings app to the foreground (its onOpen builds the

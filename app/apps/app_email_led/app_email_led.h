@@ -41,6 +41,11 @@ public:
     // false: 解除标记, 下一 tick 若仍有未读会自动重新接管.
     static void setPortAOwnedByApp(bool owned);
 
+    // RFID 后台服务 (嘀卡关灯) 常驻占用 PORT A 后调用一次: 本通知器永久
+    // 不再触碰 GPIO53, 无视 setPortAOwnedByApp(false) 的归还. 因为后台寻卡
+    // 和 RMT 灯带物理上无法共用同一引脚.
+    static void retirePortA();
+
 private:
 #ifndef PLATFORM_BUILD_DESKTOP
     // 5 块 8x8 串成 40x8 横排 (与「灯阵」app 同一条灯带, DIN 进最左块).
@@ -53,6 +58,7 @@ private:
 
     static AppEmailLed*        s_instance;
     static std::atomic<bool>   s_app_owns_porta;
+    static std::atomic<bool>   s_porta_retired;  // RFID 后台服务常驻占用后永久为 true
 
     led_strip_handle_t _strip      = nullptr;
     std::mutex         _strip_mu;

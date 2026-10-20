@@ -233,7 +233,7 @@ void AppSettings::_buildToolsPage()
     // card with a soft shadow, icon on the left, name on the right.
     // img==nullptr 走"点阵分支": 用 LV_SYMBOL_BULLET 拼一个 6x6 的 LED 矩阵缩略图
     // (象征 8x8 Puzzle), y_pos 默认 140 (第 1 行), 第 2 行 tile 传 310.
-    // kind==0 (默认) 走点阵分支 (灯阵); kind==1 走信封分支 (邮件).
+    // kind==0 (默认) 走点阵分支 (灯阵); kind==1 走信封分支 (邮件); kind==2 走 NFC 圆环分支 (RFID).
     auto make_tile = [&](int x, const lv_image_dsc_t* img, int img_w,
                          const char* label, lv_event_cb_t cb,
                          int img_scale = 256, int icon_x = 12,
@@ -309,6 +309,42 @@ void AppSettings::_buildToolsPage()
                 lv_obj_add_flag(flap, LV_OBJ_FLAG_EVENT_BUBBLE);
                 // label 对齐到 160px, 与图片 tile 保持一致
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, ex + EW + 52, 0);
+            } else if (kind == 2) {
+                // NFC 感应图标 (RFID tile) — 3 个同心圆环 + 中心芯片方块.
+                // 与信封/点阵分支一样用纯 lv_obj 拼, 不依赖字体符号.
+                const int ccx = icon_x + 62;   // 圆心 x
+                const int ccy = 70;            // 圆心 y (tile 高 140 居中)
+                const int sizes[3] = {96, 68, 40};
+                for (int i = 0; i < 3; i++) {
+                    lv_obj_t* ring = lv_obj_create(tile);
+                    lv_obj_set_size(ring, sizes[i], sizes[i]);
+                    lv_obj_set_pos(ring, ccx - sizes[i] / 2, ccy - sizes[i] / 2);
+                    lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+                    lv_obj_set_style_radius(ring, sizes[i] / 2, 0);   // 圆形
+                    lv_obj_set_style_border_width(ring, 4, 0);
+                    lv_obj_set_style_border_color(ring, lv_color_hex(C_ACCENT), 0);
+                    lv_obj_set_style_shadow_width(ring, 0, 0);
+                    lv_obj_set_style_pad_all(ring, 0, 0);
+                    lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+                    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+                    // 关键: 圆环不吞 click 事件, 冒泡到父 tile
+                    lv_obj_add_flag(ring, LV_OBJ_FLAG_EVENT_BUBBLE);
+                }
+                // 中心芯片方块
+                lv_obj_t* chip = lv_obj_create(tile);
+                lv_obj_set_size(chip, 16, 16);
+                lv_obj_set_pos(chip, ccx - 8, ccy - 8);
+                lv_obj_set_style_bg_color(chip, lv_color_hex(C_ACCENT), 0);
+                lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
+                lv_obj_set_style_radius(chip, 3, 0);
+                lv_obj_set_style_border_width(chip, 0, 0);
+                lv_obj_set_style_shadow_width(chip, 0, 0);
+                lv_obj_set_style_pad_all(chip, 0, 0);
+                lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_clear_flag(chip, LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_add_flag(chip, LV_OBJ_FLAG_EVENT_BUBBLE);
+                // label 对齐到 160px, 与图片 tile (icon_x+130+16=158) 保持一致
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, icon_x + 130 + 18, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -402,6 +438,10 @@ void AppSettings::_buildToolsPage()
     // 第 3 行第 3 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
     //   reachy_icon 130×130, 与 stocks_icon 同尺寸
     make_tile(865, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb, 256, 12, -1, 480);
+
+    // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
+    //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
+    make_tile(865, nullptr, 130, "RFID", _toolRfid_cb, 256, 12, -1, 310, 2);
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)
@@ -461,6 +501,14 @@ void AppSettings::openReachy()
 {
     if (_reachy_id > 0) {
         mooncake::GetMooncake().openApp(_reachy_id);
+    }
+}
+
+void AppSettings::_toolRfid_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (self->_rfid_id > 0) {
+        mooncake::GetMooncake().openApp(self->_rfid_id);
     }
 }
 

@@ -48,6 +48,7 @@ static constexpr int SCROLL_RANGE     = TOTAL_W + 40;    // 完全滚出 40 宽�
 // 静态成员定义
 AppEmailLed*       AppEmailLed::s_instance = nullptr;
 std::atomic<bool>  AppEmailLed::s_app_owns_porta{false};
+std::atomic<bool>  AppEmailLed::s_porta_retired{false};
 
 // 显示时段 07:00–00:00（含），00:01–06:59 熄屏不打扰。
 static bool _inActiveWindow()
@@ -97,7 +98,7 @@ void AppEmailLed::onRunning()
 
     bool app_owns = s_app_owns_porta.load();
     int  unread   = AppSettings::email_unread_total.load();
-    bool want     = (!app_owns && unread > 0 && _inActiveWindow());
+    bool want     = (!app_owns && !s_porta_retired.load() && unread > 0 && _inActiveWindow());
 
     if (!want) {
         if (_active) _standDown();
@@ -146,6 +147,16 @@ void AppEmailLed::setPortAOwnedByApp(bool owned)
     if (owned && s_instance) s_instance->_standDown();
 #else
     (void)owned;
+#endif
+}
+
+void AppEmailLed::retirePortA()
+{
+#ifndef PLATFORM_BUILD_DESKTOP
+    s_porta_retired.store(true);
+    // 立即释放并永不再碰 GPIO53 (后台 RFID 寻卡与 RMT 灯带物理互斥)
+    if (s_instance) s_instance->_standDown();
+    mclog::tagInfo(TAG, "PORT A retired (owned by background RFID service)");
 #endif
 }
 
