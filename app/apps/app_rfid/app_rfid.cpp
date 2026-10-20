@@ -3,6 +3,8 @@
 #include <hal/hal.h>
 #include <smooth_lvgl.h>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 static const char* TAG = "rfid";
 
@@ -333,7 +335,7 @@ void AppRfid::_buildUi()
     lv_obj_set_style_text_color(_proto_lbl, lv_color_hex(C_DIM), 0);
     lv_obj_align(_proto_lbl, LV_ALIGN_TOP_LEFT, 0, 200);
 
-    // ── 嘀卡关灯配置: 放卡后点按钮把该卡设为触发卡 (后台服务用) ──────────────
+    // ── 嘀卡关灯配置: 放卡后点按钮把该卡加入触发卡列表 (后台服务用) ──────────
     lv_obj_t* off_btn = lv_button_create(left);
     lv_obj_set_size(off_btn, 200, 56);
     lv_obj_align(off_btn, LV_ALIGN_TOP_LEFT, 0, 440);
@@ -345,6 +347,18 @@ void AppRfid::_buildUi()
     lv_obj_set_style_text_color(off_btn_l, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(off_btn_l);
     lv_obj_add_event_cb(off_btn, _setOffCard_cb, LV_EVENT_CLICKED, this);
+
+    lv_obj_t* off_clr = lv_button_create(left);
+    lv_obj_set_size(off_clr, 200, 56);
+    lv_obj_align(off_clr, LV_ALIGN_TOP_LEFT, 0, 506);
+    lv_obj_set_style_bg_color(off_clr, lv_color_hex(0x5A7186), 0);
+    lv_obj_set_style_radius(off_clr, 10, 0);
+    lv_obj_t* off_clr_l = lv_label_create(off_clr);
+    lv_label_set_text(off_clr_l, "清空关灯卡");
+    lv_obj_set_style_text_font(off_clr_l, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(off_clr_l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_center(off_clr_l);
+    lv_obj_add_event_cb(off_clr, _clearOffCard_cb, LV_EVENT_CLICKED, this);
 
     _offuid_lbl = lv_label_create(left);
     lv_obj_set_style_text_font(_offuid_lbl, zh_font_sm(), 0);
@@ -627,7 +641,47 @@ void AppRfid::_setOffCard_cb(lv_event_t* e)
     static_cast<AppRfid*>(lv_event_get_user_data(e))->_saveOffCard();
 }
 
-// ── 「嘀卡关灯」配置 ─────────────────────────────────────────────────────────
+void AppRfid::_clearOffCard_cb(lv_event_t* e)
+{
+    static_cast<AppRfid*>(lv_event_get_user_data(e))->_clearOffCards();
+}
+
+// ── 「嘀卡关灯」配置 (多卡列表, NVS "rfid_off_uids" 逗号分隔) ─────────────────
+namespace {
+// 读取关灯卡 UID 列表; 兼容旧的单卡键 "rfid_off_uid"
+std::vector<std::string> off_uid_list()
+{
+    std::vector<std::string> out;
+    if (!GetHAL()) return out;
+    std::string list = GetHAL()->getConfig("rfid_off_uids", "");
+    if (list.empty()) {  // 兼容 v1 的单卡键
+        std::string legacy = GetHAL()->getConfig("rfid_off_uid", "");
+        if (!legacy.empty()) list = legacy;
+    }
+    size_t pos = 0;
+    while (pos < list.size()) {
+        size_t comma = list.find(',', pos);
+        std::string item = list.substr(pos, comma == std::string::npos ? std::string::npos
+                                                                       : comma - pos);
+        pos = (comma == std::string::npos) ? list.size() : comma + 1;
+        while (!item.empty() && item.front() == ' ') item.erase(0, 1);
+        while (!item.empty() && item.back() == ' ')  item.pop_back();
+        if (!item.empty()) out.push_back(item);
+    }
+    return out;
+}
+
+void off_uid_save(const std::vector<std::string>& list)
+{
+    std::string joined;
+    for (const auto& u : list) {
+        if (!joined.empty()) joined += ',';
+        joined += u;
+    }
+    GetHAL()->setConfig("rfid_off_uids", joined);
+}
+}  // namespace
+
 void AppRfid::_saveOffCard()
 {
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -635,10 +689,32 @@ void AppRfid::_saveOffCard()
     char hex[24] = {0};
     int off = 0;
     for (int i = 0; i < _uid_len; i++) off += snprintf(hex + off, sizeof(hex) - off, "%02X", _uid[i]);
-    GetHAL()->setConfig("rfid_off_uid", hex);
+
+    auto list = off_uid_list();
+    for (const auto& u : list) {
+        if (u == hex) {
+            _setMsg("这张卡已经在关灯卡列表里", C_DIM);
+            return;
+        }
+    }
+    list.push_back(hex);
+    off_uid_save(list);
     _updateOffUidLabel();
-    _setMsg("已设为关灯卡: 后台嘀这张卡即关灯", C_OK);
-    mclog::tagInfo(TAG, "off-card saved: {}", hex);
+    _setMsg("已加入关灯卡, 后台嘀这张卡即关灯", C_OK);
+    mclog::tagInfo(TAG, "off-card added: {} (total {})", hex, list.size());
+#else
+    _setMsg("仅 Tab5 真机可用", C_ERR);
+#endif
+}
+
+void AppRfid::_clearOffCards()
+{
+#ifndef PLATFORM_BUILD_DESKTOP
+    GetHAL()->setConfig("rfid_off_uids", "");
+    GetHAL()->setConfig("rfid_off_uid", "");  // 旧单卡键一并清掉
+    _updateOffUidLabel();
+    _setMsg("关灯卡列表已清空", C_OK);
+    mclog::tagInfo(TAG, "off-card list cleared");
 #else
     _setMsg("仅 Tab5 真机可用", C_ERR);
 #endif
@@ -647,17 +723,21 @@ void AppRfid::_saveOffCard()
 void AppRfid::_updateOffUidLabel()
 {
     if (!_offuid_lbl) return;
-    std::string saved = GetHAL() ? GetHAL()->getConfig("rfid_off_uid", "") : "";
-    if (saved.empty()) {
+    auto list = off_uid_list();
+    if (list.empty()) {
         lv_label_set_text(_offuid_lbl, "关灯卡: 未设置");
         return;
     }
-    std::string pretty;
-    for (size_t i = 0; i + 1 < saved.size(); i += 2) {
-        if (!pretty.empty()) pretty += ' ';
-        pretty += saved.substr(i, 2);
+    std::string text = "关灯卡 " + std::to_string(list.size()) + " 张:";
+    for (const auto& u : list) {
+        text += "\n";
+        for (size_t i = 0; i + 1 < u.size(); i += 2) {
+            text += u.substr(i, 2);
+            text += ' ';
+        }
+        if (!text.empty() && text.back() == ' ') text.pop_back();
     }
-    lv_label_set_text_fmt(_offuid_lbl, "关灯卡: %s", pretty.c_str());
+    lv_label_set_text(_offuid_lbl, text.c_str());
 }
 
 void AppRfid::_readBlockNow()
@@ -1715,8 +1795,11 @@ void AppRfid::_bgLoop()
                     mclog::tagInfo(TAG, "bg card: {}", hex);
                     audio::play_tone(4000, 0.08);  // 嘀
 
-                    std::string saved = GetHAL()->getConfig("rfid_off_uid", "");
-                    if (!saved.empty() && saved == hex) {
+                    bool matched = false;
+                    for (const auto& u : off_uid_list()) {
+                        if (u == hex) { matched = true; break; }
+                    }
+                    if (matched) {
                         mclog::tagInfo(TAG, "off-card matched, turning off lights");
                         _bgTurnOffAll();
                     }

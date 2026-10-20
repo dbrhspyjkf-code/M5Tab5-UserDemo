@@ -105,8 +105,9 @@ private:
     const char* _cardTypeName();
 
     // ── 「嘀卡关灯」配置 (后台服务用, NVS 持久化) ────────────────────────────
-    void _saveOffCard();        // 把当前卡 UID 存为关灯触发卡 (NVS rfid_off_uid)
-    void _updateOffUidLabel();  // 刷新"关灯卡: xxx"小标签
+    void _saveOffCard();        // 把当前卡 UID 追加进关灯卡列表 (NVS rfid_off_uids, 去重)
+    void _clearOffCards();      // 清空关灯卡列表
+    void _updateOffUidLabel();  // 刷新"关灯卡: N 张 ..."小标签
 
     static void _pollTick(lv_timer_t* t);          // 400ms 寻卡轮询
     static void _blockMinus_cb(lv_event_t* e);
@@ -115,6 +116,7 @@ private:
     static void _writeBtn_cb(lv_event_t* e);
     static void _clearBtn_cb(lv_event_t* e);
     static void _setOffCard_cb(lv_event_t* e);
+    static void _clearOffCard_cb(lv_event_t* e);
 
 #ifndef PLATFORM_BUILD_DESKTOP
     // ── ST25R3916 低层 (基于 bitbang I2C) ────────────────────────────────────
