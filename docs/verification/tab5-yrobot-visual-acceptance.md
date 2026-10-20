@@ -47,3 +47,18 @@
 2. 在已加载 ESP-IDF 环境中执行 `idf.py build`，检查固件大小、PSRAM 与链接告警。当前 shell 没有 `idf.py` 或 `IDF_PATH`。
 3. 已于 2026-09-30 14:27（GMT+8）完成 Tab5 烧录和启动日志检查；仍需在屏幕上人工检查连接/断网状态、底部 Dock 点击、音量/Mic、聊天和相机启停。
 4. 本视觉任务不执行重启、休眠、动作或移动底盘操作；这些操作仍需单独确认并在机器人旁验收。
+
+## 2026-10-20 上游 V0.5 合并与真机验证
+
+合并 `m5stack/M5Tab5-UserDemo` 上游 V0.5（合并提交 `4491715`，含 `0e54f8f` LCD_RST 修复与版本号 V0.4→V0.5）。原担心的 WiFi 初始化修复（C6 固件）已在分叉基点内，无需重复合并。BSP 的 I2C 初始化与 `bsp_reset_tp()` 改为 OD 语义（P4 先输出拉低复位、再切输入上拉释放），自动合并无冲突。
+
+| 验证项 | 方法 | 结果 |
+| --- | --- | --- |
+| 固件构建 | ESP-IDF v5.5.2 `idf.py build` | 通过；固件 0xa727d0，最小应用分区剩余 5% |
+| 烧录 | `idf.py -p /dev/cu.usbmodem12401 flash` | 通过；写入哈希校验通过 |
+| LCD_RST 新时序 | 启动日志 `reset tp` 之后屏初始化 | 通过；ST7123（FW 3，旧批次）720×1280 初始化成功，背光 100% |
+| WiFi | 启动日志 | 连接 ChinaNet-11G，IP 192.168.1.146 |
+| 应用层 | 启动日志 40 秒监视 | 小智激活完成（MQTT 连接 api.tenclass.net）、唤醒词检测开启、ES8388 正常，无 panic/重启 |
+| 已知无害告警 | 日志复核 | 键盘探测失败 0x6D（本机未接键盘单元，属预期）；小智通知标签 nullptr 警告为既有问题 |
+
+开发环境备注：`idf5.5_py3.12_env` 已随旧 Python 3.12 卸载而失效，`install.sh` 已用 Homebrew Python 3.14.4 重建依赖（`idf5.5_py3.14_env`），用户终端 `source export.sh` 后 `idf.py` 直接可用。托管运行时 shell 需将 `/opt/homebrew/bin` 置于 PATH 首位。
