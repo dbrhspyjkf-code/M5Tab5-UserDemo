@@ -5,15 +5,18 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 static const char* TAG = "rfid";
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <esp_timer.h>
+#include <esp_heap_caps.h>                      // 后台任务周期性堆监控
 #include <driver/gpio.h>                          // GPIO53/54 bitbang
 #include <rom/ets_sys.h>                          // esp_rom_delay_us
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <nlohmann/json.hpp>                    // 解析 HA /api/states
 #include <string>
 #include <vector>
 #include "../app_email_led/app_email_led.h"       // setPortAOwnedByApp / retirePortA (PORT A 仲裁)
@@ -188,6 +191,8 @@ void AppRfid::onClose()
 
 void AppRfid::_requestClose()
 {
+    // 设备选择页还开着时, 上拨先退选择页, 不退出整个 app
+    if (_picker_page) { _closePicker(); return; }
     _teardownHardware();
     // 不在这里 _destroyUi(): _close_cb 是 openApp(工具页), 异步生效, 此刻 _scr
     // 仍是活动屏, 删掉会悬空 LVGL active-screen 指针 → 布局时崩. 与 app_stocks
@@ -437,6 +442,19 @@ void AppRfid::_buildUi()
     mk_btn("写入", _writeBtn_cb, 206, 0x27AE60);
     mk_btn("清空", _clearBtn_cb, 412, 0x5A7186);
 
+    // 关灯设备选择页入口 (从 HA 拉实体勾选, 覆盖内置默认五件套)
+    lv_obj_t* pk_btn = lv_button_create(right);
+    lv_obj_set_size(pk_btn, 296, 56);
+    lv_obj_align(pk_btn, LV_ALIGN_TOP_LEFT, 0, 500);
+    lv_obj_set_style_bg_color(pk_btn, lv_color_hex(0x8E44AD), 0);
+    lv_obj_set_style_radius(pk_btn, 10, 0);
+    lv_obj_t* pk_l = lv_label_create(pk_btn);
+    lv_label_set_text(pk_l, "选择关灯设备");
+    lv_obj_set_style_text_font(pk_l, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(pk_l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_center(pk_l);
+    lv_obj_add_event_cb(pk_btn, _pickerBtn_cb, LV_EVENT_CLICKED, this);
+
     // 读回数据的 hex / ascii 显示
     _hex_lbl = lv_label_create(right);
     lv_label_set_text(_hex_lbl, "--");
@@ -488,6 +506,7 @@ void AppRfid::_destroyUi()
     _status_lbl = _hint_lbl = _uid_lbl = _type_lbl = _proto_lbl = nullptr;
     _block_lbl = _data_ta = _hex_lbl = _msg_lbl = _kb = nullptr;
     _offuid_lbl = nullptr;
+    _picker_page = _picker_list = _picker_status = nullptr;  // 随 _scr 一起被删
     _alive = std::make_shared<bool>(true);  // 下次 _buildUi 用新的
 }
 
@@ -680,6 +699,42 @@ void off_uid_save(const std::vector<std::string>& list)
     }
     GetHAL()->setConfig("rfid_off_uids", joined);
 }
+
+// 默认关灯实体 (与 M5Dial 同款, 同一个家). NVS "rfid_off_ents" 为空时生效;
+// 用户在选择页勾过后以 NVS 为准, 特殊值 "none" 表示显式一个不选.
+// (键名必须 ≤15 字符 — NVS 上限, 超长的键 set/get 会静默失败!)
+const char* OFF_DEFAULT_ENTITIES =
+    "switch.xiaomi_cn_945886502_w1_on_p_2_1,"    // 餐厅灯
+    "switch.xiaomi_cn_945769368_w1_on_p_2_1,"    // 书台灯
+    "switch.xiaomi_cn_2143401838_w2_on_p_3_1,"   // 筒灯
+    "switch.xiaomi_cn_2143401838_w2_on_p_2_1,"   // 吸顶灯
+    "fan.dmaker_cn_740412216_p5c_s_2_fan";       // 风扇
+
+// 当前生效的关灯实体列表 (选择页勾选状态与后台关灯共用同一份)
+std::vector<std::string> off_entity_list()
+{
+    std::vector<std::string> out;
+    std::string raw = GetHAL() ? GetHAL()->getConfig("rfid_off_ents", "") : "";
+    if (raw == "none") return out;               // 选择页里显式全不选
+    if (raw.empty()) raw = OFF_DEFAULT_ENTITIES; // 从未配置 → 默认五件套
+    size_t pos = 0;
+    while (pos < raw.size()) {
+        size_t comma = raw.find(',', pos);
+        std::string item = raw.substr(pos, comma == std::string::npos ? std::string::npos
+                                                                      : comma - pos);
+        pos = (comma == std::string::npos) ? raw.size() : comma + 1;
+        while (!item.empty() && item.front() == ' ') item.erase(0, 1);
+        while (!item.empty() && item.back() == ' ')  item.pop_back();
+        if (!item.empty()) out.push_back(item);
+    }
+    return out;
+}
+
+bool off_entity_contains(const std::vector<std::string>& list, const std::string& eid)
+{
+    for (const auto& e : list) if (e == eid) return true;
+    return false;
+}
 }  // namespace
 
 void AppRfid::_saveOffCard()
@@ -738,6 +793,176 @@ void AppRfid::_updateOffUidLabel()
         if (!text.empty() && text.back() == ' ') text.pop_back();
     }
     lv_label_set_text(_offuid_lbl, text.c_str());
+}
+
+// ── 关灯设备选择页 ───────────────────────────────────────────────────────────
+void AppRfid::_pickerBtn_cb(lv_event_t* e)
+{
+    static_cast<AppRfid*>(lv_event_get_user_data(e))->_openPicker();
+}
+
+void AppRfid::_openPicker()
+{
+    if (_picker_page) return;
+    if (_kb) lv_obj_add_flag(_kb, LV_OBJ_FLAG_HIDDEN);  // 别挡列表
+
+    _picker_page = lv_obj_create(_scr);
+    lv_obj_set_size(_picker_page, SCREEN_W, SCREEN_H);
+    lv_obj_align(_picker_page, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(_picker_page, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_border_width(_picker_page, 0, 0);
+    lv_obj_set_style_radius(_picker_page, 0, 0);
+    lv_obj_clear_flag(_picker_page, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* title = lv_label_create(_picker_page);
+    lv_label_set_text(title, "选择关灯设备  (勾选即保存)");
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 20);
+
+    // 显式返回按钮 — 列表滚动会吃掉上拨手势 (LVGL 滚动物件消耗 drag 后
+    // 不再产生 GESTURE 事件), 不能只靠 swipe-up 退出本页.
+    lv_obj_t* back = lv_button_create(_picker_page);
+    lv_obj_set_size(back, 140, 56);
+    lv_obj_align(back, LV_ALIGN_TOP_RIGHT, -24, 10);
+    lv_obj_set_style_bg_color(back, lv_color_hex(0x5A7186), 0);
+    lv_obj_set_style_radius(back, 10, 0);
+    lv_obj_t* back_l = lv_label_create(back);
+    lv_label_set_text(back_l, "返回");
+    lv_obj_set_style_text_font(back_l, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(back_l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_center(back_l);
+    lv_obj_add_event_cb(back, [](lv_event_t* e) {
+        static_cast<AppRfid*>(lv_event_get_user_data(e))->_closePicker();
+    }, LV_EVENT_CLICKED, this);
+
+    _picker_status = lv_label_create(_picker_page);
+    lv_label_set_text(_picker_status, "正在从 HA 拉取设备列表...");
+    lv_obj_set_style_text_font(_picker_status, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(_picker_status, lv_color_hex(C_DIM), 0);
+    lv_obj_align(_picker_status, LV_ALIGN_TOP_LEFT, 24, 76);
+
+    // 滚动容器: 每行一个 lv_checkbox
+    _picker_list = lv_obj_create(_picker_page);
+    lv_obj_set_size(_picker_list, SCREEN_W - 48, SCREEN_H - 130);
+    lv_obj_align(_picker_list, LV_ALIGN_TOP_MID, 0, 116);
+    lv_obj_set_style_bg_color(_picker_list, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_radius(_picker_list, 16, 0);
+    lv_obj_set_style_border_width(_picker_list, 0, 0);
+    lv_obj_set_flex_flow(_picker_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(_picker_list, 16, 0);
+    lv_obj_set_style_pad_row(_picker_list, 12, 0);
+
+    _fetchPickerEntities();
+}
+
+void AppRfid::_closePicker()
+{
+    if (!_picker_page) return;
+    lv_obj_delete(_picker_page);
+    _picker_page = _picker_list = _picker_status = nullptr;
+    _picker_entities.clear();
+    _picker_updated.store(false);
+    _picker_error.store(false);
+    _picker_fetching.store(false);  // 在途 worker 的结果落进空 page 也会被 flag 检查挡住
+}
+
+void AppRfid::_fetchPickerEntities()
+{
+#ifndef PLATFORM_BUILD_DESKTOP
+    if (_picker_fetching.exchange(true)) return;
+
+    std::string host  = GetHAL()->getConfig("ha_host", "");
+    std::string token = ha_weather::token();
+    if (host.empty() || token.empty()) {
+        mclog::tagWarn(TAG, "picker: ha_host/ha_token 未配置");
+        _picker_fetching.store(false);
+        _picker_error.store(true);
+        return;
+    }
+    std::string url = ha_weather::baseUrl(host) + "/api/states";
+
+    GetHAL()->tryRunDetached([this, url, token]() {
+        auto resp = GetHAL()->httpGet(url, {{"Authorization", "Bearer " + token}});
+        if (!resp.ok) {
+            mclog::tagWarn(TAG, "picker: /api/states failed status={}", resp.status);
+            _picker_fetching.store(false);
+            _picker_error.store(true);
+            return;
+        }
+        try {
+            auto arr = nlohmann::json::parse(resp.body);
+            auto effective = off_entity_list();  // 当前生效清单 → 预勾选
+            std::vector<PickerEntity> ents;
+            for (auto& item : arr) {
+                std::string eid = item.value("entity_id", "");
+                std::string dom = eid.substr(0, eid.find('.'));
+                if (dom != "switch" && dom != "light" && dom != "fan") continue;
+                PickerEntity pe;
+                pe.entity_id = eid;
+                pe.name = item["attributes"].value("friendly_name", eid);
+                pe.checked = off_entity_contains(effective, eid);
+                ents.push_back(std::move(pe));
+            }
+            std::sort(ents.begin(), ents.end(),
+                      [](const PickerEntity& a, const PickerEntity& b) { return a.name < b.name; });
+            _picker_entities = std::move(ents);
+            _picker_fetching.store(false);
+            _picker_updated.store(true);
+            mclog::tagInfo(TAG, "picker: {} switch/light/fan entities", _picker_entities.size());
+        } catch (const std::exception& e) {
+            mclog::tagWarn(TAG, "picker: parse failed: {}", e.what());
+            _picker_fetching.store(false);
+            _picker_error.store(true);
+        }
+    });
+#else
+    _picker_error.store(true);
+#endif
+}
+
+void AppRfid::_rebuildPickerList()
+{
+    if (!_picker_list) return;
+    lv_obj_clean(_picker_list);
+
+    lv_label_set_text_fmt(_picker_status, "勾选嘀卡时要关闭的设备 (共 %d 个)",
+                          (int)_picker_entities.size());
+
+    for (size_t i = 0; i < _picker_entities.size(); i++) {
+        auto& pe = _picker_entities[i];
+        lv_obj_t* cb = lv_checkbox_create(_picker_list);
+        std::string line = pe.name + "   " + pe.entity_id;
+        lv_checkbox_set_text(cb, line.c_str());
+        lv_obj_set_style_text_font(cb, zh_font_lg(), 0);  // 30px, 触摸行高随之撑大
+        lv_obj_set_style_text_color(cb, lv_color_hex(C_TEXT), 0);
+        if (pe.checked) lv_obj_add_state(cb, LV_STATE_CHECKED);
+        lv_obj_set_user_data(cb, (void*)i);  // 行索引跟对象走, event user_data 留给 app
+        lv_obj_add_event_cb(cb, _pickerItem_cb, LV_EVENT_VALUE_CHANGED, this);
+    }
+}
+
+void AppRfid::_pickerItem_cb(lv_event_t* e)
+{
+    auto* app = static_cast<AppRfid*>(lv_event_get_user_data(e));
+    lv_obj_t* cb = lv_event_get_target_obj(e);
+    size_t idx = (size_t)lv_obj_get_user_data(cb);
+    if (idx >= app->_picker_entities.size()) return;
+    app->_picker_entities[idx].checked = lv_obj_has_state(cb, LV_STATE_CHECKED);
+    app->_savePickedEntities();
+}
+
+void AppRfid::_savePickedEntities()
+{
+    std::string joined;
+    for (const auto& pe : _picker_entities) {
+        if (!pe.checked) continue;
+        if (!joined.empty()) joined += ',';
+        joined += pe.entity_id;
+    }
+    // 全不选写 "none" 占位, 否则空串会被当成"从未配置"而回退默认五件套
+    GetHAL()->setConfig("rfid_off_ents", joined.empty() ? "none" : joined);
+    mclog::tagInfo(TAG, "picker saved: {}", joined.empty() ? "(none)" : joined);
 }
 
 void AppRfid::_readBlockNow()
@@ -810,6 +1035,12 @@ void AppRfid::_pollTick(lv_timer_t* t)
 #ifndef PLATFORM_BUILD_DESKTOP
     auto* self = static_cast<AppRfid*>(lv_timer_get_user_data(t));
     if (!self->_app_open.load()) return;
+
+    // 设备选择页的 worker 回填 (与 app_settings 的 fx/email cache 同一模式)
+    if (self->_picker_updated.exchange(false) && self->_picker_page) self->_rebuildPickerList();
+    if (self->_picker_error.exchange(false) && self->_picker_page) {
+        lv_label_set_text(self->_picker_status, "拉取失败: 检查 HA 地址/Token (见日志)");
+    }
 
     // 读卡器未就绪时自动重试探测 (每 ~2s), 支持热插拔 / 上电时序晚于 app 打开
     if (!self->_reader_ok) {
@@ -1649,22 +1880,13 @@ void AppRfid::_crcA(const uint8_t* data, size_t n, uint8_t out[2])
 // ════════════════════════════════════════════════════════════════════════════
 //  后台「嘀卡关灯」服务
 //  与 M5Dial-UserDemo 的 rfid_service 同一思路: 开机常驻任务拥有读卡器,
-//  卡进场 (缺席→在场沿) 蜂鸣一声; UID 匹配 NVS "rfid_off_uid" 时对实体列表
+//  卡进场 (缺席→在场沿) 蜂鸣一声; UID 匹配 NVS "rfid_off_uids" 时对实体列表
 //  逐个调 HA turn_off. 打开 RFID Reader UI 时经 s_ui_owns 让位, 关闭后接管.
 // ════════════════════════════════════════════════════════════════════════════
 
 AppRfid* AppRfid::s_instance = nullptr;
 std::atomic<bool> AppRfid::s_ui_owns{false};
 std::atomic<bool> AppRfid::s_bg_reinit{false};
-
-// 默认关灯实体 (与 M5Dial 同款, 同一个家). 可被 NVS "rfid_off_entities"
-// (逗号分隔) 覆盖.
-static const char* BG_DEFAULT_ENTITIES =
-    "switch.xiaomi_cn_945886502_w1_on_p_2_1,"    // 餐厅灯
-    "switch.xiaomi_cn_945769368_w1_on_p_2_1,"    // 书台灯
-    "switch.xiaomi_cn_2143401838_w2_on_p_3_1,"   // 筒灯
-    "switch.xiaomi_cn_2143401838_w2_on_p_2_1,"   // 吸顶灯
-    "fan.dmaker_cn_740412216_p5c_s_2_fan";       // 风扇
 
 void AppRfid::_bgStart()
 {
@@ -1715,20 +1937,14 @@ void AppRfid::_bgTurnOffAll()
         return;
     }
     std::string url   = ha_weather::baseUrl(host);
-    std::string list  = GetHAL()->getConfig("rfid_off_entities", BG_DEFAULT_ENTITIES);
+    auto entities = off_entity_list();  // 选择页勾选结果 (或默认五件套)
+    if (entities.empty()) {
+        mclog::tagWarn(TAG, "bg off: 实体清单为空 (选择页全不选)");
+        return;
+    }
 
-    GetHAL()->tryRunDetached([url, token, list]() {
-        size_t pos = 0;
-        while (pos < list.size()) {
-            size_t comma = list.find(',', pos);
-            std::string eid = list.substr(pos, comma == std::string::npos ? std::string::npos
-                                                                          : comma - pos);
-            pos = (comma == std::string::npos) ? list.size() : comma + 1;
-            // 去首尾空格
-            while (!eid.empty() && eid.front() == ' ') eid.erase(0, 1);
-            while (!eid.empty() && eid.back() == ' ')  eid.pop_back();
-            if (eid.empty()) continue;
-
+    GetHAL()->tryRunDetached([url, token, entities]() {
+        for (const auto& eid : entities) {
             std::string domain = eid.substr(0, eid.find('.'));
             std::string body   = "{\"entity_id\":\"" + eid + "\"}";
             auto resp = GetHAL()->httpPost(url + "/api/services/" + domain + "/turn_off",
@@ -1749,8 +1965,16 @@ void AppRfid::_bgLoop()
     int  absent   = 0;
     uint8_t cur_uid[10] = {0};
     int cur_len = 0;
+    int health_div = 0;  // 每 ~10min 打一次堆水位 (长期运行碎化排查用)
 
     for (;;) {
+        if (++health_div >= 2000) {  // 2000 × ~300ms ≈ 10min
+            health_div = 0;
+            mclog::tagInfo(TAG, "bg health: heap={} min={} largest8bit={}",
+                           heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                           heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),
+                           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        }
         // UI 打开期间完全停手 (引脚方向都被 UI 重配过)
         if (s_ui_owns.load()) {
             hw_ready = false;

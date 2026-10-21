@@ -109,6 +109,24 @@ private:
     void _clearOffCards();      // 清空关灯卡列表
     void _updateOffUidLabel();  // 刷新"关灯卡: N 张 ..."小标签
 
+    // ── 关灯设备选择页 (拉 HA /api/states 里的 switch/light/fan, 勾选即存) ──
+    struct PickerEntity { std::string entity_id; std::string name; bool checked; };
+    lv_obj_t* _picker_page   = nullptr;
+    lv_obj_t* _picker_list   = nullptr;   // 滚动容器, 每行一个 checkbox
+    lv_obj_t* _picker_status = nullptr;
+    std::vector<PickerEntity> _picker_entities;
+    std::atomic<bool> _picker_updated{false};   // worker 拉完数据, 等 UI 重建
+    std::atomic<bool> _picker_fetching{false};
+    std::atomic<bool> _picker_error{false};
+
+    void _openPicker();
+    void _closePicker();
+    void _fetchPickerEntities();     // detached worker: GET /api/states → _picker_entities
+    void _rebuildPickerList();       // UI 线程按 _picker_entities 重建 checkbox 行
+    void _savePickedEntities();      // 勾选状态 → NVS rfid_off_ents
+    static void _pickerBtn_cb(lv_event_t* e);
+    static void _pickerItem_cb(lv_event_t* e);
+
     static void _pollTick(lv_timer_t* t);          // 400ms 寻卡轮询
     static void _blockMinus_cb(lv_event_t* e);
     static void _blockPlus_cb(lv_event_t* e);
@@ -117,6 +135,7 @@ private:
     static void _clearBtn_cb(lv_event_t* e);
     static void _setOffCard_cb(lv_event_t* e);
     static void _clearOffCard_cb(lv_event_t* e);
+
 
 #ifndef PLATFORM_BUILD_DESKTOP
     // ── ST25R3916 低层 (基于 bitbang I2C) ────────────────────────────────────
@@ -166,8 +185,9 @@ private:
 
     // ── 后台「嘀卡关灯」服务 (onCreate 启动, 与 UI 互斥使用硬件) ────────────
     // 架构与 M5Dial-UserDemo 的 rfid_service 一致: 开机常驻任务拥有读卡器,
-    // 匹配 NVS "rfid_off_uid" 的卡进场时对 NVS "rfid_off_entities" (逗号分隔,
+    // 匹配 NVS "rfid_off_uids" 的卡进场时对 NVS "rfid_off_ents" (逗号分隔,
     // 缺省用内置默认列表) 逐个调 HA turn_off. UI 打开时通过 s_ui_owns 让位.
+    // 注意: NVS 键名上限 15 字符, 超长的键读写会静默失败.
     static AppRfid* s_instance;
     static std::atomic<bool> s_ui_owns;    // true = UI 正在独占 GPIO/芯片
     static std::atomic<bool> s_bg_reinit;  // UI 关闭后置位, 后台任务重新 init 引脚
