@@ -229,19 +229,22 @@ void AppSettings::_buildToolsPage()
     lv_obj_set_style_pad_all(_tools_page, 0, 0);
     lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Tool card — same style as the HA "灯光" device cards: dark-blue rounded
-    // card with a soft shadow, icon on the left, name on the right.
-    // img==nullptr 走"点阵分支": 用 LV_SYMBOL_BULLET 拼一个 6x6 的 LED 矩阵缩略图
-    // (象征 8x8 Puzzle), y_pos 默认 140 (第 1 行), 第 2 行 tile 传 310.
-    // kind==0 (默认) 走点阵分支 (灯阵); kind==1 走信封分支 (邮件); kind==2 走 NFC 圆环分支 (RFID).
-    auto make_tile = [&](int x, const lv_image_dsc_t* img, int img_w,
+    // Tool card — same style as the HA "灯光" device cards: rounded card with a
+    // soft shadow, icon on the left, name on the right. 3×3 网格铺满整屏
+    // (2026-10-27 用户要求参考智能家居布局、少留白、上下对齐).
+    // img==nullptr 走图形分支 (不依赖字体): kind==0 LED 点阵 (灯阵) /
+    // kind==1 信封 (邮件) / kind==2 NFC 圆环 (RFID).
+    constexpr int TW = 392, TH = 214, GAP_X = 20, GAP_Y = 18, MARGIN = 32;
+    auto make_tile = [&](int col, int row, const lv_image_dsc_t* img, int img_w,
                          const char* label, lv_event_cb_t cb,
                          int img_scale = 256, int icon_x = 12,
-                         int img_scale_y = -1, int y_pos = 120,
+                         int img_scale_y = -1,
                          int kind = 0) {
+        const int x = MARGIN + col * (TW + GAP_X);
+        const int y = 20 + row * (TH + GAP_Y);
         lv_obj_t* tile = lv_obj_create(_tools_page);
-        lv_obj_set_size(tile, 380, 140);
-        lv_obj_align(tile, LV_ALIGN_TOP_LEFT, x, y_pos);
+        lv_obj_set_size(tile, TW, TH);
+        lv_obj_align(tile, LV_ALIGN_TOP_LEFT, x, y);
         lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD), 0);
         lv_obj_set_style_radius(tile, 20, 0);
         lv_obj_set_style_border_width(tile, 0, 0);
@@ -279,7 +282,7 @@ void AppSettings::_buildToolsPage()
                 // 跟点阵分支一样完全脱离字体, 用纯 lv_obj 矩形拼.
                 const int EW = 84, EH = 56;
                 const int ex = icon_x + 12;
-                const int ey = (140 - EH) / 2;
+                const int ey = (TH - EH) / 2;
                 lv_obj_t* env_body = lv_obj_create(tile);
                 lv_obj_set_size(env_body, EW, EH);
                 lv_obj_set_pos(env_body, ex, ey);
@@ -313,7 +316,7 @@ void AppSettings::_buildToolsPage()
                 // NFC 感应图标 (RFID tile) — 3 个同心圆环 + 中心芯片方块.
                 // 与信封/点阵分支一样用纯 lv_obj 拼, 不依赖字体符号.
                 const int ccx = icon_x + 62;   // 圆心 x
-                const int ccy = 70;            // 圆心 y (tile 高 140 居中)
+                const int ccy = TH / 2;        // 圆心 y (tile 垂直居中)
                 const int sizes[3] = {96, 68, 40};
                 for (int i = 0; i < 3; i++) {
                     lv_obj_t* ring = lv_obj_create(tile);
@@ -352,7 +355,7 @@ void AppSettings::_buildToolsPage()
                 const int CELL = 24, GAP = 6, COLS = 3, ROWS = 3;
                 const int GRID_W = COLS * CELL + (COLS - 1) * GAP;
                 const int start_x = icon_x + 8;
-                const int start_y = (140 - ROWS * CELL - (ROWS - 1) * GAP) / 2;
+                const int start_y = (TH - ROWS * CELL - (ROWS - 1) * GAP) / 2;
                 for (int r = 0; r < ROWS; r++) {
                     for (int c = 0; c < COLS; c++) {
                         lv_obj_t* dot = lv_obj_create(tile);
@@ -383,21 +386,20 @@ void AppSettings::_buildToolsPage()
     //   fx_icon  : 100×100 native × 1.30 (scale 333) → 130×130
     //   unit_icon: 130×130 native × 1.00             → 130×130
     //   calc_icon: 130×130 native × 1.00             → 130×130
-    make_tile(35,  &calc_icon, 130, "计算器",  _toolBtn_cb);
-    make_tile(450, &fx_icon,   150, "汇率",    _toolFx_cb,   384);  // 384 = 256 × 1.5x → 150×150
-    make_tile(865, &unit_icon, 130, "单位换算", _toolUnit_cb);
+    make_tile(0, 0, &calc_icon, 130, "计算器",  _toolBtn_cb);
+    make_tile(1, 0, &fx_icon,   150, "汇率",    _toolFx_cb,   384);  // 384 = 256 × 1.5x → 150×150
+    make_tile(2, 0, &unit_icon, 130, "单位换算", _toolUnit_cb);
 
     // 第 2 行: 灯阵 (Unit-Puzzle 8x8 WS2812 矩阵测试 App)
-    //   y=120 (第 1 行) + 140 (tile 高) + 30 (行间距) = 290
-    //   图标走 make_tile 的 nullptr 分支, 用 LV_SYMBOL_BULLET 拼 6x6 LED 缩略图
-    make_tile(35, nullptr, 130, "灯  阵", _toolPuzzle_cb, 256, 12, -1, 290);
+    //   图标走 make_tile 的 nullptr 分支, 画 3x3 LED 缩略圆点
+    make_tile(0, 1, nullptr, 130, "灯  阵", _toolPuzzle_cb);
 
     // 第 2 行第 2 列: LoRa 聊天 (Unit C6L SX1262, PORT.A UART)
     //   图标: 4 根逐渐升高的信号柱
     {
-        const int x = 450, y_pos = 310;
+        const int x = MARGIN + 1 * (TW + GAP_X), y_pos = 20 + 1 * (TH + GAP_Y);
         lv_obj_t* tile = lv_obj_create(_tools_page);
-        lv_obj_set_size(tile, 380, 140);
+        lv_obj_set_size(tile, TW, TH);
         lv_obj_align(tile, LV_ALIGN_TOP_LEFT, x, y_pos);
         lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD), 0);
         lv_obj_set_style_radius(tile, 20, 0);
@@ -427,21 +429,18 @@ void AppSettings::_buildToolsPage()
         lv_obj_align(name, LV_ALIGN_LEFT_MID, 12 + 130 + 16, 0);
     }
 
-    // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表)
-    //   y=290 + 140 + 30 = 460, 走 kind=1 信封分支
-    make_tile(35, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 460, 1);
+    // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表), kind=1 信封分支
+    make_tile(0, 2, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 1);
 
     // 第 3 行第 2 列: 自选股 (走 hermes :8766/api/stocks/portfolio, mx-selfselect 后端)
-    //   stocks_icon 130×130 native, 1:1, 与 lora/fx 同款图片 tile
-    make_tile(450, &stocks_icon, 130, "自选股", _toolStocks_cb, 256, 12, -1, 460);
+    make_tile(1, 2, &stocks_icon, 130, "自选股", _toolStocks_cb);
 
     // 第 3 行第 3 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
-    //   reachy_icon 130×130, 与 stocks_icon 同尺寸
-    make_tile(865, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb, 256, 12, -1, 460);
+    make_tile(2, 2, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb);
 
     // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
     //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
-    make_tile(865, nullptr, 130, "RFID", _toolRfid_cb, 256, 12, -1, 290, 2);
+    make_tile(2, 1, nullptr, 130, "RFID", _toolRfid_cb, 256, 12, -1, 2);
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)
