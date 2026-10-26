@@ -4,11 +4,30 @@
  */
 #include "app_player.h"
 #include <hal/hal.h>
+#include <nlohmann/json.hpp>
 #include <mooncake_log.h>
 #include "../app_ha/ha_weather.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
+#include <vector>
+#include <algorithm>
+
+// URL 百分号编码(歌词查询参数含中文/空格)
+static std::string url_encode(const std::string& s)
+{
+    static const char* hex = "0123456789ABCDEF";
+    std::string o;
+    o.reserve(s.size() * 3);
+    for (unsigned char c : s) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~')
+            o += (char)c;
+        else { o += '%'; o += hex[c >> 4]; o += hex[c & 0xF]; }
+    }
+    return o;
+}
 #include <thread>
 #include "../utils/datetime/lunar_calendar.h"
 
@@ -17,6 +36,8 @@
 #include "../utils/assets/assets_partition.h"
 #include <esp_heap_caps.h>
 #include <esp_http_client.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 extern const uint8_t font_puhui_common_30_4_bin_start[]
     asm("_binary_font_puhui_common_30_4_bin_start");
 static const lv_font_t* zh_font_lg()
@@ -115,6 +136,9 @@ void AppPlayer::onOpen()
     _title.clear(); _artist.clear(); _state.clear();
     _volume = -1; _has_data = false;
     _pos = -1; _dur = -1;
+    { std::lock_guard<std::mutex> lk(_lyr_mu); _lyr_t.clear(); _lyr_l.clear(); }
+    _lyr_idx = -1;
+    if (_lyr_now) lv_label_set_text(_lyr_now, "");
 
     _scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
@@ -133,7 +157,7 @@ void AppPlayer::onOpen()
 
     // ── 右侧大封面(320×320,占位暗卡先垫底) ──
     _cover_card = lv_obj_create(_scr);
-    lv_obj_set_pos(_cover_card, 760, 160);
+    lv_obj_set_pos(_cover_card, 720, 130);
     lv_obj_set_size(_cover_card, _COVER, _COVER);
     lv_obj_set_style_bg_color(_cover_card, lv_color_hex(C_CARD), 0);
     lv_obj_set_style_bg_opa(_cover_card, LV_OPA_COVER, 0);
@@ -142,7 +166,7 @@ void AppPlayer::onOpen()
     lv_obj_set_scrollbar_mode(_cover_card, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(_cover_card, LV_OBJ_FLAG_SCROLLABLE);
     _cover_img = lv_image_create(_scr);
-    lv_obj_set_pos(_cover_img, 760, 160);
+    lv_obj_set_pos(_cover_img, 720, 130);
     lv_obj_set_size(_cover_img, _COVER, _COVER);
     lv_obj_add_flag(_cover_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_radius(_cover_img, 16, 0);
@@ -152,7 +176,7 @@ void AppPlayer::onOpen()
     _title_lbl = lv_label_create(_scr);
     lv_obj_set_style_text_font(_title_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_title_lbl, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_width(_title_lbl, 520);        // 中轴 = 进度条中心 x=360
+    lv_obj_set_width(_title_lbl, 500);        // 中轴 = 进度条中心 x=360
     lv_obj_align(_title_lbl, LV_ALIGN_TOP_LEFT, 120, 150);
     lv_obj_set_style_text_align(_title_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(_title_lbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
@@ -161,7 +185,7 @@ void AppPlayer::onOpen()
     _artist_lbl = lv_label_create(_scr);
     lv_obj_set_style_text_font(_artist_lbl, zh_font_md(), 0);
     lv_obj_set_style_text_color(_artist_lbl, lv_color_hex(C_TEXT2), 0);
-    lv_obj_set_width(_artist_lbl, 520);
+    lv_obj_set_width(_artist_lbl, 500);
     lv_obj_align(_artist_lbl, LV_ALIGN_TOP_LEFT, 120, 218);
     lv_obj_set_style_text_align(_artist_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(_artist_lbl, LV_LABEL_LONG_DOT);
@@ -246,6 +270,16 @@ void AppPlayer::onOpen()
     lv_label_set_text(nl, LV_SYMBOL_NEXT);
     lv_obj_center(nl);
 
+    // ── 歌词单行: 仅当前行(亮), 随播放位置滚动 ──
+    _lyr_now = lv_label_create(_scr);
+    lv_obj_set_style_text_font(_lyr_now, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(_lyr_now, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_width(_lyr_now, 1000);
+    lv_obj_set_style_text_align(_lyr_now, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(_lyr_now, LV_LABEL_LONG_DOT);
+    lv_label_set_text(_lyr_now, "");
+    lv_obj_align(_lyr_now, LV_ALIGN_TOP_MID, 0, 622);   // 封面底(560)与屏幕底(720)的中间
+
     // 底部提示
     _hint_lbl = lv_label_create(_scr);   // 仅触摸后 3s 内显示(onRunning 驱动)
     lv_obj_set_style_text_font(_hint_lbl, zh_font_md(), 0);
@@ -302,10 +336,14 @@ void AppPlayer::_pollEntity()
     bool pos_jump = track_chg || pos_resync;
     int vol = v.empty() ? -1 : (int)(atof(v.c_str()) * 100 + 0.5f);
     bool changed = !_has_data || t != _title || a != _artist || st != _state || vol != _volume;
+    bool track_new = t != _title || a != _artist;
     _title = t; _artist = a; _state = st; _volume = vol; _has_data = true;
+    if (track_new && !t.empty())
+        _startLyricsFetch(t, a, new_dur > 0 ? new_dur : 0);
     if (changed || pos_jump) _refreshUi();
-    // 封面:entity_picture 变化(切歌/切页)才重拉
-    if (pic != _art_key) {
+    // 封面:entity_picture 变化(切歌/切页)才重拉; 失败后 10s 退避重试
+    // (旧逻辑一次性: 失败即永不重试 —— 尺寸不匹配时永远黑屏, 2026-10-26 实锤)
+    if (pic != _art_key && GetHAL()->millis() >= _art_retry_ms) {
         _art_key = pic;
         if (!pic.empty()) _startArtFetch();
     }
@@ -425,6 +463,116 @@ void AppPlayer::_playClick_cb(lv_event_t* e)
     self->_refreshUi();
 }
 
+// ── 歌词: 后台拉取 OrangePi 8769 的 LRCLIB 代理, 解析 LRC 时间轴 ──
+// 切歌时先清空显示(UI 线程调用), 记录最新期望; 若上一首还在拉取中, 由该在途
+// 任务收尾时捡起新期望重拉(最多 4 轮)——直接丢弃新请求会让旧词"定住"。
+void AppPlayer::_startLyricsFetch(const std::string& title, const std::string& artist, int duration)
+{
+    {
+        std::lock_guard<std::mutex> lk(_lyr_mu);
+        _lyr_want_title = title; _lyr_want_artist = artist; _lyr_want_dur = duration;
+        _lyr_t.clear(); _lyr_l.clear();      // 立即丢掉旧词, 避免"定住"
+        _lyr_idx = -1;
+    }
+    if (_lyr_now) lv_label_set_text(_lyr_now, "");
+    if (_lyr_fetching.exchange(true)) return;   // 在途任务会捡起新期望
+    GetHAL()->tryRunDetached([this]() {
+        for (int attempt = 0; attempt < 4; attempt++) {
+            std::string title, artist;
+            int dur;
+            {
+                std::lock_guard<std::mutex> lk(_lyr_mu);
+                if (_lyr_want_title.empty()) break;
+                title = _lyr_want_title; artist = _lyr_want_artist; dur = _lyr_want_dur;
+            }
+            std::string url = "http://192.168.1.200:8769/lyrics?title=" + url_encode(title)
+                            + "&artist=" + url_encode(artist);
+            if (dur > 0) url += "&duration=" + std::to_string(dur);
+            auto resp = GetHAL()->httpGet(url);
+            std::vector<std::pair<float, std::string>> ent;   // (时间, 行)
+            if (resp.ok) {
+                try {
+                    auto j = nlohmann::json::parse(resp.body);
+                    if (j.value("ok", false)) {
+                        std::string lrc = j.value("synced", std::string());
+                        size_t pos = 0;
+                        while (pos != std::string::npos && ent.size() < 400) {
+                            size_t eol = lrc.find('\n', pos);
+                            std::string line = lrc.substr(pos, (eol == std::string::npos ? lrc.size() : eol) - pos);
+                        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+                            size_t p = 0;
+                            float first_t = -1;
+                            std::vector<float> extra_t;
+                            while (p + 1 < line.size() && line[p] == '[') {
+                                size_t cl = line.find(']', p);
+                                if (cl == std::string::npos) break;
+                                int mm = 0, ss = 0; float ff = 0;
+                                if (sscanf(line.c_str() + p + 1, "%d:%d%f", &mm, &ss, &ff) >= 2) {
+                                    float t = mm * 60 + ss + (ff > 0 && ff < 1 ? ff : 0);
+                                    if (first_t < 0) first_t = t; else extra_t.push_back(t);
+                                    p = cl + 1;
+                                } else break;
+                            }
+                            std::string text = line.substr(p < line.size() ? p : line.size());
+                            if (first_t >= 0) {
+                                ent.push_back({first_t, text});
+                                for (float et : extra_t) ent.push_back({et, text});
+                            }
+                            pos = (eol == std::string::npos) ? std::string::npos : eol + 1;   // +2 会吃掉下一行行首的 [
+                        }
+                    }
+                } catch (...) {}
+            }
+            // 多时间戳行(副歌重复)展开后乱序 —— 必须按时间稳定排序,
+            // 否则滚动扫描在第一个乱序点卡住("只显示第一句"实锤)
+            std::stable_sort(ent.begin(), ent.end(),
+                             [](const auto& a, const auto& b) { return a.first < b.first; });
+            std::vector<float> ts;
+            std::vector<std::string> ls;
+            ts.reserve(ent.size());
+            ls.reserve(ent.size());
+            for (auto& e : ent) { ts.push_back(e.first); ls.push_back(e.second); }
+            bool stable = false;
+            {
+                std::lock_guard<std::mutex> lk(_lyr_mu);
+                if (_lyr_want_title == title && _lyr_want_artist == artist) {
+                    _lyr_t.swap(ts);
+                    _lyr_l.swap(ls);
+                    _lyr_idx = -1;
+                    _lyr_key = artist + "|" + title;
+                    stable = true;             // 期望没再变: 完成
+                }
+            }
+            if (stable) break;
+            // 期望又变了(继续切歌): 回圈拉最新一首
+        }
+        _lyr_fetching.store(false);
+        // 注: store(false) 前几微秒若 UI 恰好请求新歌(exchange 失败被拒),
+        // 该首会暂时无词(显示已清空, 不会"定住"), 下次切歌即恢复 —— 概率极小,
+        // 用 4 轮重拉循环覆盖了其余全部切歌窗口。
+    });
+}
+
+// 按播放位置刷新歌词行(当前行亮 + 下一行暗)
+void AppPlayer::_updateLyricLine()
+{
+    if (!_lyr_now) return;
+    std::lock_guard<std::mutex> lk(_lyr_mu);
+    if (_lyr_t.empty()) {
+        if (_lyr_idx != -1) {
+            _lyr_idx = -1;
+            lv_label_set_text(_lyr_now, "");
+        }
+        return;
+    }
+    if (_pos < 0) return;
+    int idx = 0;
+    while (idx + 1 < (int)_lyr_t.size() && _lyr_t[idx + 1] <= (float)_pos) idx++;
+    if (idx == _lyr_idx) return;
+    _lyr_idx = idx;
+    lv_label_set_text(_lyr_now, _lyr_l[idx].c_str());
+}
+
 // 播放中本地走秒(轮询 4s 校正一次; UI 只在值变化时更新, 无重绘负担)
 void AppPlayer::_advancePos()
 {
@@ -486,6 +634,7 @@ void AppPlayer::onRunning()
     if (now - last_poll >= 1000) {   // 1s: 本地走秒 + 查缓存(HaClient 4s 拉一次)
         last_poll = now;
         _advancePos();
+        _updateLyricLine();
         _pollEntity();
     }
 }
@@ -549,7 +698,7 @@ void AppPlayer::_artFetchTask(AppPlayer* self)
     const char* player = self->_page == 0 ? "sonos" : "pod";
     char url[128];
     snprintf(url, sizeof(url),
-             "http://192.168.1.200:8766/assets/cover.rgb565?player=%s&size=400", player);
+             "http://192.168.1.200:8766/assets/cover.rgb565?player=%s&size=460", player);
 
     bool ok = false;
     esp_http_client_config_t cfg = {};
@@ -566,6 +715,10 @@ void AppPlayer::_artFetchTask(AppPlayer* self)
                 while ((n = esp_http_client_read(http, dst + len, kPixels - len)) > 0) {
                     len += n;
                     if (len >= kPixels) break;
+                    // 大图节流: 每 32KB 让 2ms —— esp_hosted 的 SDIO RX 缓冲池
+                    // 需要喘息, 一次灌 800KB 触发 sdio_rx_get_buffer 断言重启
+                    // (2026-10-26 640px 封面实锤)
+                    if ((len & 0x7FFF) < n) vTaskDelay(pdMS_TO_TICKS(2));
                 }
                 ok = (len == kPixels);
             }
@@ -576,6 +729,7 @@ void AppPlayer::_artFetchTask(AppPlayer* self)
     if (!ok) {
         heap_caps_free(buf);
         self->_art_fetching.store(false);
+        self->_art_retry_ms = GetHAL()->millis() + 10000;   // 10s 后重试
         return;
     }
     // 发布:换下旧缓冲,置就绪标志(LVGL 线程在 _pollEntity 消费)

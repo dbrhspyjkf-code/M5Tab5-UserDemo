@@ -15,6 +15,9 @@
 #include <mooncake.h>
 #include <lvgl.h>
 #include <memory>
+#include <vector>
+#include <atomic>
+#include <mutex>
 #include <functional>
 #include <string>
 #include "../app_ha/ha_client.h"
@@ -74,13 +77,28 @@ private:
     static void _prog_cb(lv_event_t* e);
     void _advancePos();                // 播放中本地走 1 秒
 
+    // ── 歌词(LRCLIB 经 OrangePi 8769 代理; LRC 时间轴与进度共用 _pos) ──
+    lv_obj_t* _lyr_now  = nullptr;    // 当前行(亮)
+    lv_obj_t* _lyr_next = nullptr;    // 下一行(暗)
+    std::vector<float> _lyr_t;        // 行起始秒
+    std::vector<std::string> _lyr_l;
+    std::mutex _lyr_mu;
+    std::atomic<bool> _lyr_fetching{false};
+    std::string _lyr_key;             // 当前展示歌词的 key(artist|title)
+    std::string _lyr_want_title, _lyr_want_artist;   // 最新期望(在途任务收尾捡起)
+    int _lyr_want_dur = 0;
+    int _lyr_idx = -1;                // 当前行号
+    void _startLyricsFetch(const std::string& title, const std::string& artist, int duration);
+    void _updateLyricLine();
+
     // ── 大封面(hermes /assets/cover.rgb565,OrangePi PIL 转码零设备解码) ──
-    static constexpr int _COVER = 400;              // px(PSRAM 320KB; 服务端 ?size= 支持任意尺寸)
+    static constexpr int _COVER = 460;              // px(半屏; PSRAM ~820KB; 服务端 ?size= 任意)
     lv_obj_t* _cover_img  = nullptr;                // lv_image 对象
     lv_obj_t* _cover_card = nullptr;                // 占位暗卡
     lv_image_dsc_t* _cover_dsc = nullptr;           // PSRAM: dsc + 像素一体分配
     void*     _cover_buf  = nullptr;
-    std::string _art_key;             // entity_picture URL(变化才重拉)
+    std::string _art_key;
+    uint32_t _art_retry_ms = 0;      // 拉取失败后的重试时间点(10s 退避)             // entity_picture URL(变化才重拉)
     std::atomic<bool> _art_fetching{false};
     std::atomic<bool> _art_ready{false};            // 拉取完成待上屏(LVGL 线程消费)
     void _startArtFetch();           // detached 线程拉当前页封面
