@@ -47,6 +47,20 @@ void AppLoraChat::onOpen()
 {
     mclog::tagInfo(TAG, "open");
 
+    // 防重入守卫 (同 AppSettings): mooncake 重开不触发 onClose, 不拆旧屏
+    // 会整屏泄漏. 先做与 onClose 相同的 UI/外设收尾再重建.
+    if (_scr) {
+        if (GetHAL()->lvKbGroup && _input) lv_group_remove_obj(_input);
+        GetHAL()->onEnterPressed = nullptr;
+        _removeSwipeGesture();
+        _uartDeinit();
+        AppEmailLed::setPortAOwnedByApp(false);
+        lv_obj_delete(_scr);
+        _scr = nullptr;
+        _status_lbl = _chat_scroll = _chat_panel = _input = _send_btn = nullptr;
+        _input_row = _keyboard = nullptr;
+    }
+
     _scr = lv_obj_create(nullptr);
     lv_obj_set_size(_scr, SCREEN_W, SCREEN_H);
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG()), 0);

@@ -123,6 +123,16 @@ void AppSettings::onOpen()
 {
     snap_theme();
     mclog::tagInfo(_tag, "open");
+    // 防重入守卫: mooncake 的 openApp() 不会关前台 app (onClose 不触发),
+    // 子 app 退出回到本页时 onOpen 会被再次调用——若无守卫, 这里 new 一个新屏
+    // 并覆盖旧 _scr, 整屏对象全部泄漏; 工具↔子 app 每往返一次漏一屏,
+    // 几轮后 LVGL OOM (lv_realloc failed → lv_obj_create assert), main 任务
+    // 卡死 = "闪屏 + 触摸无响应" (2026-10-27 自选股实锤). 有屏直接复用.
+    if (_scr) {
+        lv_screen_load(_scr);
+        _installSwipeGesture();
+        return;
+    }
     _scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);

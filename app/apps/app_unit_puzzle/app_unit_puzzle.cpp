@@ -67,6 +67,22 @@ void AppUnitPuzzle::onOpen()
 {
     mclog::tagInfo(TAG, "on open");
 
+    // 防重入守卫 (同 AppSettings): mooncake 重开不触发 onClose, 不拆旧屏
+    // 会整屏泄漏 (_buildUi 直接 new 屏). 先拆定时器/输入弹窗/旧屏再重建;
+    // _stripInit 自带 if (_strip) 幂等, RMT 不会重复创建.
+    if (_anim_timer) { lv_timer_delete(_anim_timer); _anim_timer = nullptr; }
+    if (_diag_timer) { lv_timer_delete(_diag_timer); _diag_timer = nullptr; }
+    if (_text_ui[0]) {
+        auto* hal = GetHAL();
+        if (hal && hal->lvKbGroup && _text_ta) lv_group_remove_obj(_text_ta);
+        _text_ta = nullptr;
+        lv_obj_delete(_text_ui[0]);
+        _text_ui[0] = nullptr;
+    }
+    if (_scr) { lv_obj_delete(_scr); _scr = nullptr; }
+    _status_lbl = _diag_lbl = nullptr;
+    _removeSwipeGesture();
+
     // 独占 PORT A: 让后台邮件通知器先释放 RMT/GPIO53, 再由本 app 接管.
     AppEmailLed::setPortAOwnedByApp(true);
 

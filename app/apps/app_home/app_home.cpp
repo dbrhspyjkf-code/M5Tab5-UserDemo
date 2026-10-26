@@ -85,6 +85,13 @@ void AppHome::onOpen()
 {
     mclog::tagInfo(_tag, "on open");
 
+    // 防重入守卫 (同其他 app): 若 mooncake 在未 onClose 的情况下再次 open,
+    // 直接复用现有屏, 防整屏泄漏.
+    if (_scr) {
+        lv_screen_load(_scr);
+        return;
+    }
+
     // Create a dedicated screen so other apps can own their own screens
     _scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(_scr, lv_color_hex(0x000000), 0);   // 纯黑(2026-10-26 用户指定, 弃背景图)
