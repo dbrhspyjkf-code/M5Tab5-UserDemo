@@ -22,6 +22,8 @@
 #include "app_stocks/app_stocks.h"
 #include "app_rfid/app_rfid.h"
 #include "app_radio/app_radio.h"
+#include "app_player/app_player.h"
+#include "app_timer/app_timer.h"
 #include "app_idle_screen/app_idle_screen.h"
 #include "xiaozhi_ctl.h"
 /* Header files locator (Don't remove) */
@@ -84,6 +86,12 @@ inline void on_install_apps()
     auto ra_uptr = std::make_unique<AppRadio>();
     AppRadio* radio = ra_uptr.get();
 
+    auto pl_uptr = std::make_unique<AppPlayer>();
+    AppPlayer* player = pl_uptr.get();   // 播放器: Sonos/HomePad,主页入口
+
+    auto ti_uptr = std::make_unique<AppTimer>();
+    AppTimer* timer = ti_uptr.get();     // 计时器: 主页入口
+
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
 
@@ -98,6 +106,8 @@ inline void on_install_apps()
     int re_id = mooncake::GetMooncake().installApp(std::move(re_uptr));
     int rf_id = mooncake::GetMooncake().installApp(std::move(rf_uptr));
     int ra_id = mooncake::GetMooncake().installApp(std::move(ra_uptr));
+    int pl_id = mooncake::GetMooncake().installApp(std::move(pl_uptr));
+    int ti_id = mooncake::GetMooncake().installApp(std::move(ti_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
@@ -126,6 +136,10 @@ inline void on_install_apps()
     });
     // 收音机是主页入口(非工具页), 关闭直接回主屏
     radio->setCloseCallback([home]() { home->restoreScreen(); });
+    // 播放器(Sonos/HomePod)同为主页入口
+    player->setCloseCallback([home]() { home->restoreScreen(); });
+    // 计时器同为主页入口
+    timer->setCloseCallback([home]() { home->restoreScreen(); });
     // 独占模式: 收音机打开期间抑制屏保(流媒体 app, 不被时钟遮盖/省轮询)
     radio->setSuppressor([idle](bool s) { idle->setSuppressed(s); });
 
@@ -169,6 +183,8 @@ inline void on_install_apps()
     home->addApp("小  智", xz_id);
     home->addApp("工  具", set_id);
     home->addApp("收音机", ra_id);
+    home->addApp("播放器", pl_id);
+    home->addApp("计时器", ti_id);
     /* Install app locator (Don't remove) */
 
     // ── Voice input WorkerAbility (always-on, not a user-launchable app) ──

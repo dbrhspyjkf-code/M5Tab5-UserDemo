@@ -7,8 +7,13 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
+#include <cstring>
 #include <algorithm>
+#include <mutex>
 #include <hal/hal.h>
+#ifndef PLATFORM_BUILD_DESKTOP
+#include <xiaozhi_ctl.h>
+#endif
 
 static constexpr int SAMPLE_RATE = 48000;
 static constexpr double PI       = 3.14159265358979323846;
@@ -43,6 +48,34 @@ void play_tone(int frequency, double durationSec)
         return;
     }
 
+#ifndef PLATFORM_BUILD_DESKTOP
+    // Tab5 实机: bsp audioPlay 路径的函数指针全 NULL(静默跳过, 从未出声)。
+    // 改走 xiaozhi_codec_write(24kHz mono 阻塞写), 后台线程播放不占 UI;
+    // 静态互斥串行化多次 beep(xiaozhi_codec_write 内部缓冲非线程安全)。
+    {
+        static std::mutex s_beep_mu;
+        if (!s_beep_mu.try_lock()) return;   // 上一声还在播: 丢弃新请求
+        s_beep_mu.unlock();
+    }
+    GetHAL()->tryRunDetached([frequency, durationSec]() {
+        static std::mutex s_play_mu;
+        std::lock_guard<std::mutex> lk(s_play_mu);
+        const int sr = 24000;
+        int samples = (int)(sr * durationSec);
+        if (samples < 16) samples = 16;
+        static std::vector<int16_t> buf;
+        buf.clear();
+        const float amp = 32767.0f / 4;
+        const int fade = 160;
+        for (int i = 0; i < samples; i++) {
+            float a = amp;
+            if (samples - i < fade) a *= (float)(samples - i) / fade;
+            buf.push_back((int16_t)(a * sinf(2.0f * (float)PI * frequency * i / sr)));
+        }
+        xiaozhi_codec_write(buf.data(), samples);
+    });
+#else
+    {
     const int sample_rate = 48000;
     const int samples     = static_cast<int>(sample_rate * durationSec);
     std::vector<int16_t> buffer(samples * 2);  // 双声道
@@ -65,6 +98,8 @@ void play_tone(int frequency, double durationSec)
     }
 
     GetHAL()->audioPlay(buffer);
+    }
+#endif
 }
 
 void play_melody(const std::vector<int>& midiList, double durationSec = 0.1)
