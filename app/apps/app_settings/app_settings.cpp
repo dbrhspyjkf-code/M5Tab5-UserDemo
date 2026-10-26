@@ -1,4 +1,5 @@
 #include "app_settings.h"
+#include "../utils/theme/theme.h"
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <string>
@@ -47,20 +48,24 @@ extern const lv_font_t font_calc_op;    // 40px button labels (has × ÷)
 extern const lv_font_t font_calc_expr;  // 30px expression line
 
 // ── Palette ─────────────────────────────────────────────────────────────────
-// Tools-page colors mirror the HA "灯光" dashboard cards (app_ha/view.cpp).
-static constexpr uint32_t C_BG       = 0x0A1A2E;  // page background (HA C_BG)
-static constexpr uint32_t C_ACCENT   = 0x4FA3FF;
-static constexpr uint32_t C_CARD     = 0x13304E;  // HA card background
-static constexpr uint32_t C_CARD_PR  = 0x1A3A5C;  // HA pressed fill (C_ACCENT_SOFT)
-static constexpr uint32_t C_TEXT     = 0xEAF3FB;  // HA primary text
+// 配色: 主题快照(onOpen 时从全局主题取, 见 utils/theme/theme.h);
+// 计算器数字/功能键的中性灰保留(任何主题下都读作"中性")。
+static uint32_t C_BG, C_ACCENT, C_CARD, C_CARD_PR, C_TEXT,
+                CALC_BG, CALC_NUM, CALC_FUNC, CALC_OP, CALC_TXT, CALC_EXPR,
+                C_SHADOW;
 
-// Calculator palette (matches the reference iPad calculator).
-static constexpr uint32_t CALC_BG   = 0x000000;
-static constexpr uint32_t CALC_NUM  = 0x3A3A3C;  // dark grey digit keys
-static constexpr uint32_t CALC_FUNC = 0x545456;  // medium grey  ⌫ / AC / %
-static constexpr uint32_t CALC_OP   = 0xFF9F0A;  // orange operators
-static constexpr uint32_t CALC_TXT  = 0xFFFFFF;
-static constexpr uint32_t CALC_EXPR = 0x9A9AA0;  // grey expression line
+static void snap_theme()
+{
+    const theme::Palette& T = theme::cur();
+    C_BG = 0x000000;        // 纯黑(与主页一致)
+    C_ACCENT = T.accent;
+    C_CARD = T.card[1];     C_CARD_PR = T.card[0];
+    C_TEXT = T.text_hi;     C_SHADOW = T.border;
+    CALC_BG = 0x000000;
+    CALC_NUM = 0x3A3A3C;    CALC_FUNC = 0x545456;
+    CALC_OP = T.accent;     // 运算键随主题强调色
+    CALC_TXT = 0xFFFFFF;    CALC_EXPR = T.text_dim;
+}
 
 // ── Currency table + live rate cache ─────────────────────────────────────────
 namespace {
@@ -115,6 +120,7 @@ void AppSettings::onCreate() {}
 
 void AppSettings::onOpen()
 {
+    snap_theme();
     mclog::tagInfo(_tag, "open");
     _scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
@@ -247,7 +253,7 @@ void AppSettings::_buildToolsPage()
         lv_obj_set_style_border_width(tile, 0, 0);
         lv_obj_set_style_pad_all(tile, 0, 0);
         lv_obj_set_style_shadow_width(tile, 18, 0);
-        lv_obj_set_style_shadow_color(tile, lv_color_hex(0x5A7A9C), 0);
+        lv_obj_set_style_shadow_color(tile, lv_color_hex(C_SHADOW), 0);
         lv_obj_set_style_shadow_opa(tile, LV_OPA_30, 0);
         lv_obj_set_style_shadow_ofs_y(tile, 4, 0);
         lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD_PR), LV_STATE_PRESSED);
@@ -297,7 +303,7 @@ void AppSettings::_buildToolsPage()
                 lv_obj_t* flap = lv_obj_create(tile);
                 lv_obj_set_size(flap, EW - 16, 2);
                 lv_obj_set_pos(flap, ex + 8, ey + 18);
-                lv_obj_set_style_bg_color(flap, lv_color_hex(0x6A8AAA), 0);
+                lv_obj_set_style_bg_color(flap, lv_color_hex(C_SHADOW), 0);
                 lv_obj_set_style_bg_opa(flap, LV_OPA_COVER, 0);
                 lv_obj_set_style_border_width(flap, 0, 0);
                 lv_obj_set_style_radius(flap, 0, 0);
@@ -404,7 +410,7 @@ void AppSettings::_buildToolsPage()
         lv_obj_set_style_border_width(tile, 0, 0);
         lv_obj_set_style_pad_all(tile, 0, 0);
         lv_obj_set_style_shadow_width(tile, 18, 0);
-        lv_obj_set_style_shadow_color(tile, lv_color_hex(0x5A7A9C), 0);
+        lv_obj_set_style_shadow_color(tile, lv_color_hex(C_SHADOW), 0);
         lv_obj_set_style_shadow_opa(tile, LV_OPA_30, 0);
         lv_obj_set_style_shadow_ofs_y(tile, 4, 0);
         lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD_PR), LV_STATE_PRESSED);
@@ -580,7 +586,7 @@ void AppSettings::_openCalculator()
             lv_obj_set_style_border_width(b, 0, 0);
             // Pressed: lighten.
             lv_obj_set_style_bg_color(b,
-                lv_color_hex(k.color == CALC_OP ? 0xFFBE5C
+                lv_color_hex(k.color == CALC_OP ? C_TEXT
                            : k.color == CALC_NUM ? 0x5A5A5C : 0x6E6E70),
                 LV_STATE_PRESSED);
             lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
@@ -841,7 +847,7 @@ void AppSettings::_openFx()
         lv_obj_set_style_border_width(c, 0, 0);
         lv_obj_set_style_pad_all(c, 0, 0);
         lv_obj_set_style_shadow_width(c, 18, 0);
-        lv_obj_set_style_shadow_color(c, lv_color_hex(0x5A7A9C), 0);
+        lv_obj_set_style_shadow_color(c, lv_color_hex(C_SHADOW), 0);
         lv_obj_set_style_shadow_opa(c, LV_OPA_30, 0);
         lv_obj_set_style_shadow_ofs_y(c, 4, 0);
         lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
@@ -1237,7 +1243,7 @@ void AppSettings::_openUnit()
         lv_obj_set_style_border_width(c, 0, 0);
         lv_obj_set_style_pad_all(c, 0, 0);
         lv_obj_set_style_shadow_width(c, 18, 0);
-        lv_obj_set_style_shadow_color(c, lv_color_hex(0x5A7A9C), 0);
+        lv_obj_set_style_shadow_color(c, lv_color_hex(C_SHADOW), 0);
         lv_obj_set_style_shadow_opa(c, LV_OPA_30, 0);
         lv_obj_set_style_shadow_ofs_y(c, 4, 0);
         lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);

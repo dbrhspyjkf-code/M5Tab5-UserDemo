@@ -23,6 +23,9 @@ public:
     // child app destroys its own screen objects.
     void restoreScreen();
 
+    // 就地重建主页屏幕（主题切换用）：删旧屏重跑 onOpen。
+    void rebuild();
+
     // Inject the "open email page" callback. The status-bar mail icon needs
     // to (1) open the AppSettings app (if not yet open) and (2) jump straight
     // to its email sub-page — coupling that to AppSettings would create a
@@ -53,10 +56,12 @@ private:
     struct BtnData { AppHome* home; int app_id; };
     std::vector<BtnData> _btn_data;
 
-    // Top system status bar (clock / WiFi / battery). The per-app status bars
-    // (xiaozhi, HA) were removed; status now lives only on the home screen.
+    // Hero card on the home screen (orange, video-style, 2026-10-26). It
+    // replaces the old top status bar: clock / date / lunar / weather lines
+    // plus the wifi / mail / gear / battery icon row at the card bottom.
     lv_obj_t* _status_time    = nullptr;
     lv_obj_t* _status_date    = nullptr;
+    lv_obj_t* _status_lunar   = nullptr;  // 农历 line under the date
     lv_obj_t* _status_wtemp   = nullptr;  // weather temperature (latin font, has °)
     lv_obj_t* _status_wcond   = nullptr;  // weather condition (zh font)
     lv_obj_t* _status_wifi    = nullptr;
@@ -77,11 +82,12 @@ private:
     std::mutex  _weather_mutex;
     void _fetch_weather();
 
-    // Home dashboard cards, all fed by the hermes service on svc_host:8766.
-    // Left column (above the app buttons): top card GLM/DeepSeek, bottom card
-    // Apple 提醒/日程 (/agenda). Right edge: OrangePi 详情竖卡 (/system/status,
-    // 参考 Mac 的 orange-pi.widget). Same pattern as the weather: a detached
-    // worker writes strings/struct, onRunning copies them to widgets.
+    // Home dashboard, all fed by the hermes service on svc_host:8766. Right
+    // column above the app buttons: 3 video-style list rows (GLM / DeepSeek /
+    // Apple 提醒日程 via /agenda) + a wide OrangePi card (/system/status,
+    // 3x2 module grid with threshold-colored bars, 参考 Mac 的
+    // orange-pi.widget). Same pattern as the weather: a detached worker
+    // writes strings/struct, onRunning copies them to widgets.
     lv_obj_t*  _dash_glm = nullptr;
     lv_obj_t*  _dash_ds  = nullptr;
     lv_obj_t*  _dash_ag1 = nullptr;
@@ -93,7 +99,8 @@ private:
     OpiModule  _opi_mod[5] = {};    // 负载 / CPU / 内存 / 交换 / 磁盘
     lv_obj_t*  _opi_uptime = nullptr;
     lv_obj_t*  _opi_ip     = nullptr;
-    lv_obj_t*  _opi_temp   = nullptr;  // "48℃ 被动"
+    lv_obj_t*  _opi_temp   = nullptr;  // "48℃"
+    lv_obj_t*  _opi_fan    = nullptr;  // "风扇 1200" / "被动散热"（温度格）
     lv_obj_t*  _opi_dot    = nullptr;  // header 状态点
 
     struct OpiData {
@@ -127,6 +134,7 @@ private:
     lv_obj_t* _modal      = nullptr;
     lv_obj_t* _qs_vol_lbl = nullptr;  // quick-settings volume %
     lv_obj_t* _qs_brt_lbl = nullptr;  // quick-settings brightness %
+    lv_obj_t* _qs_theme_lbl = nullptr; // quick-settings theme-cycle button
     lv_obj_t* _net_ssid   = nullptr;  // network dialog: SSID textarea
     lv_obj_t* _net_pass   = nullptr;  // network dialog: password textarea
     lv_obj_t* _net_host   = nullptr;  // network dialog: server host textarea (writes both ha_host + svc_host)
@@ -147,6 +155,8 @@ private:
     static void _modalBg_cb(lv_event_t* e);
     static void _qsVol_cb(lv_event_t* e);
     static void _qsBrt_cb(lv_event_t* e);
+    static void _qsTheme_cb(lv_event_t* e);   // theme::cycle() + rebuild
+    void _refreshThemeBtn();                   // 按钮文字 ← 当前主题名
     static void _netTa_cb(lv_event_t* e);
     static void _netKb_cb(lv_event_t* e);
 };

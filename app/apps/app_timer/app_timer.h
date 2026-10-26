@@ -52,7 +52,9 @@ private:
     int _drag_last_y = 0;
     int _drag_acc    = 0;                    // 累计像素(上正); 40px = ±1 分钟
     lv_obj_t* _presets  = nullptr;           // EDIT 态: 预设 chips 容器
-    lv_obj_t* _main_btn = nullptr;           // 开始/暂停/继续/重置
+    lv_obj_t* _main_btn = nullptr;
+    lv_obj_t* _reset_btn = nullptr;   // 计时中: 重置(回设置页)
+    lv_obj_t* _reset_lbl = nullptr;           // 开始/暂停/继续/重置
     lv_obj_t* _main_lbl = nullptr;
 
     void _enterState(State s);
@@ -60,6 +62,7 @@ private:
     void _tick();                            // onRunning 每秒节拍
     void _adjust(int dmin, int dsec);
     static void _mainClick_cb(lv_event_t* e);
+    static void _resetClick_cb(lv_event_t* e);
     static void _presetClick_cb(lv_event_t* e); // user_data = 分钟数
     static void _drag_cb(lv_event_t* e);       // 数字上下拖动 = ±分钟
 

@@ -1,4 +1,5 @@
 #include "app_lora_chat.h"
+#include "../utils/theme/theme.h"
 #include "../app_email_led/app_email_led.h"
 #include <hal/hal.h>
 #include <mooncake_log.h>
@@ -134,7 +135,7 @@ void AppLoraChat::_buildUi()
     lv_obj_t* title = lv_label_create(header);
     lv_label_set_text(title, "LoRa Chat");
     lv_obj_set_style_text_font(title, _font(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::cur().accent), 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 24, 0);
 
     _status_lbl = lv_label_create(header);
@@ -187,7 +188,7 @@ void AppLoraChat::_buildUi()
     lv_textarea_set_one_line(_input, true);
     lv_obj_set_style_text_font(_input, _font(), 0);
     lv_obj_set_style_text_font(_input, _font(), LV_PART_TEXTAREA_PLACEHOLDER);
-    lv_obj_set_style_bg_color(_input, lv_color_hex(0x1A3A5C), 0);
+    lv_obj_set_style_bg_color(_input, lv_color_hex(theme::cur().card[0]), 0);
     lv_obj_set_style_border_width(_input, 0, 0);
     lv_obj_set_style_radius(_input, 12, 0);
     lv_obj_set_style_text_color(_input, lv_color_hex(C_TEXT), 0);

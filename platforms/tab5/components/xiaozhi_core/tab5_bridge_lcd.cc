@@ -8,6 +8,18 @@
 #include <esp_random.h>
 #include <ctime>
 #include <cstring>
+#include "theme/theme.h"
+
+// 配色: 主题快照(BuildRichUi 时刷新; 动态更新处读这些全局)
+static uint32_t XZ_ACCENT, XZ_SOFT, XZ_DIM, XZ_PRESS, XZ_CARD, XZ_HI,
+                XZ_TRACK, XZ_OK, XZ_WARN, XZ_DANGER;
+static void snap_theme()
+{
+    const theme::Palette& T = theme::cur();
+    XZ_ACCENT = T.accent;   XZ_SOFT = T.text_soft;  XZ_DIM = T.text_dim;
+    XZ_PRESS = T.press;     XZ_CARD = T.card[1];    XZ_HI = T.text_hi;
+    XZ_TRACK = T.track;     XZ_OK = T.ok;  XZ_WARN = T.warn;  XZ_DANGER = T.danger;
+}
 static const char* TAG = "Tab5BridgeLcd";
 
 LV_FONT_DECLARE(font_awesome_30_4);
@@ -117,10 +129,11 @@ void Tab5BridgeLcdDisplay::DeactivateScreen()
 void Tab5BridgeLcdDisplay::BuildRichUi()
 {
     DisplayLockGuard lock(this);
+    snap_theme();
 
     scr_ = lv_obj_create(NULL);
     lv_obj_set_size(scr_, width_, height_);
-    lv_obj_set_style_bg_color(scr_, lv_color_hex(0x0A1A2E), 0);
+    lv_obj_set_style_bg_color(scr_, lv_color_hex(0x000000), 0);
     lv_obj_set_style_pad_all(scr_, 0, 0);
     lv_obj_clear_flag(scr_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(scr_, LV_OBJ_FLAG_CLICKABLE);
@@ -139,7 +152,7 @@ void Tab5BridgeLcdDisplay::BuildInfoBar()
     lv_obj_t* bar = lv_obj_create(scr_);
     lv_obj_set_pos(bar, 0, 0);
     lv_obj_set_size(bar, width_, 56);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x07111E), 0);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(XZ_TRACK), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(bar, 0, 0);
     lv_obj_set_style_pad_all(bar, 0, 0);
@@ -148,35 +161,35 @@ void Tab5BridgeLcdDisplay::BuildInfoBar()
     // Title (left)
     lv_obj_t* title = lv_label_create(bar);
     lv_obj_set_style_text_font(title, zh_font(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(XZ_ACCENT), 0);
     lv_label_set_text(title, "小智 AI");
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 24, 0);
 
     // Clock (center)
     time_lbl_ = lv_label_create(bar);
     lv_obj_set_style_text_font(time_lbl_, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(time_lbl_, lv_color_hex(0xBBCCDD), 0);
+    lv_obj_set_style_text_color(time_lbl_, lv_color_hex(XZ_SOFT), 0);
     lv_label_set_text(time_lbl_, "00:00");
     lv_obj_align(time_lbl_, LV_ALIGN_CENTER, 0, 0);
 
     // WiFi icon
     wifi_icon_ = lv_label_create(bar);
     lv_obj_set_style_text_font(wifi_icon_, &font_awesome_30_4, 0);
-    lv_obj_set_style_text_color(wifi_icon_, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(wifi_icon_, lv_color_hex(XZ_ACCENT), 0);
     lv_label_set_text(wifi_icon_, FONT_AWESOME_WIFI);
     lv_obj_align(wifi_icon_, LV_ALIGN_RIGHT_MID, -150, 0);
 
     // Battery icon
     batt_icon_ = lv_label_create(bar);
     lv_obj_set_style_text_font(batt_icon_, &font_awesome_30_4, 0);
-    lv_obj_set_style_text_color(batt_icon_, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(batt_icon_, lv_color_hex(XZ_ACCENT), 0);
     lv_label_set_text(batt_icon_, FONT_AWESOME_BATTERY_FULL);
     lv_obj_align(batt_icon_, LV_ALIGN_RIGHT_MID, -80, 0);
 
     // Battery %
     batt_pct_lbl_ = lv_label_create(bar);
     lv_obj_set_style_text_font(batt_pct_lbl_, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(batt_pct_lbl_, lv_color_hex(0xBBCCDD), 0);
+    lv_obj_set_style_text_color(batt_pct_lbl_, lv_color_hex(XZ_SOFT), 0);
     lv_label_set_text(batt_pct_lbl_, "--%");
     lv_obj_align(batt_pct_lbl_, LV_ALIGN_RIGHT_MID, -20, 0);
 }
@@ -190,7 +203,7 @@ void Tab5BridgeLcdDisplay::BuildEmotionArea()
     // scroll area starting at y=152. y=30 keeps the icon fully within 0..152.
     emotion_icon_lbl_ = lv_label_create(scr_);
     lv_obj_set_style_text_font(emotion_icon_lbl_, &font_awesome_30_4, 0);
-    lv_obj_set_style_text_color(emotion_icon_lbl_, lv_color_hex(0xFFD700), 0);
+    lv_obj_set_style_text_color(emotion_icon_lbl_, lv_color_hex(XZ_ACCENT), 0);
     lv_label_set_text(emotion_icon_lbl_, FONT_AWESOME_NEUTRAL);
     lv_obj_align(emotion_icon_lbl_, LV_ALIGN_TOP_MID, 0, 30);
     lv_obj_set_style_transform_scale_x(emotion_icon_lbl_, 512, 0);
@@ -246,7 +259,7 @@ void Tab5BridgeLcdDisplay::BuildChatScroll()
     chat_scroll_ = lv_obj_create(scr_);
     lv_obj_set_pos(chat_scroll_, 0, 152);
     lv_obj_set_size(chat_scroll_, width_, 512);
-    lv_obj_set_style_bg_color(chat_scroll_, lv_color_hex(0x0A1A2E), 0);
+    lv_obj_set_style_bg_color(chat_scroll_, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(chat_scroll_, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(chat_scroll_, 0, 0);
     lv_obj_set_style_pad_left(chat_scroll_, 40, 0);
@@ -262,7 +275,7 @@ void Tab5BridgeLcdDisplay::BuildChatScroll()
     // Placeholder hint
     hint_lbl_ = lv_label_create(chat_scroll_);
     lv_obj_set_style_text_font(hint_lbl_, zh_font(), 0);
-    lv_obj_set_style_text_color(hint_lbl_, lv_color_hex(0x4A6A8C), 0);
+    lv_obj_set_style_text_color(hint_lbl_, lv_color_hex(XZ_DIM), 0);
     lv_obj_set_style_text_align(hint_lbl_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(hint_lbl_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(hint_lbl_, width_ - 80);
@@ -275,7 +288,7 @@ void Tab5BridgeLcdDisplay::BuildStatusBar()
     lv_obj_t* bar = lv_obj_create(scr_);
     lv_obj_set_pos(bar, 0, 664);
     lv_obj_set_size(bar, width_, 56);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x07111E), 0);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(XZ_TRACK), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(bar, 0, 0);
     lv_obj_set_style_pad_all(bar, 0, 0);
@@ -283,13 +296,13 @@ void Tab5BridgeLcdDisplay::BuildStatusBar()
 
     state_dot_lbl_ = lv_label_create(bar);
     lv_obj_set_style_text_font(state_dot_lbl_, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(state_dot_lbl_, lv_color_hex(0x6A8CA8), 0);
+    lv_obj_set_style_text_color(state_dot_lbl_, lv_color_hex(XZ_DIM), 0);
     lv_label_set_text(state_dot_lbl_, "●");
     lv_obj_align(state_dot_lbl_, LV_ALIGN_LEFT_MID, 36, 0);
 
     state_text_lbl_ = lv_label_create(bar);
     lv_obj_set_style_text_font(state_text_lbl_, zh_font(), 0);
-    lv_obj_set_style_text_color(state_text_lbl_, lv_color_hex(0x9DB4CC), 0);
+    lv_obj_set_style_text_color(state_text_lbl_, lv_color_hex(XZ_SOFT), 0);
     lv_label_set_text(state_text_lbl_, "待命");
     lv_obj_align(state_text_lbl_, LV_ALIGN_LEFT_MID, 68, 0);
 }
@@ -369,7 +382,7 @@ void Tab5BridgeLcdDisplay::AddChatBubble(const char* role, const char* content)
 
     // Bubble background
     lv_obj_t* bubble = lv_obj_create(row);
-    lv_color_t bg = is_user ? lv_color_hex(0x1E6FC2) : lv_color_hex(0x13304E);
+    lv_color_t bg = is_user ? lv_color_hex(XZ_PRESS) : lv_color_hex(XZ_CARD);
     lv_obj_set_style_bg_color(bubble, bg, 0);
     lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(bubble, 18, 0);
@@ -387,7 +400,7 @@ void Tab5BridgeLcdDisplay::AddChatBubble(const char* role, const char* content)
     // Message label
     lv_obj_t* lbl = lv_label_create(bubble);
     lv_obj_set_style_text_font(lbl, zh_font(), 0);
-    lv_color_t tc = is_user ? lv_color_hex(0xCCE4FF) : lv_color_hex(0xEEEEEE);
+    lv_color_t tc = is_user ? lv_color_hex(XZ_HI) : lv_color_hex(XZ_HI);
     lv_obj_set_style_text_color(lbl, tc, 0);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(lbl, LV_SIZE_CONTENT);
@@ -426,7 +439,7 @@ void Tab5BridgeLcdDisplay::UpdateInfoBar()
             rssi = ap.rssi;
         }
         lv_label_set_text(wifi_icon_, rssi_to_icon(rssi));
-        lv_color_t c = rssi ? lv_color_hex(0x4FA3FF) : lv_color_hex(0xFF4444);
+        lv_color_t c = rssi ? lv_color_hex(XZ_ACCENT) : lv_color_hex(XZ_DANGER);
         lv_obj_set_style_text_color(wifi_icon_, c, 0);
     }
 
@@ -438,9 +451,9 @@ void Tab5BridgeLcdDisplay::UpdateInfoBar()
             char buf[16];
             snprintf(buf, sizeof(buf), "%d%%", pct);
             lv_label_set_text(batt_pct_lbl_, buf);
-            lv_color_t c = pct < 20 ? lv_color_hex(0xFF4444)
-                         : pct < 40 ? lv_color_hex(0xF39C12)
-                         :            lv_color_hex(0x4FA3FF);
+            lv_color_t c = pct < 20 ? lv_color_hex(XZ_DANGER)
+                         : pct < 40 ? lv_color_hex(XZ_WARN)
+                         :            lv_color_hex(XZ_ACCENT);
             lv_obj_set_style_text_color(batt_icon_, c, 0);
             lv_obj_set_style_text_color(batt_pct_lbl_, c, 0);
         } else {
@@ -472,11 +485,11 @@ void Tab5BridgeLcdDisplay::SetStatus(const char* status)
     // Status bar dot color
     lv_color_t dot_color;
     switch (state_) {
-        case State::LISTENING:   dot_color = lv_color_hex(0x4FA3FF); break;
-        case State::SPEAKING:    dot_color = lv_color_hex(0x2ECC71); break;
-        case State::CONNECTING:  dot_color = lv_color_hex(0xF39C12); break;
+        case State::LISTENING:   dot_color = lv_color_hex(XZ_ACCENT); break;
+        case State::SPEAKING:    dot_color = lv_color_hex(XZ_OK); break;
+        case State::CONNECTING:  dot_color = lv_color_hex(XZ_WARN); break;
         case State::THINKING:    dot_color = lv_color_hex(0x9B59B6); break;
-        default:                 dot_color = lv_color_hex(0x6A8CA8); break;
+        default:                 dot_color = lv_color_hex(XZ_DIM); break;
     }
     if (state_dot_lbl_)  lv_obj_set_style_text_color(state_dot_lbl_, dot_color, 0);
     if (state_text_lbl_) lv_label_set_text(state_text_lbl_, status);

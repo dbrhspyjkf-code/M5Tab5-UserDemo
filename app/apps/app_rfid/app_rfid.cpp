@@ -1,4 +1,5 @@
 #include "app_rfid.h"
+#include "../utils/theme/theme.h"
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <smooth_lvgl.h>
@@ -328,7 +329,7 @@ void AppRfid::_buildUi()
     _uid_lbl = lv_label_create(left);
     lv_label_set_text(_uid_lbl, "");
     lv_obj_set_style_text_font(_uid_lbl, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(_uid_lbl, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_text_color(_uid_lbl, lv_color_hex(theme::cur().accent), 0);
     lv_obj_align(_uid_lbl, LV_ALIGN_TOP_LEFT, 0, 60);
 
     _type_lbl = lv_label_create(left);
@@ -397,7 +398,7 @@ void AppRfid::_buildUi()
         lv_obj_t* b = lv_button_create(right);
         lv_obj_set_size(b, 56, 56);
         lv_obj_align(b, LV_ALIGN_TOP_LEFT, x, 48);
-        lv_obj_set_style_bg_color(b, lv_color_hex(C_ACCENT), 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(theme::cur().accent), 0);
         lv_obj_set_style_radius(b, 10, 0);
         lv_obj_t* l = lv_label_create(b);
         lv_label_set_text(l, txt);
@@ -441,7 +442,7 @@ void AppRfid::_buildUi()
         lv_obj_center(l);
         lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, this);
     };
-    mk_btn("读取", _readBtn_cb,  0,   C_ACCENT);
+    mk_btn("读取", _readBtn_cb,  0,   theme::cur().accent);
     mk_btn("写入", _writeBtn_cb, 206, 0x27AE60);
     mk_btn("清空", _clearBtn_cb, 412, 0x5A7186);
 

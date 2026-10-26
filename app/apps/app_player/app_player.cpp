@@ -3,6 +3,7 @@
  * HA 配置与 app_ha 同源: NVS ha_host + ha_weather::token()。
  */
 #include "app_player.h"
+#include "../utils/theme/theme.h"
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
 #include <mooncake_log.h>
@@ -75,13 +76,16 @@ static int64_t iso8601_utc_epoch(const std::string& s)
     return days * 86400 + h * 3600 + mi * 60 + (int64_t)sec;
 }
 
-// 配色(与 app_radio/app_ha 同一套驾驶舱色板)
-static constexpr uint32_t C_BG      = 0x000000;
-static constexpr uint32_t C_CARD    = 0x13304E;
-static constexpr uint32_t C_ON      = 0x1E5288;
-static constexpr uint32_t C_ACCENT  = 0x4FA3FF;
-static constexpr uint32_t C_TEXT    = 0xEAF3FB;
-static constexpr uint32_t C_TEXT2   = 0x8FA8C4;
+// 配色: 主题快照(onOpen 时从全局主题取, 见 utils/theme/theme.h)
+static uint32_t C_BG, C_CARD, C_ON, C_ACCENT, C_TEXT, C_TEXT2;
+
+static void snap_theme()
+{
+    const theme::Palette& T = theme::cur();
+    C_BG = 0x000000;
+    C_CARD = T.card[1];  C_ON = T.press;  C_ACCENT = T.accent;
+    C_TEXT = T.text_hi;  C_TEXT2 = T.text_dim;
+}
 
 // 页配置: 实体结论见头注释(M5DIAL 2026-10-22 验证)
 const AppPlayer::PageCfg AppPlayer::_pages[kPageCount] = {
@@ -121,6 +125,7 @@ void AppPlayer::onOpen()
 {
     if (_scr) return;   // 防御: 重复 onOpen 不叠屏
     mclog::tagInfo(TAG, "on open");
+    snap_theme();
 
     // HA 客户端: 每次打开重建(Settings 改地址后重开即生效,同 app_ha)
     _ha = std::make_shared<HaClient>();

@@ -32,7 +32,6 @@ private:
     static constexpr uint32_t C_USER_BUB  = 0x1A4A7A;
     static constexpr uint32_t C_PEER_BUB  = 0x132A43;
     static constexpr uint32_t C_INPUT_BG  = 0x102033;
-    static constexpr uint32_t C_ACCENT    = 0x4FA3FF;
     static constexpr uint32_t C_TEXT      = 0xEAF3FB;
     static constexpr uint32_t C_SEND      = 0x1A6B3A;
     static constexpr uint32_t C_STATUS_OK = 0x2ECC71;

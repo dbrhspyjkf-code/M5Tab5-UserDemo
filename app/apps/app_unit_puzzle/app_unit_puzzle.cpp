@@ -1,4 +1,5 @@
 #include "app_unit_puzzle.h"
+#include "../utils/theme/theme.h"
 #include "../app_email_led/app_email_led.h"
 
 #include <hal/hal.h>
@@ -332,7 +333,7 @@ void AppUnitPuzzle::_buildUi()
     // 标题
     lv_obj_t* title = lv_label_create(_scr);
     lv_label_set_text(title, "Unit-Puzzle 8x8 WS2812");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_text_font(title, zh_font_30(), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 12);
 
@@ -364,7 +365,7 @@ void AppUnitPuzzle::_buildUi()
     static const uint32_t colors[9] = {
         0xFF3344, 0x33FF66, 0x3388FF, 0xFFEEAA,
         0x9C27B0, 0xE91E63, 0xFFB300, 0x00BCD4,
-        0x4FA3FF,  // 文字按钮: 跟主题强调色一致 (蓝)
+        theme::cur().accent,  // 文字按钮: 跟主题强调色一致
     };
 
     // 3x3 网格: BTN_W=260, GAP=30, 起点 x=(1280-3*260-2*30)/2 = 220
@@ -766,14 +767,14 @@ void AppUnitPuzzle::_showTextInput()
     lv_obj_align(box, LV_ALIGN_TOP_MID, 0, 30);
     lv_obj_set_style_bg_color(box, lv_color_hex(0x1A2A3A), 0);
     lv_obj_set_style_radius(box, 20, 0);
-    lv_obj_set_style_border_color(box, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_border_width(box, 2, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
     // 标题
     lv_obj_t* title = lv_label_create(box);
     lv_label_set_text(title, "输入文字 (LED 滚动显示, 最多 16 字符)");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_text_font(title, zh_font_30(), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
 

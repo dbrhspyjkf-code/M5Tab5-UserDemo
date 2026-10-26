@@ -108,6 +108,8 @@ set(INCLUDE_DIRS
     "${XZ}/boards/common"
     "${XZ}/boards/m5stack-tab5"
     "${CMAKE_CURRENT_SOURCE_DIR}"   # provides our gfx.h / expression_emote.h stubs
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../app/apps/utils"  # theme/theme.h 全局配色
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../app"             # hal/hal.h (theme.h 依赖)
     "${BSP_PRIV}"                   # esp_lcd_st7123.h / esp_lcd_st7121.h for config.h
 )
 

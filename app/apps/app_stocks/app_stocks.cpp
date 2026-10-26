@@ -1,4 +1,5 @@
 #include "app_stocks.h"
+#include "../utils/theme/theme.h"
 #include "stock_market_hours.h"
 #include <mooncake_log.h>
 #include <hal/hal.h>
@@ -241,7 +242,7 @@ void AppStocks::_buildUi()
         lv_obj_align(_rows[i], LV_ALIGN_TOP_MID, 0, rows_top + i * ROW_H);
         lv_obj_set_style_bg_color(_rows[i], lv_color_hex(C_HEADER), 0);
         lv_obj_set_style_bg_opa(_rows[i], i % 2 ? LV_OPA_30 : LV_OPA_10, 0);
-        lv_obj_set_style_bg_color(_rows[i], lv_color_hex(C_ACCENT), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(_rows[i], lv_color_hex(theme::cur().accent), LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(_rows[i], LV_OPA_40, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(_rows[i], 0, 0);
         lv_obj_set_style_radius(_rows[i], 0, 0);
@@ -285,7 +286,7 @@ void AppStocks::_buildUi()
     _refresh_btn = lv_button_create(_status_bar);
     lv_obj_set_size(_refresh_btn, 140, 40);
     lv_obj_align(_refresh_btn, LV_ALIGN_RIGHT_MID, -24, 0);
-    lv_obj_set_style_bg_color(_refresh_btn, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_bg_color(_refresh_btn, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_radius(_refresh_btn, 10, 0);
     lv_obj_t* rlbl = lv_label_create(_refresh_btn);
     lv_label_set_text(rlbl, "刷新");
@@ -408,7 +409,7 @@ void AppStocks::_showDetail(int row_idx)
     lv_obj_set_size(_detail_modal, 1000, 560);  // 摘要较长, 加大弹窗
     lv_obj_center(_detail_modal);
     lv_obj_set_style_bg_color(_detail_modal, lv_color_hex(C_HEADER), 0);
-    lv_obj_set_style_border_color(_detail_modal, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_border_color(_detail_modal, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_border_width(_detail_modal, 2, 0);
     lv_obj_set_style_radius(_detail_modal, 16, 0);
     lv_obj_set_style_pad_all(_detail_modal, 28, 0);
@@ -454,7 +455,7 @@ void AppStocks::_showDetail(int row_idx)
     lv_obj_t* close_btn = lv_button_create(_detail_modal);
     lv_obj_set_size(close_btn, 150, 54);
     lv_obj_align(close_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-    lv_obj_set_style_bg_color(close_btn, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_radius(close_btn, 10, 0);
     lv_obj_t* cl = lv_label_create(close_btn);
     lv_label_set_text(cl, "关闭");

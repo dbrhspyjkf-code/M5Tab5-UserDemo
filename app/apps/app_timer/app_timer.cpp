@@ -2,6 +2,7 @@
  * app_timer — 计时器实现(参考 M5DIAL app_timer,Tab5 触摸版)。
  */
 #include "app_timer.h"
+#include "../utils/theme/theme.h"
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include "../utils/audio/audio.h"
@@ -37,14 +38,17 @@ extern const lv_font_t font_digits_120;   // app_timer/font_digits_120.c
 
 static const char* TAG = "timer";
 
-// 配色(驾驶舱色板)
-static constexpr uint32_t C_BG     = 0x000000;
-static constexpr uint32_t C_CARD   = 0x13304E;
-static constexpr uint32_t C_ON     = 0x1E5288;
-static constexpr uint32_t C_ACCENT = 0x4FA3FF;
-static constexpr uint32_t C_AMBER  = 0xF5A263;
-static constexpr uint32_t C_TEXT   = 0xEAF3FB;
-static constexpr uint32_t C_TEXT2  = 0x8FA8C4;
+// 配色: 主题快照(onOpen 时从全局主题取, 见 utils/theme/theme.h)
+static uint32_t C_BG, C_CARD, C_ON, C_ACCENT, C_AMBER, C_TEXT, C_TEXT2;
+
+static void snap_theme()
+{
+    const theme::Palette& T = theme::cur();
+    C_BG = 0x000000;
+    C_CARD = T.card[1];  C_ON = T.press;  C_ACCENT = T.accent;
+    C_AMBER = T.accent;  // 圆环主色随主题强调色
+    C_TEXT = T.text_hi;  C_TEXT2 = T.text_dim;
+}
 
 static const int kPresets[] = {1, 3, 5, 10, 15, 25, 30};   // 分钟
 static const int kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);
@@ -88,6 +92,7 @@ void AppTimer::onOpen()
 {
     if (_scr) return;
     mclog::tagInfo(TAG, "on open");
+    snap_theme();
 
     _state = State::EDIT;
     _set_min = 5; _set_sec = 0;
@@ -168,13 +173,16 @@ void AppTimer::onOpen()
     }
 
     // 主按钮(底部居中)
-    _main_btn = mk_round_btn(_scr, 272, 82, C_ON, _mainClick_cb, this);   // 缩 15%
-    lv_obj_align(_main_btn, LV_ALIGN_BOTTOM_MID, 0, -40);   // 屏幕水平居中
-    _main_lbl = mk_center_label(_main_btn, zh_font_lg(), C_TEXT, "开始");
+    _main_btn = mk_round_btn(_scr, 200, 82, C_ON, _mainClick_cb, this);
+    lv_obj_align(_main_btn, LV_ALIGN_BOTTOM_MID, 120, -40);   // 计时中靠右
+    _main_lbl = mk_center_label(_main_btn, zh_font_lg(), C_TEXT, "暂停");
+    _reset_btn = mk_round_btn(_scr, 200, 82, C_CARD, _resetClick_cb, this);
+    lv_obj_align(_reset_btn, LV_ALIGN_BOTTOM_MID, -120, -40);  // 计时中靠左
+    _reset_lbl = mk_center_label(_reset_btn, zh_font_lg(), C_TEXT, "重置");
 
     _installSwipeGesture();
     _refresh();
-    lv_screen_load_anim(_scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    lv_screen_load(_scr);   // 与收音机一致(anim 版手势路径未验证)
 }
 
 // ─── 状态机 ────────────────────────────────────────────────────────────────
@@ -248,8 +256,9 @@ void AppTimer::_tick()
             lv_obj_set_style_text_color(_time_lbl,
                 lv_color_hex(_blink_on ? C_AMBER : C_CARD), 0);
         }
-        // 到时 3 声滴滴(2026-10-26 指定; 150ms 响 / 150ms 歇)
-        if (_beep_count < 3 && now - _last_beep_ms >= 300) {
+        // 到时两轮"嘀嘀嘀"共 6 声: 第 3 声后歇 0.8s 再来一轮
+        int need = (_beep_count == 3) ? 800 : 300;   // 第 4 声前多歇一会
+        if (_beep_count < 6 && now - _last_beep_ms >= need) {
             _last_beep_ms = now;
             _beep_count++;
             audio::play_tone(2200, 0.15);
@@ -280,14 +289,23 @@ void AppTimer::_refresh()
     // 状态 chip + 主按钮 + 编辑区可见性
     const char* chip = "?";
     const char* btn  = "?";
+    bool timing = (_state == State::RUNNING || _state == State::PAUSED);
     switch (_state) {
-        case State::EDIT:    chip = "设定";  btn = "开始"; break;
+        case State::EDIT:    chip = "设定";   btn = "开始"; break;
         case State::RUNNING: chip = "计时中"; btn = "暂停"; break;
         case State::PAUSED:  chip = "已暂停"; btn = "继续"; break;
-        case State::DONE:    chip = "到时!";  btn = "重置"; break;
+        case State::DONE:    chip = "到时!";   btn = "重置"; break;
     }
     if (_state_chip) lv_label_set_text(_state_chip, chip);
     lv_label_set_text(_main_lbl, btn);
+    // 计时中: 双按钮(左重置 右暂停/继续); 其余: 单按钮居中
+    if (timing) {
+        lv_obj_clear_flag(_reset_btn, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(_main_btn, LV_ALIGN_BOTTOM_MID, 120, -40);
+    } else {
+        lv_obj_add_flag(_reset_btn, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(_main_btn, LV_ALIGN_BOTTOM_MID, 0, -40);
+    }
 
     if (_state == State::EDIT) lv_obj_clear_flag(_presets, LV_OBJ_FLAG_HIDDEN);
     else                       lv_obj_add_flag(_presets, LV_OBJ_FLAG_HIDDEN);
@@ -317,6 +335,12 @@ void AppTimer::_mainClick_cb(lv_event_t* e)
             self->_enterState(State::EDIT);
             break;
     }
+}
+
+void AppTimer::_resetClick_cb(lv_event_t* e)
+{
+    // 重置: 停止计时回到设置页(保留当前设定值, M5DIAL 同款)
+    static_cast<AppTimer*>(lv_event_get_user_data(e))->_enterState(State::EDIT);
 }
 
 void AppTimer::_drag_cb(lv_event_t* e)

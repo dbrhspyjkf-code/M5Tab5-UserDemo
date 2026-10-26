@@ -3,6 +3,7 @@
  * 1280×720, LVGL 9
  */
 #include "view.h"
+#include "../../utils/theme/theme.h"
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
@@ -44,16 +45,21 @@ static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
 #endif
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
-static constexpr uint32_t C_BG          = 0x0A1A2E;  // light blue background
-static constexpr uint32_t C_CARD        = 0x13304E;  // card background
-static constexpr uint32_t C_CARD_ON     = 0x1E5288;  // active card
-static constexpr uint32_t C_ACCENT      = 0x4FA3FF;  // blue accent
-static constexpr uint32_t C_ACCENT_SOFT = 0x1A3A5C;  // soft blue fill
-static constexpr uint32_t C_TEXT        = 0xEAF3FB;  // primary text
-static constexpr uint32_t C_TEXT2       = 0x8FA8C4;  // secondary text
-static constexpr uint32_t C_GREEN       = 0x34A853;
-static constexpr uint32_t C_AMBER       = 0xF59E0B;
-static constexpr uint32_t C_RED         = 0xEF4444;
+// 配色: 主题快照(HaView::init 时从全局主题取, 见 utils/theme/theme.h)
+static uint32_t C_BG, C_CARD, C_CARD_ON, C_ACCENT, C_ACCENT_SOFT,
+                C_TEXT, C_TEXT2, C_GREEN, C_AMBER, C_RED,
+                C_TRACK, C_DIM_ICON;
+
+static void snap_theme()
+{
+    const theme::Palette& T = theme::cur();
+    C_BG = 0x000000;          // HA 页背景也统一纯黑(与主页一致)
+    C_CARD = T.card[1];       C_CARD_ON = T.press;
+    C_ACCENT = T.accent;      C_ACCENT_SOFT = T.card[0];
+    C_TEXT = T.text_hi;       C_TEXT2 = T.text_dim;
+    C_GREEN = T.ok;           C_AMBER = T.warn;  C_RED = T.danger;
+    C_TRACK = T.track;        C_DIM_ICON = T.text_dim;
+}
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 static constexpr int W       = 1280;
@@ -137,7 +143,7 @@ static lv_obj_t* _make_card(lv_obj_t* parent, int x, int y, int w, int h,
 static void _add_shadow(lv_obj_t* obj)
 {
     lv_obj_set_style_shadow_width(obj, 18, 0);
-    lv_obj_set_style_shadow_color(obj, lv_color_hex(0x5A7A9C), 0);
+    lv_obj_set_style_shadow_color(obj, lv_color_hex(C_TEXT2), 0);
     lv_obj_set_style_shadow_opa(obj, LV_OPA_30, 0);
     lv_obj_set_style_shadow_ofs_y(obj, 4, 0);
 }
@@ -185,13 +191,13 @@ static void _build_device_card(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_size(ic, ic_size, ic_size);
     lv_obj_set_style_radius(ic, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(ic, 0, 0);
-    lv_obj_set_style_bg_color(ic, lv_color_hex(card.is_offline ? 0x16242E
-                                  : (card.is_on ? C_ACCENT_SOFT : 0x1A2C42)), 0);
+    lv_obj_set_style_bg_color(ic, lv_color_hex(card.is_offline ? C_TRACK
+                                  : (card.is_on ? C_ACCENT_SOFT : C_CARD)), 0);
     lv_obj_align(ic, LV_ALIGN_LEFT_MID, 14, 0);
     lv_obj_clear_flag(ic, LV_OBJ_FLAG_SCROLLABLE);
 
     const char* icon_text = card.icon.empty() ? LV_SYMBOL_HOME : card.icon.c_str();
-    uint32_t icon_color = card.is_offline ? 0x46586C : (card.is_on ? C_ACCENT : 0x4A6A8C);
+    uint32_t icon_color = card.is_offline ? C_DIM_ICON : (card.is_on ? C_ACCENT : C_TEXT2);
     if (strcmp(icon_text, "lightbulb") == 0) {
         _add_lightbulb_icon(ic, icon_color);
     } else {
@@ -206,7 +212,7 @@ static void _build_device_card(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_t* lbl = lv_label_create(c);
     lv_label_set_text(lbl, card.label.c_str());
     lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(card.is_offline ? 0x5A6A7C
+    lv_obj_set_style_text_color(lbl, lv_color_hex(card.is_offline ? C_DIM_ICON
                                   : (card.is_on ? C_TEXT : C_TEXT2)), 0);
     lv_obj_set_width(lbl, w - 14 - ic_size - 12 - 18);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
@@ -218,7 +224,7 @@ static void _build_device_card(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(dot, 0, 0);
     lv_obj_set_style_bg_color(dot, lv_color_hex(card.is_offline ? C_RED
-                                  : (card.is_on ? C_GREEN : 0x3A4A5C)), 0);
+                                  : (card.is_on ? C_GREEN : C_TEXT2)), 0);
     lv_obj_align(dot, LV_ALIGN_TOP_RIGHT, -10, 10);
     lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -295,6 +301,7 @@ HaView::~HaView()
 
 void HaView::init(ActionCb on_action)
 {
+    snap_theme();
     _on_action    = on_action;
     _on_action_fn = on_action;
     _build_skeleton();

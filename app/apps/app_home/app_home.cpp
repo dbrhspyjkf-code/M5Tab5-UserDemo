@@ -12,6 +12,7 @@
 #include "../app_ha/ha_weather.h"
 #include "../app_settings/app_settings.h"
 #include "../utils/datetime/lunar_calendar.h"
+#include "../utils/theme/theme.h"
 #ifndef PLATFORM_BUILD_DESKTOP
 #include "../utils/assets/assets_partition.h"
 #endif
@@ -57,17 +58,6 @@ static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_md() { return &font_puhui_20_4; }
 #endif
 
-// Bold Chinese font (STHeiti Medium, 40px) for the home buttons — defined in
-// app/apps/app_home/font_zh_bold.c (glyphs: 智能家居小设置 + ASCII).
-extern lv_font_t font_zh_bold;
-
-// Home background image (1280x720 RGB565) — desktop-sim only! On device the
-// bitmap lives in the "assets" flash partition (see onOpen); this C array is
-// unreferenced there and dropped by the linker.
-#ifdef PLATFORM_BUILD_DESKTOP
-extern const lv_image_dsc_t home_bg;
-#endif
-
 AppHome::AppHome()
 {
     setAppInfo().name = "AppHome";
@@ -97,40 +87,8 @@ void AppHome::onOpen()
 
     // Create a dedicated screen so other apps can own their own screens
     _scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(0x0D1B2A), 0);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(0x000000), 0);   // 纯黑(2026-10-26 用户指定, 弃背景图)
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Full-screen background image (created first → stays at the bottom layer).
-    // On device the 1280x720 RGB565 bitmap lives in the "assets" flash partition
-    // (mmap'd in place, packed by pack_assets.py); the linked C array is only
-    // the desktop-sim fallback, so it must not be referenced on device or the
-    // linker would keep the 1.8MB rodata copy.
-    lv_obj_t* bg = lv_image_create(_scr);
-#ifdef PLATFORM_BUILD_DESKTOP
-    lv_image_set_src(bg, &home_bg);
-#else
-    {
-        size_t bg_size = 0;
-        const uint8_t* bg_data = assets_part::find("home_bg", &bg_size);
-        if (bg_data && bg_size >= 1280 * 720 * 2) {
-            static lv_image_dsc_t dsc;  // outlives the widget; data is stable mmap
-            dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-            dsc.header.cf    = LV_COLOR_FORMAT_RGB565;
-            dsc.header.w     = 1280;
-            dsc.header.h     = 720;
-            dsc.header.stride = 1280 * 2;
-            dsc.data_size    = 1280 * 720 * 2;
-            dsc.data         = bg_data;
-            lv_image_set_src(bg, &dsc);
-        } else {
-            // assets.img not flashed — dark fallback keeps the screen usable
-            lv_obj_set_style_bg_color(bg, lv_color_hex(0x0D1B2A), 0);
-            lv_obj_set_size(bg, 0, 0);
-        }
-    }
-#endif
-    lv_obj_set_pos(bg, 0, 0);
-    lv_obj_remove_flag(bg, LV_OBJ_FLAG_CLICKABLE);
 
     // Stable storage for button user_data pointers — must not reallocate after reserve
     _btn_data.clear();
@@ -156,22 +114,14 @@ void AppHome::onOpen()
         lv_obj_t* btn = lv_obj_create(_scr);
         lv_obj_set_size(btn, btn_w, BTN_H);
         lv_obj_set_pos(btn, start_x + i * (btn_w + BTN_GAP), y);
-        // Electric-blue gradient pill matching the background artwork's palette.
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E6FC2), 0);          // top: electric blue
-        lv_obj_set_style_bg_grad_color(btn, lv_color_hex(0x0A2A54), 0);     // bottom: deep navy
-        lv_obj_set_style_bg_grad_dir(btn, LV_GRAD_DIR_VER, 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_90, 0);
-        // Pressed: brighten the whole gradient.
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x3A9BE8), LV_STATE_PRESSED);
-        lv_obj_set_style_bg_grad_color(btn, lv_color_hex(0x14467E), LV_STATE_PRESSED);
-        lv_obj_set_style_radius(btn, 22, 0);
-        // Cyan neon edge + soft outer glow.
-        lv_obj_set_style_border_width(btn, 2, 0);
-        lv_obj_set_style_border_color(btn, lv_color_hex(0x5BD5FF), 0);
-        lv_obj_set_style_border_opa(btn, LV_OPA_80, 0);
-        lv_obj_set_style_shadow_color(btn, lv_color_hex(0x2E8BE6), 0);
-        lv_obj_set_style_shadow_width(btn, 18, 0);
-        lv_obj_set_style_shadow_opa(btn, LV_OPA_40, 0);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(theme::cur().card[3]), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
+        lv_obj_set_style_radius(btn, 20, 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_border_color(btn, lv_color_hex(theme::cur().border), 0);
+        lv_obj_set_style_border_opa(btn, LV_OPA_70, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
 
@@ -179,158 +129,57 @@ void AppHome::onOpen()
         lv_label_set_text(lbl, _apps[i].name.c_str());
         lv_obj_set_align(lbl, LV_ALIGN_CENTER);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_text_font(lbl, &font_zh_bold, 0);  // bold
+        lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);  // 30px
         // Subtle dark text shadow for legibility over the bright gradient.
         lv_obj_set_style_text_opa(lbl, LV_OPA_COVER, 0);
 
         lv_obj_add_event_cb(btn, _btn_event_cb, LV_EVENT_CLICKED, &bd);
     }
 
-    // ── Dashboard info cards, floating over the artwork ──────────────────
-    // Left column: GLM/DeepSeek card above, Apple 提醒/日程 card below (hermes
-    // /agenda, bridged from the Mac). Right edge: OrangePi 详情竖卡
-    // (/system/status, 参考 Mac 的 orange-pi.widget: 负载/CPU/内存/交换/磁盘/
-    // 温度 + 阈值变色条). Opaque enough to keep text clear of the artwork
-    // behind (80% + dark navy + soft glow edge).
-    auto dash_card = [&](int x, int y, int w, int h) {
-        lv_obj_t* card = lv_obj_create(_scr);
-        lv_obj_set_pos(card, x, y);
-        lv_obj_set_size(card, w, h);
-        lv_obj_set_style_bg_color(card, lv_color_hex(0x07111E), 0);
-        lv_obj_set_style_bg_opa(card, LV_OPA_70, 0);
-        lv_obj_set_style_border_width(card, 2, 0);
-        lv_obj_set_style_border_color(card, lv_color_hex(0x5BD5FF), 0);
-        lv_obj_set_style_border_opa(card, LV_OPA_70, 0);
-        lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), 0);
-        lv_obj_set_style_shadow_width(card, 22, 0);
-        lv_obj_set_style_shadow_opa(card, LV_OPA_50, 0);
-        lv_obj_set_style_radius(card, 18, 0);
-        lv_obj_set_style_pad_all(card, 0, 0);
-        lv_obj_clear_flag(card, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-        return card;
-    };
-    auto dash_line = [&](lv_obj_t* card, int y) {
-        lv_obj_t* l = lv_label_create(card);
-        lv_obj_set_style_text_font(l, zh_font_md(), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(0xEAF3FB), 0);
-        lv_label_set_text(l, "--");
-        lv_obj_set_pos(l, 20, y);
-        return l;
-    };
-    {   // 左列: GLM / DeepSeek（上）+ 提醒/日程（下）
-        lv_obj_t* card = dash_card(56, 312, 400, 124);
-        _dash_glm = dash_line(card, 18);
-        _dash_ds  = dash_line(card, 62);
-        card = dash_card(56, 452, 400, 124);
-        _dash_ag1 = dash_line(card, 18);
-        _dash_ag2 = dash_line(card, 62);
-    }
-    {   // 右缘: OrangePi 详情竖卡（全卡 24px + 变色进度条）
-        lv_obj_t* card = dash_card(944, 176, 280, 400);
+    // ── Hero card (deep pine green, video-style) — replaces the old top status bar ──
+    // Clock / date / lunar / weather lines in light ink on flat deep green
+    // (#204234, 2026-10-26 用户多轮收敛: 比右侧列表卡略亮、整体更暗), tiny
+    // caption on top, wifi/mail/gear/battery icons in a row at the bottom.
+    // This card is the single accent block of the whole home screen.
+    lv_obj_t* hero = lv_obj_create(_scr);
+    lv_obj_set_pos(hero, 56, 40);
+    lv_obj_set_size(hero, 400, 520);
+    lv_obj_set_style_bg_color(hero, lv_color_hex(theme::cur().hero), 0);
+    lv_obj_set_style_bg_opa(hero, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(hero, 26, 0);
+    lv_obj_set_style_border_width(hero, 0, 0);
+    lv_obj_set_style_shadow_width(hero, 0, 0);
+    lv_obj_set_style_pad_all(hero, 0, 0);
+    lv_obj_clear_flag(hero, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
-        _opi_dot = lv_obj_create(card);
-        lv_obj_set_size(_opi_dot, 12, 12);
-        lv_obj_set_pos(_opi_dot, 20, 24);
-        lv_obj_set_style_radius(_opi_dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(0x34D399), 0);
-        lv_obj_set_style_bg_opa(_opi_dot, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(_opi_dot, 0, 0);
-        lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(0x34D399), 0);
-        lv_obj_set_style_shadow_width(_opi_dot, 8, 0);
-        lv_obj_clear_flag(_opi_dot, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    lv_obj_t* hero_tag = lv_label_create(hero);
+    lv_label_set_text(hero_tag, "M5TAB5 驾驶舱");
+    lv_obj_set_style_text_font(hero_tag, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(hero_tag, lv_color_hex(theme::cur().text_dim), 0);
+    lv_obj_set_pos(hero_tag, 24, 18);
 
-        lv_obj_t* title = lv_label_create(card);
-        lv_obj_set_style_text_font(title, zh_font_md(), 0);
-        lv_obj_set_style_text_color(title, lv_color_hex(0xF0F0F5), 0);
-        lv_label_set_text(title, "OPi");
-        lv_obj_set_pos(title, 40, 15);
-
-        _opi_uptime = lv_label_create(card);
-        lv_obj_set_style_text_font(_opi_uptime, zh_font_md(), 0);
-        lv_obj_set_style_text_color(_opi_uptime, lv_color_hex(0x8FA8C4), 0);
-        lv_label_set_text(_opi_uptime, "--");
-        lv_obj_align(_opi_uptime, LV_ALIGN_TOP_RIGHT, -18, 15);
-
-        _opi_ip = lv_label_create(card);
-        lv_obj_set_style_text_font(_opi_ip, zh_font_md(), 0);
-        lv_obj_set_style_text_color(_opi_ip, lv_color_hex(0x8FA8C4), 0);
-        lv_label_set_text(_opi_ip, "--");
-        lv_obj_set_pos(_opi_ip, 20, 56);
-
-        // 模块行: [label 24px 淡色] ....... [value 24px 亮色右对齐] + 进度条
-        static const char* const MOD_LABELS[5] = {"负载", "CPU", "内存", "交换", "磁盘"};
-        auto mod_at = [&](int i, int y) -> OpiModule& {
-            OpiModule& m = _opi_mod[i];
-            lv_obj_t* lbl = lv_label_create(card);
-            lv_obj_set_style_text_font(lbl, zh_font_md(), 0);
-            lv_obj_set_style_text_color(lbl, lv_color_hex(0x8FA8C4), 0);
-            lv_label_set_text(lbl, MOD_LABELS[i]);
-            lv_obj_set_pos(lbl, 20, y + 2);
-            m.val = lv_label_create(card);
-            lv_obj_set_style_text_font(m.val, zh_font_md(), 0);
-            lv_obj_set_style_text_color(m.val, lv_color_hex(0xEAF3FB), 0);
-            lv_label_set_text(m.val, "--");
-            lv_obj_align(m.val, LV_ALIGN_TOP_RIGHT, -18, y + 2);
-            m.bar = lv_bar_create(card);
-            lv_obj_set_size(m.bar, 240, 8);
-            lv_obj_set_pos(m.bar, 20, y + 36);
-            lv_bar_set_range(m.bar, 0, 100);
-            lv_obj_set_style_bg_color(m.bar, lv_color_hex(0x122B47), 0);
-            lv_obj_set_style_bg_opa(m.bar, LV_OPA_COVER, 0);
-            lv_obj_set_style_radius(m.bar, 4, 0);
-            lv_obj_set_style_radius(m.bar, 4, LV_PART_INDICATOR);
-            lv_obj_set_style_bg_color(m.bar, lv_color_hex(0x34D399), LV_PART_INDICATOR);
-            lv_obj_set_style_bg_opa(m.bar, LV_OPA_COVER, LV_PART_INDICATOR);
-            return m;
-        };
-        mod_at(0, 92);    // 负载
-        mod_at(1, 144);   // CPU
-        mod_at(2, 196);   // 内存
-        mod_at(3, 248);   // 交换
-        mod_at(4, 300);   // 磁盘
-
-        // 温度行（无进度条, 数值按阈值变色）
-        lv_obj_t* tl = lv_label_create(card);
-        lv_obj_set_style_text_font(tl, zh_font_md(), 0);
-        lv_obj_set_style_text_color(tl, lv_color_hex(0x8FA8C4), 0);
-        lv_label_set_text(tl, "温度");
-        lv_obj_set_pos(tl, 20, 354 + 2);
-        _opi_temp = lv_label_create(card);
-        lv_obj_set_style_text_font(_opi_temp, zh_font_md(), 0);
-        lv_obj_set_style_text_color(_opi_temp, lv_color_hex(0x34D399), 0);
-        lv_label_set_text(_opi_temp, "--℃");
-        lv_obj_align(_opi_temp, LV_ALIGN_TOP_RIGHT, -18, 354);
-    }
-    _last_dash_ms = 0;  // force first fetch on next onRunning tick
-
-    // ── Top system status bar (clock / WiFi / battery) ──
-    lv_obj_t* sbar = lv_obj_create(_scr);
-    lv_obj_set_pos(sbar, 0, 0);
-    lv_obj_set_size(sbar, 1280, 56);
-    lv_obj_set_style_bg_color(sbar, lv_color_hex(0x07111E), 0);
-    lv_obj_set_style_bg_opa(sbar, LV_OPA_60, 0);   // semi-transparent over the artwork
-    lv_obj_set_style_border_width(sbar, 0, 0);
-    lv_obj_set_style_radius(sbar, 0, 0);
-    lv_obj_set_style_pad_all(sbar, 0, 0);
-    lv_obj_clear_flag(sbar, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-
-    _status_time = lv_label_create(sbar);
-    lv_obj_set_style_text_font(_status_time, &lv_font_montserrat_30, 0);
-    lv_obj_set_style_text_color(_status_time, lv_color_hex(0x4FA3FF), 0);
+    _status_time = lv_label_create(hero);
+    lv_obj_set_style_text_font(_status_time, &lv_font_montserrat_44, 0);
+    lv_obj_set_style_text_color(_status_time, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_time, "--:--");
-    lv_obj_align(_status_time, LV_ALIGN_LEFT_MID, 28, 0);
+    lv_obj_align(_status_time, LV_ALIGN_TOP_MID, 0, 84);
 
-    // Date — to the right of the clock. Full GB2312 font (30px, slightly taller
-    // than the 28px montserrat clock) so lunar glyphs never need a subset regen.
-    _status_date = lv_label_create(sbar);
+    _status_date = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_date, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(_status_date, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(_status_date, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_date, "");
-    lv_obj_align(_status_date, LV_ALIGN_LEFT_MID, 138, 0);
+    lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 152);
 
-    // Weather (center): temperature (latin font, has °) + condition (zh font).
-    lv_obj_t* wbox = lv_obj_create(sbar);
-    lv_obj_set_size(wbox, LV_SIZE_CONTENT, 56);
+    _status_lunar = lv_label_create(hero);
+    lv_obj_set_style_text_font(_status_lunar, zh_font_md(), 0);
+    lv_obj_set_style_text_color(_status_lunar, lv_color_hex(theme::cur().text_soft), 0);
+    lv_label_set_text(_status_lunar, "");
+    lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 198);
+
+    // Weather row (tap → detailed weather dialog): temperature (latin font,
+    // has °) + condition (zh font), centered in dark ink.
+    lv_obj_t* wbox = lv_obj_create(hero);
+    lv_obj_set_size(wbox, LV_SIZE_CONTENT, 40);
     lv_obj_set_style_bg_opa(wbox, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(wbox, 0, 0);
     lv_obj_set_style_pad_all(wbox, 0, 0);
@@ -338,66 +187,201 @@ void AppHome::onOpen()
     lv_obj_set_flex_flow(wbox, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(wbox, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(wbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_align(wbox, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 252);
 
     _status_wtemp = lv_label_create(wbox);
     lv_obj_set_style_text_font(_status_wtemp, &lv_font_montserrat_30, 0);
-    lv_obj_set_style_text_color(_status_wtemp, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(_status_wtemp, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_wtemp, "");
 
     _status_wcond = lv_label_create(wbox);
     lv_obj_set_style_text_font(_status_wcond, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(_status_wcond, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(_status_wcond, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_wcond, "");
 
-    // Helper: make a status-bar item tappable. tag routes the click:
+    // Helper: make a hero-card item tappable. tag routes the click:
     // 1 = battery → power dialog, 2 = wifi → network dialog,
-    // 3 = gear → quick settings, 4 = weather → weather detail.
+    // 3 = gear → quick settings, 4 = weather → weather detail,
+    // 5 = mail → settings email sub-page.
     auto make_tappable = [&](lv_obj_t* item, int tag) {
         lv_obj_add_flag(item, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_ext_click_area(item, 18);  // enlarge touch target
         lv_obj_set_user_data(item, (void*)(intptr_t)tag);
         lv_obj_add_event_cb(item, _statusClick_cb, LV_EVENT_CLICKED, this);
     };
-
-    // Tap the center weather block → detailed weather card.
     make_tappable(wbox, 4);
 
-    _status_wifi = lv_label_create(sbar);
+    // Thin divider + icon row along the card bottom (light ink on deep green).
+    lv_obj_t* div = lv_obj_create(hero);
+    lv_obj_set_pos(div, 32, 424);
+    lv_obj_set_size(div, 336, 2);
+    lv_obj_set_style_bg_color(div, lv_color_hex(theme::cur().press), 0);
+    lv_obj_set_style_bg_opa(div, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(div, 0, 0);
+    lv_obj_set_style_radius(div, 0, 0);
+    lv_obj_clear_flag(div, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+
+    lv_obj_t* irow = lv_obj_create(hero);
+    lv_obj_set_pos(irow, 24, 448);
+    lv_obj_set_size(irow, 352, 44);
+    lv_obj_set_style_bg_opa(irow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(irow, 0, 0);
+    lv_obj_set_style_pad_all(irow, 0, 0);
+    lv_obj_set_flex_flow(irow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(irow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(irow, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    const uint32_t INK = theme::cur().text_hi;  // icon ink (near-white mint) on deep green
+
+    _status_wifi = lv_label_create(irow);
     lv_obj_set_style_text_font(_status_wifi, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(_status_wifi, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(_status_wifi, lv_color_hex(INK), 0);
     lv_label_set_text(_status_wifi, LV_SYMBOL_WIFI);
-    lv_obj_align(_status_wifi, LV_ALIGN_RIGHT_MID, -250, 0);
     make_tappable(_status_wifi, 2);
 
-    // Mail icon — sits to the LEFT of the WiFi icon, hidden by default. Only
-    // shown when AppSettings::email_unread_total > 0 (polled every 60s in
-    // onRunning). Tap → opens the AppSettings email sub-page via the
-    // callback injected from app_installer.h.
-    _status_email = lv_label_create(sbar);
+    // Mail icon — hidden by default. Only shown when
+    // AppSettings::email_unread_total > 0 (polled every 60s in onRunning).
+    _status_email = lv_label_create(irow);
     lv_obj_set_style_text_font(_status_email, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(_status_email, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(_status_email, lv_color_hex(INK), 0);
     lv_label_set_text(_status_email, LV_SYMBOL_ENVELOPE);
-    lv_obj_align(_status_email, LV_ALIGN_RIGHT_MID, -300, 0);
     lv_obj_add_flag(_status_email, LV_OBJ_FLAG_HIDDEN);
     make_tappable(_status_email, 5);
 
-    // Quick-settings gear — to the left of the battery (volume + brightness).
-    _status_tools = lv_label_create(sbar);
+    // Quick-settings gear (volume + brightness).
+    _status_tools = lv_label_create(irow);
     lv_obj_set_style_text_font(_status_tools, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(_status_tools, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(_status_tools, lv_color_hex(INK), 0);
     lv_label_set_text(_status_tools, LV_SYMBOL_SETTINGS);
-    lv_obj_align(_status_tools, LV_ALIGN_RIGHT_MID, -180, 0);
     make_tappable(_status_tools, 3);
 
-    _status_batt = lv_label_create(sbar);
+    _status_batt = lv_label_create(irow);
     lv_obj_set_style_text_font(_status_batt, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(_status_batt, lv_color_hex(0x4FA3FF), 0);
+    lv_obj_set_style_text_color(_status_batt, lv_color_hex(INK), 0);
     lv_label_set_text(_status_batt, LV_SYMBOL_BATTERY_FULL " --%");
-    lv_obj_align(_status_batt, LV_ALIGN_RIGHT_MID, -28, 0);
     make_tappable(_status_batt, 1);
 
-    _last_status_ms = 0;  // force first refresh on next onRunning
+    // ── Right column: video-style info rows + OPi wide card ───────────────
+    // All data comes from the hermes service on svc_host:8766 (see
+    // _fetch_dashboard). Rows are flat cards with a dim index number; the
+    // four card backgrounds step darker from top to bottom (渐变), the OPi
+    // card is a 3x2 module grid with threshold-colored bars.
+    auto row_card = [&](int y, int h, uint32_t bg, uint32_t border) {
+        lv_obj_t* card = lv_obj_create(_scr);
+        lv_obj_set_pos(card, 488, y);
+        lv_obj_set_size(card, 736, h);
+        lv_obj_set_style_bg_color(card, lv_color_hex(bg), 0);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(card, 1, 0);
+        lv_obj_set_style_border_color(card, lv_color_hex(border), 0);
+        lv_obj_set_style_border_opa(card, LV_OPA_70, 0);
+        lv_obj_set_style_radius(card, 18, 0);
+        lv_obj_set_style_shadow_width(card, 0, 0);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_clear_flag(card, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+        return card;
+    };
+    auto mk_lbl = [&](lv_obj_t* parent, const lv_font_t* f, uint32_t color,
+                      const char* txt, lv_align_t a, int x, int y) {
+        lv_obj_t* l = lv_label_create(parent);
+        lv_obj_set_style_text_font(l, f, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+        lv_label_set_text(l, txt);
+        lv_obj_align(l, a, x, y);
+        return l;
+    };
+    {   // 01 GLM 用量 / 02 DeepSeek 余额 / 03 提醒 / 日程
+        // 卡底从上到下逐级加深（渐变），边框同步走
+        const uint32_t IDX  = theme::cur().text_dim;   // dim green index
+        const uint32_t NAME = theme::cur().text_soft;   // soft text
+        const uint32_t VAL  = theme::cur().text_hi;   // bright value
+        lv_obj_t* c = row_card(40, 96, theme::cur().card[0], theme::cur().border);
+        mk_lbl(c, &lv_font_montserrat_28, IDX,  "01", LV_ALIGN_LEFT_MID,  26, 0);
+        mk_lbl(c, zh_font_md(),          NAME, "GLM 用量",   LV_ALIGN_LEFT_MID,  84, 0);
+        _dash_glm = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_RIGHT_MID, -28, 0);
+
+        c = row_card(148, 96, theme::cur().card[1], theme::cur().border);
+        mk_lbl(c, &lv_font_montserrat_28, IDX,  "02", LV_ALIGN_LEFT_MID,  26, 0);
+        mk_lbl(c, zh_font_md(),          NAME, "DeepSeek 余额", LV_ALIGN_LEFT_MID, 84, 0);
+        _dash_ds = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_RIGHT_MID, -28, 0);
+
+        c = row_card(256, 96, theme::cur().card[2], theme::cur().border);
+        mk_lbl(c, &lv_font_montserrat_28, IDX,  "03", LV_ALIGN_LEFT_MID,  26, 0);
+        mk_lbl(c, zh_font_md(),          NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 84, 0);
+        _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 16);
+        _dash_ag2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
+    }
+    {   // 04 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
+        // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
+        lv_obj_t* card = row_card(364, 204, theme::cur().card[3], theme::cur().border);
+
+        _opi_dot = lv_obj_create(card);
+        lv_obj_set_size(_opi_dot, 12, 12);
+        lv_obj_set_pos(_opi_dot, 24, 26);
+        lv_obj_set_style_radius(_opi_dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(theme::cur().ok), 0);
+        lv_obj_set_style_bg_opa(_opi_dot, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(_opi_dot, 0, 0);
+        lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(theme::cur().ok), 0);
+        lv_obj_set_style_shadow_width(_opi_dot, 8, 0);
+        lv_obj_clear_flag(_opi_dot, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+
+        mk_lbl(card, zh_font_md(), theme::cur().text_hi, "OPi", LV_ALIGN_TOP_LEFT, 46, 16);
+        _opi_ip     = mk_lbl(card, zh_font_md(), theme::cur().text_dim, "--", LV_ALIGN_TOP_LEFT, 118, 16);
+        _opi_uptime = mk_lbl(card, zh_font_md(), theme::cur().text_dim, "--", LV_ALIGN_TOP_RIGHT, -24, 16);
+
+        static const char* const MOD_LABELS[5] = {"负载", "CPU", "内存", "交换", "磁盘"};
+        static const int CELL_X[3] = {24, 268, 512};
+        static const int CELL_W    = 220;
+        auto mod_at = [&](int i) -> OpiModule& {
+            OpiModule& m = _opi_mod[i];
+            int x = CELL_X[i % 3], y = (i / 3) == 0 ? 66 : 138;
+            lv_obj_t* lbl = lv_label_create(card);
+            lv_obj_set_style_text_font(lbl, zh_font_md(), 0);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(theme::cur().text_dim), 0);
+            lv_label_set_text(lbl, MOD_LABELS[i]);
+            lv_obj_set_pos(lbl, x, y + 2);
+            m.val = lv_label_create(card);
+            lv_obj_set_style_text_font(m.val, zh_font_md(), 0);
+            lv_obj_set_style_text_color(m.val, lv_color_hex(theme::cur().text_hi), 0);
+            lv_label_set_text(m.val, "--");
+            lv_obj_set_pos(m.val, x, y + 2);
+            lv_obj_set_width(m.val, CELL_W);
+            lv_obj_set_style_text_align(m.val, LV_TEXT_ALIGN_RIGHT, 0);
+            m.bar = lv_bar_create(card);
+            lv_obj_set_size(m.bar, CELL_W, 10);
+            lv_obj_set_pos(m.bar, x, y + 40);
+            lv_bar_set_range(m.bar, 0, 100);
+            lv_obj_set_style_bg_color(m.bar, lv_color_hex(theme::cur().track), 0);
+            lv_obj_set_style_bg_opa(m.bar, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(m.bar, 5, 0);
+            lv_obj_set_style_radius(m.bar, 5, LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(m.bar, lv_color_hex(theme::cur().ok), LV_PART_INDICATOR);
+            lv_obj_set_style_bg_opa(m.bar, LV_OPA_COVER, LV_PART_INDICATOR);
+            return m;
+        };
+        for (int i = 0; i < 5; i++) mod_at(i);
+
+        // 温度格（第 6 格）: 数值按阈值变色, 条的位置显示风扇状态
+        lv_obj_t* tl = lv_label_create(card);
+        lv_obj_set_style_text_font(tl, zh_font_md(), 0);
+        lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_dim), 0);
+        lv_label_set_text(tl, "温度");
+        lv_obj_set_pos(tl, CELL_X[2], 138 + 2);
+        _opi_temp = lv_label_create(card);
+        lv_obj_set_style_text_font(_opi_temp, zh_font_md(), 0);
+        lv_obj_set_style_text_color(_opi_temp, lv_color_hex(theme::cur().ok), 0);
+        lv_label_set_text(_opi_temp, "--℃");
+        lv_obj_set_pos(_opi_temp, CELL_X[2], 138 + 2);
+        lv_obj_set_width(_opi_temp, CELL_W);
+        lv_obj_set_style_text_align(_opi_temp, LV_TEXT_ALIGN_RIGHT, 0);
+        _opi_fan = lv_label_create(card);
+        lv_obj_set_style_text_font(_opi_fan, zh_font_sm(), 0);
+        lv_obj_set_style_text_color(_opi_fan, lv_color_hex(theme::cur().text_dim), 0);
+        lv_label_set_text(_opi_fan, "");
+        lv_obj_set_pos(_opi_fan, CELL_X[2], 138 + 40);
+    }
+    _last_dash_ms = 0;  // force first fetch on next onRunning tick
+    _last_status_ms = 0;
     _last_batt_ms   = 0;
 
     lv_screen_load(_scr);
@@ -406,7 +390,7 @@ void AppHome::onOpen()
 void AppHome::onRunning()
 {
     // restoreScreen() is called via callback before a child app closes.
-    // Here we just refresh the top status bar (clock / WiFi / battery).
+    // Here we just refresh the hero card (clock / weather) + icon row.
     if (!_status_time) return;
 
     uint32_t now = GetHAL()->millis();
@@ -421,18 +405,22 @@ void AppHome::onRunning()
     snprintf(buf, sizeof(buf), "%02d:%02d", lt.tm_hour, lt.tm_min);
     lv_label_set_text(_status_time, buf);
 
-    // Date (Chinese) + lunar date, e.g. "10月25日 周日 农历九月十六".
+    // Date + lunar, e.g. "10月25日 周日" / "农历九月十六" — two lines on the
+    // hero card now that the top status bar is gone.
     static const char* const wd[] = {"日", "一", "二", "三", "四", "五", "六"};
-    char dbuf[64];
-    int n = snprintf(dbuf, sizeof(dbuf), "%d月%d日 周%s", lt.tm_mon + 1, lt.tm_mday, wd[lt.tm_wday]);
-    char lbuf[24];
-    if (n > 0 && lunar::format_lunar_date(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lbuf, sizeof(lbuf)))
-        snprintf(dbuf + n, sizeof(dbuf) - n, " 农历%s", lbuf);
+    char dbuf[48];
+    snprintf(dbuf, sizeof(dbuf), "%d月%d日 周%s", lt.tm_mon + 1, lt.tm_mday, wd[lt.tm_wday]);
     lv_label_set_text(_status_date, dbuf);
+    char lbuf[24];
+    if (lunar::format_lunar_date(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lbuf, sizeof(lbuf))) {
+        char l2[32];
+        snprintf(l2, sizeof(l2), "农历%s", lbuf);
+        lv_label_set_text(_status_lunar, l2);
+    }
 
-    // WiFi
+    // WiFi (light ink on the deep-green hero card; warm red when offline)
     bool wifi = GetHAL()->isWifiConnected();
-    lv_obj_set_style_text_color(_status_wifi, lv_color_hex(wifi ? 0x4FA3FF : 0xFF4444), 0);
+    lv_obj_set_style_text_color(_status_wifi, lv_color_hex(wifi ? theme::cur().text_hi : theme::cur().danger), 0);
 
     // Battery — read the (slower) power monitor about every 10 s
     if (_last_batt_ms == 0 || now - _last_batt_ms > 10000) {
@@ -456,10 +444,11 @@ void AppHome::onRunning()
         if (pct >= 0) snprintf(bb, sizeof(bb), "%s %d%%", icon, pct);
         else          snprintf(bb, sizeof(bb), "%s --%%", icon);
         lv_label_set_text(_status_batt, bb);
-        uint32_t c = pct < 0  ? 0x8FA8C4
-                   : pct < 20 ? 0xFF4444
-                   : pct < 40 ? 0xF39C12
-                   :            0x4FA3FF;
+        // Light ink tiers on deep green: warm red < 20%, amber < 40%, ink above
+        uint32_t c = pct < 0  ? theme::cur().text_dim
+                   : pct < 20 ? theme::cur().danger
+                   : pct < 40 ? theme::cur().warn
+                   :            theme::cur().text_hi;
         lv_obj_set_style_text_color(_status_batt, lv_color_hex(c), 0);
     }
 
@@ -499,9 +488,8 @@ void AppHome::onRunning()
             else             lv_obj_add_flag(_status_email, LV_OBJ_FLAG_HIDDEN);
         }
         if (should_show) {
-            // Subtle visual cue: blue normally, warm orange when there's a
-            // lot of mail to read.
-            uint32_t c = unread >= 10 ? 0xF39C12 : 0x4FA3FF;
+            // Light ink on deep green: amber when there's a lot to read.
+            uint32_t c = unread >= 10 ? theme::cur().warn : theme::cur().text_hi;
             lv_obj_set_style_text_color(_status_email, lv_color_hex(c), 0);
         }
     }
@@ -578,16 +566,18 @@ void AppHome::_fetch_dashboard()
             return j.is_object() && j.contains(key) && j[key].is_object() ? j[key] : nlohmann::json::object();
         };
 
-        std::string glm_txt = "GLM --", ds_txt = "DeepSeek --";
+        // Row values — the row name ("GLM 用量"…) lives on the left of the
+        // card, so these carry data only.
+        std::string glm_txt = "--", ds_txt = "--";
         std::string ag1, ag2;
 
         if (auto j = pick(GetHAL()->httpGet(base + "/glm/quota").body); !j.is_null()) {
             std::string lvl = j.value("level", std::string());
             if (!lvl.empty() && lvl[0] >= 'a' && lvl[0] <= 'z') lvl[0] -= 32;
-            glm_txt = "GLM " + lvl + " 剩" + std::to_string(j.value("remaining_pct", 0)) + "%";
+            glm_txt = lvl + "级 剩" + std::to_string(j.value("remaining_pct", 0)) + "%";
         }
         if (auto j = pick(GetHAL()->httpGet(base + "/api/deepseek/balance").body); !j.is_null()) {
-            ds_txt = "DeepSeek " + j.value("total_balance", std::string("?")) + "元";
+            ds_txt = j.value("total_balance", std::string("?")) + " 元";
         }
         OpiData od;
         if (auto j = pick(GetHAL()->httpGet(base + "/system/status").body); !j.is_null()) {
@@ -635,9 +625,9 @@ void AppHome::_updateOpiWidgets()
 {
     char v[48];
     auto tier = [](double pct, double warn, double danger) -> uint32_t {
-        if (pct >= danger) return 0xEF4444;   // red
-        if (pct >= warn)   return 0xFBBF24;   // amber
-        return 0x34D399;                      // green
+        if (pct >= danger) return theme::cur().danger;   // red
+        if (pct >= warn)   return theme::cur().warn;   // amber
+        return theme::cur().ok;                      // green
     };
     auto set_bar = [&](lv_obj_t* bar, double pct, double warn, double danger) {
         if (pct < 0) pct = 0;
@@ -654,12 +644,13 @@ void AppHome::_updateOpiWidgets()
         lv_label_set_text(_opi_uptime, "--");
         lv_label_set_text(_opi_ip, "--");
         lv_label_set_text(_opi_temp, "--");
-        lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(0xEF4444), 0);
-        lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(0xEF4444), 0);
+        lv_label_set_text(_opi_fan, "");
+        lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(theme::cur().danger), 0);
+        lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(theme::cur().danger), 0);
         return;
     }
-    lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(0x34D399), 0);
-    lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(0x34D399), 0);
+    lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(theme::cur().ok), 0);
+    lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(theme::cur().ok), 0);
     lv_label_set_text(_opi_uptime, _opi.uptime.c_str());
     lv_label_set_text(_opi_ip, _opi.ip.c_str());
 
@@ -685,10 +676,13 @@ void AppHome::_updateOpiWidgets()
     lv_label_set_text(_opi_mod[4].val, v);
     set_bar(_opi_mod[4].bar, _opi.disk_pct, 70, 85);
 
-    if (_opi.fan_rpm >= 0) snprintf(v, sizeof(v), "%.0f℃ %d", _opi.temp, _opi.fan_rpm);
-    else                   snprintf(v, sizeof(v), "%.0f℃ 被动", _opi.temp);
+    // 温度格: 数值按阈值变色, 风扇状态放在条的位置
+    snprintf(v, sizeof(v), "%.0f℃", _opi.temp);
     lv_label_set_text(_opi_temp, v);
     lv_obj_set_style_text_color(_opi_temp, lv_color_hex(tier(_opi.temp, 60, 75)), 0);
+    if (_opi.fan_rpm >= 0) snprintf(v, sizeof(v), "风扇 %d", _opi.fan_rpm);
+    else                   snprintf(v, sizeof(v), "被动散热");
+    lv_label_set_text(_opi_fan, v);
 }
 
 void AppHome::onClose()
@@ -705,12 +699,14 @@ void AppHome::onClose()
     }
     _status_time  = nullptr;
     _status_date  = nullptr;
+    _status_lunar = nullptr;
     _status_wtemp = nullptr;
     _status_wcond = nullptr;
     _status_wifi  = nullptr;
     _status_batt  = nullptr;
     _status_tools = nullptr;
     _status_email = nullptr;
+    _opi_fan      = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
     _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
     _btn_data.clear();
@@ -728,13 +724,14 @@ void AppHome::_btn_event_cb(lv_event_t* e)
 // ════════════════════════════════════════════════════════════════════════════
 
 namespace {
-constexpr uint32_t M_BG     = 0x132840;  // card background (deep blue)
-constexpr uint32_t M_ACCENT = 0x4FA3FF;
-constexpr uint32_t M_LBL    = 0xBFD3E6;
-constexpr uint32_t M_BTN    = 0x2E5A8F;
-constexpr uint32_t M_SAVE   = 0x2E8B57;
-constexpr uint32_t M_DANGER = 0xC0392B;
-constexpr uint32_t M_WARN   = 0xD08B1E;
+// 弹窗配色 — 全部跟随全局主题（utils/theme/theme.h）
+inline uint32_t T_BG()     { return theme::cur().card[1]; }
+inline uint32_t T_ACCENT() { return theme::cur().accent; }
+inline uint32_t T_LBL()    { return theme::cur().text_soft; }
+inline uint32_t T_BTN()    { return theme::cur().press; }
+inline uint32_t T_SAVE()   { return theme::cur().ok; }
+inline uint32_t T_DANGER() { return theme::cur().danger; }
+inline uint32_t T_WARN()   { return theme::cur().warn; }
 
 // Styled pill button. cb is a captureless lambda; `self` is passed as user_data.
 lv_obj_t* mk_btn(lv_obj_t* parent, const char* text, uint32_t color, int w, int h,
@@ -763,6 +760,7 @@ void AppHome::_closeModal()
     lv_obj_delete_async(_modal);  // safe to call from within the modal's own event
     _modal      = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
+    _qs_theme_lbl = nullptr;
     _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
     _wx_body  = nullptr;
 }
@@ -787,10 +785,10 @@ lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
     lv_obj_t* card = lv_obj_create(_modal);
     lv_obj_set_size(card, card_w, card_h);
     lv_obj_center(card);
-    lv_obj_set_style_bg_color(card, lv_color_hex(M_BG), 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(T_BG()), 0);
     lv_obj_set_style_radius(card, 22, 0);
     lv_obj_set_style_border_width(card, 2, 0);
-    lv_obj_set_style_border_color(card, lv_color_hex(0x2E5A8F), 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(theme::cur().border), 0);
     lv_obj_set_style_pad_all(card, 0, 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
@@ -798,7 +796,7 @@ lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
     lv_obj_t* t = lv_label_create(card);
     lv_label_set_text(t, title);
     lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 22);
-    lv_obj_set_style_text_color(t, lv_color_hex(M_ACCENT), 0);
+    lv_obj_set_style_text_color(t, lv_color_hex(T_ACCENT()), 0);
     lv_obj_set_style_text_font(t, zh_font_lg(), 0);
     return card;
 }
@@ -807,15 +805,14 @@ lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
 void AppHome::_openWeatherDialog()
 {
     lv_obj_t* card = _openModal(680, 500, "天气详情");
-    // Slightly translucent so the home wallpaper shows through.
+    // Slightly translucent so the home cards show through.
     lv_obj_set_style_bg_opa(card, LV_OPA_80, 0);
-    // Anchor near the top, just under the 56px status bar (not vertically centered).
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 64);
+    lv_obj_center(card);
 
     _wx_body = lv_label_create(card);
     lv_obj_set_pos(_wx_body, 32, 74);
     lv_obj_set_width(_wx_body, 616);
-    lv_obj_set_style_text_color(_wx_body, lv_color_hex(M_LBL), 0);
+    lv_obj_set_style_text_color(_wx_body, lv_color_hex(T_LBL()), 0);
     lv_obj_set_style_text_font(_wx_body, zh_font_lg(), 0);
     lv_obj_set_style_text_line_space(_wx_body, 12, 0);
     lv_label_set_text(_wx_body, "加载中…");
@@ -909,14 +906,14 @@ void AppHome::_openPowerDialog()
     lv_obj_t* q = lv_label_create(card);
     lv_label_set_text(q, "是否关机？");
     lv_obj_align(q, LV_ALIGN_TOP_MID, 0, 96);
-    lv_obj_set_style_text_color(q, lv_color_hex(M_LBL), 0);
+    lv_obj_set_style_text_color(q, lv_color_hex(T_LBL()), 0);
     lv_obj_set_style_text_font(q, zh_font_lg(), 0);
 
     const int BW = 150, BH = 64, GAP = 24;
     int total = BW * 3 + GAP * 2;
     int x0 = (560 - total) / 2;
 
-    lv_obj_t* b_off = mk_btn(card, "关机", M_DANGER, BW, BH,
+    lv_obj_t* b_off = mk_btn(card, "关机", T_DANGER(), BW, BH,
         [](lv_event_t* e) {
             auto* s = static_cast<AppHome*>(lv_event_get_user_data(e));
             s->_closeModal();
@@ -924,7 +921,7 @@ void AppHome::_openPowerDialog()
         }, this);
     lv_obj_align(b_off, LV_ALIGN_BOTTOM_LEFT, x0, -32);
 
-    lv_obj_t* b_reb = mk_btn(card, "重启", M_WARN, BW, BH,
+    lv_obj_t* b_reb = mk_btn(card, "重启", T_WARN(), BW, BH,
         [](lv_event_t* e) {
             auto* s = static_cast<AppHome*>(lv_event_get_user_data(e));
             s->_closeModal();
@@ -932,17 +929,17 @@ void AppHome::_openPowerDialog()
         }, this);
     lv_obj_align(b_reb, LV_ALIGN_BOTTOM_LEFT, x0 + BW + GAP, -32);
 
-    lv_obj_t* b_cancel = mk_btn(card, "取消", M_BTN, BW, BH,
+    lv_obj_t* b_cancel = mk_btn(card, "取消", T_BTN(), BW, BH,
         [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))->_closeModal();
         }, this);
     lv_obj_align(b_cancel, LV_ALIGN_BOTTOM_LEFT, x0 + 2 * (BW + GAP), -32);
 }
 
-// ─── Quick-settings dialog (gear tap): volume + brightness ──────────────────
+// ─── Quick-settings dialog (gear tap): volume + brightness + theme ──────────
 void AppHome::_openQuickSettings()
 {
-    lv_obj_t* card = _openModal(680, 340, "音量与亮度");
+    lv_obj_t* card = _openModal(680, 440, "音量与亮度");
 
     const int LBL_X = 40, SLD_X = 180, SLD_W = 380, SLD_H = 44;
     const int VAL_X = SLD_X + SLD_W + 18;
@@ -952,7 +949,7 @@ void AppHome::_openQuickSettings()
         lv_obj_t* l = lv_label_create(card);
         lv_label_set_text(l, name);
         lv_obj_set_pos(l, LBL_X, yy + 6);
-        lv_obj_set_style_text_color(l, lv_color_hex(M_LBL), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(T_LBL()), 0);
         lv_obj_set_style_text_font(l, zh_font_lg(), 0);
 
         lv_obj_t* sl = lv_slider_create(card);
@@ -960,9 +957,9 @@ void AppHome::_openQuickSettings()
         lv_obj_set_size(sl, SLD_W, SLD_H);
         lv_slider_set_range(sl, min_v, max_v);
         lv_slider_set_value(sl, cur_v, LV_ANIM_OFF);
-        lv_obj_set_style_bg_color(sl, lv_color_hex(0x1A3050), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(sl, lv_color_hex(theme::cur().track), LV_PART_MAIN);
         lv_obj_set_style_radius(sl, SLD_H / 2, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(sl, lv_color_hex(M_ACCENT), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(sl, lv_color_hex(T_ACCENT()), LV_PART_INDICATOR);
         lv_obj_set_style_radius(sl, SLD_H / 2, LV_PART_INDICATOR);
         lv_obj_set_style_bg_color(sl, lv_color_hex(0xFFFFFF), LV_PART_KNOB);
         lv_obj_set_style_radius(sl, SLD_H / 2, LV_PART_KNOB);
@@ -973,7 +970,7 @@ void AppHome::_openQuickSettings()
         char buf[8]; snprintf(buf, sizeof(buf), "%d%%", cur_v);
         lv_label_set_text(v, buf);
         lv_obj_set_pos(v, VAL_X, yy + 8);
-        lv_obj_set_style_text_color(v, lv_color_hex(M_ACCENT), 0);
+        lv_obj_set_style_text_color(v, lv_color_hex(T_ACCENT()), 0);
         lv_obj_set_style_text_font(v, &lv_font_montserrat_28, 0);
         *out_val = v;
         return sl;
@@ -984,11 +981,51 @@ void AppHome::_openQuickSettings()
     mk_row("音量", 86,  0, 100, vol, _qsVol_cb, &_qs_vol_lbl);
     mk_row("亮度", 158, 10, 100, brt, _qsBrt_cb, &_qs_brt_lbl);
 
-    lv_obj_t* done = mk_btn(card, "完成", M_SAVE, 200, 60,
+    // 主题循环切换（松绿→暖橙→海蓝→岩紫…）：立即重建主页，其他 app 下次
+    // 打开生效。按钮文字显示当前主题名。
+    _qs_theme_lbl = mk_btn(card, "", T_BTN(), 300, 60, _qsTheme_cb, this);
+    _refreshThemeBtn();
+    lv_obj_align(_qs_theme_lbl, LV_ALIGN_BOTTOM_LEFT, 40, -28);
+
+    lv_obj_t* done = mk_btn(card, "完成", T_SAVE(), 200, 60,
         [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))->_closeModal();
         }, this);
-    lv_obj_align(done, LV_ALIGN_BOTTOM_MID, 0, -28);
+    lv_obj_align(done, LV_ALIGN_BOTTOM_RIGHT, -40, -28);
+}
+
+void AppHome::_refreshThemeBtn()
+{
+    if (!_qs_theme_lbl) return;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "主题：%s", theme::cur().name);
+    lv_label_set_text(lv_obj_get_child(_qs_theme_lbl, 0), buf);
+}
+
+void AppHome::_qsTheme_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    theme::cycle();                 // 切换并持久化到 NVS
+    self->_refreshThemeBtn();
+    self->_closeModal();
+    self->rebuild();                // 主页立即换装
+}
+
+void AppHome::rebuild()
+{
+    // 就地重建主页屏幕（主题切换用）。不能同步删除当前活动屏（LVGL9 会
+    // 黑屏, app_radio onClose 同款坑）：先切到临时屏 → 删旧屏 → onOpen
+    // 建新屏并接管 → 临时屏异步回收。
+    if (_scr) {
+        lv_obj_t* tmp = lv_obj_create(NULL);
+        lv_screen_load(tmp);
+        lv_obj_delete(_scr);
+        _scr = nullptr;
+        onOpen();
+        lv_obj_delete_async(tmp);
+    } else {
+        onOpen();
+    }
 }
 
 void AppHome::_qsVol_cb(lv_event_t* e)
@@ -1022,7 +1059,7 @@ void AppHome::_openNetworkDialog()
         lv_obj_t* l = lv_label_create(card);
         lv_label_set_text(l, text);
         lv_obj_set_pos(l, LBL_X, yy + 12);
-        lv_obj_set_style_text_color(l, lv_color_hex(M_LBL), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(T_LBL()), 0);
         lv_obj_set_style_text_font(l, zh_font_lg(), 0);
     };
     auto mk_ta = [&](int yy, int w, bool password) -> lv_obj_t* {
@@ -1040,7 +1077,7 @@ void AppHome::_openNetworkDialog()
     mk_label("WiFi 名称", y);
     _net_ssid = mk_ta(y, FLD_W - 140, false);
     lv_textarea_set_text(_net_ssid, hal->getConfig("wifi_ssid", "").c_str());
-    lv_obj_t* scan = mk_btn(card, "扫描", M_BTN, 124, ROW_H - 10,
+    lv_obj_t* scan = mk_btn(card, "扫描", T_BTN(), 124, ROW_H - 10,
         [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))->_doNetworkScan();
         }, this);
@@ -1086,7 +1123,7 @@ void AppHome::_openNetworkDialog()
     y += ROW_H + 6;
 
     // Save + status
-    lv_obj_t* save = mk_btn(card, "保存并重启", M_SAVE, 260, 60,
+    lv_obj_t* save = mk_btn(card, "保存并重启", T_SAVE(), 260, 60,
         [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))->_doNetworkSave();
         }, this);
@@ -1095,7 +1132,7 @@ void AppHome::_openNetworkDialog()
     _net_status = lv_label_create(card);
     lv_label_set_text(_net_status, "");
     lv_obj_set_pos(_net_status, FLD_X + 280, y + 16);
-    lv_obj_set_style_text_color(_net_status, lv_color_hex(0xFFD166), 0);
+    lv_obj_set_style_text_color(_net_status, lv_color_hex(T_WARN()), 0);
     lv_obj_set_style_text_font(_net_status, zh_font_lg(), 0);
 
     // On-screen keyboard — child of the backdrop so it floats above the card.

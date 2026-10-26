@@ -12,6 +12,7 @@
  * esp_wifi_set_ps 在播放链路里疑似崩溃源(2026-10-26 "连接中"即重启)。
  */
 #include "app_radio.h"
+#include "../utils/theme/theme.h"
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <xiaozhi_ctl.h>
@@ -79,16 +80,22 @@ static const RadioStation kStations[] = {
 static const int kStationCount = sizeof(kStations) / sizeof(kStations[0]);
 static const char* kRelayBase  = "http://192.168.1.200:8769/radio/";
 
-// 配色(与 HA app 同一套驾驶舱色板)
-static constexpr uint32_t C_BG     = 0x000000;   // 全黑(2026-10-26 用户指定)
-static constexpr uint32_t C_CARD   = 0x13304E;
-static constexpr uint32_t C_CARD_ON = 0x1E5288;
-static constexpr uint32_t C_ACCENT = 0x4FA3FF;
-static constexpr uint32_t C_TEXT   = 0xEAF3FB;
-static constexpr uint32_t C_TEXT2  = 0x8FA8C4;
-static constexpr uint32_t C_AMBER  = 0xF5A263;      // 指针琥珀(leo-radio 同款)
-static constexpr uint32_t C_AMBER_SOFT = 0xB98A5E;  // 主刻度
-static constexpr uint32_t C_DIAL_BG = 0x081726;     // 刻度盘内嵌底色
+// 配色: 主题快照(onOpen 时从全局主题取, 见 utils/theme/theme.h);
+// 绘制回调在 LVGL 线程里读这些全局, 零锁。
+static uint32_t C_BG, C_CARD, C_CARD_ON, C_ACCENT, C_TEXT, C_TEXT2,
+                C_AMBER, C_AMBER_SOFT, C_DIAL_BG, C_BORDER, C_TRACK,
+                C_OK, C_WARN, C_DANGER;
+
+static void snap_theme()
+{
+    const theme::Palette& T = theme::cur();
+    C_BG = 0x000000;
+    C_CARD = T.card[1];  C_CARD_ON = T.press;  C_ACCENT = T.accent;
+    C_TEXT = T.text_hi;  C_TEXT2 = T.text_dim; C_AMBER = T.accent;
+    C_AMBER_SOFT = T.text_dim;  C_DIAL_BG = T.track;
+    C_BORDER = T.border;  C_TRACK = T.track;
+    C_OK = T.ok;  C_WARN = T.warn;  C_DANGER = T.danger;
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // 流引擎（仅真机; 常驻 detached 线程, 原子量通信, 绝不触碰 LVGL）
@@ -390,6 +397,7 @@ void AppRadio::onOpen()
 {
     if (_scr) return;   // 防御: 状态异常时重复 onOpen 不叠屏(泄漏)
     mclog::tagInfo(TAG, "on open");
+    snap_theme();
     if (_suppress) _suppress(true);   // 独占模式: 抑制屏保等后台服务
     _app_closing.store(false);
     _ui_state    = -1;
@@ -436,16 +444,16 @@ void AppRadio::onOpen()
         if (kStations[i].freq > 0) snprintf(freq, sizeof(freq), "%d.%d", kStations[i].freq / 10, kStations[i].freq % 10);
         else                        snprintf(freq, sizeof(freq), "网络");
         lv_obj_t* fl = lv_label_create(row);
-        lv_obj_set_style_text_font(fl, zh_font_md(), 0);   // 含中文"网络"
+        lv_obj_set_style_text_font(fl, zh_font_lg(), 0);   // 含中文"网络"
         lv_obj_set_style_text_color(fl, lv_color_hex(C_ACCENT), 0);
         lv_label_set_text(fl, freq);
         lv_obj_align(fl, LV_ALIGN_LEFT_MID, 16, 0);
 
         lv_obj_t* nl = lv_label_create(row);
-        lv_obj_set_style_text_font(nl, zh_font_md(), 0);
+        lv_obj_set_style_text_font(nl, zh_font_lg(), 0);
         lv_obj_set_style_text_color(nl, lv_color_hex(C_TEXT), 0);
         lv_label_set_text(nl, kStations[i].name);
-        lv_obj_align(nl, LV_ALIGN_LEFT_MID, 120, 0);
+        lv_obj_align(nl, LV_ALIGN_LEFT_MID, 132, 0);
     }
 
     // ── 右: 播放面板 ──
@@ -491,7 +499,7 @@ void AppRadio::onOpen()
         lv_obj_set_style_bg_color(_dial, lv_color_hex(C_DIAL_BG), 0);
         lv_obj_set_style_bg_opa(_dial, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(_dial, 1, 0);
-        lv_obj_set_style_border_color(_dial, lv_color_hex(0x1E3A5C), 0);
+        lv_obj_set_style_border_color(_dial, lv_color_hex(C_BORDER), 0);
         lv_obj_set_style_radius(_dial, 10, 0);
         lv_obj_set_style_pad_all(_dial, 0, 0);
         lv_obj_clear_flag(_dial, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
@@ -580,7 +588,7 @@ void AppRadio::onOpen()
     lv_obj_set_pos(_vol_slider, 130, 610);
     lv_slider_set_range(_vol_slider, 0, 100);
     lv_slider_set_value(_vol_slider, vol, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(_vol_slider, lv_color_hex(0x122B47), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_vol_slider, lv_color_hex(C_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_color(_vol_slider, lv_color_hex(C_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(_vol_slider, lv_color_hex(C_ACCENT), LV_PART_KNOB);
     lv_obj_add_event_cb(_vol_slider, _vol_cb, LV_EVENT_VALUE_CHANGED, this);
@@ -766,7 +774,7 @@ void AppRadio::_dial_draw_cb(lv_event_t* e)
 void AppRadio::_refreshStateUi()
 {
     static const char* kTxt[4]    = {"待机", "连接中…", "正在播放", "连接失败"};
-    static const uint32_t kCol[4] = {C_TEXT2, 0xF39C12, 0x34D399, 0xF56363};
+    static const uint32_t kCol[4] = {C_TEXT2, C_WARN, C_OK, C_DANGER};
     _ui_state = _state.load();
     if (_status_lbl) {
         lv_label_set_text(_status_lbl, kTxt[_ui_state]);

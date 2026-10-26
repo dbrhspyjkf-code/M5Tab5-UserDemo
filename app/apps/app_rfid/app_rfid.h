@@ -48,7 +48,6 @@ private:
     static constexpr uint32_t C_HEADER = 0x0D1F35;
     static constexpr uint32_t C_TEXT   = 0xEAF3FB;
     static constexpr uint32_t C_DIM    = 0x8AA0B5;
-    static constexpr uint32_t C_ACCENT = 0x4FA3FF;
     static constexpr uint32_t C_OK     = 0x2ECC71;
     static constexpr uint32_t C_ERR    = 0xE74C3C;
 

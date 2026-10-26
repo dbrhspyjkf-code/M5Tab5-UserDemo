@@ -55,7 +55,6 @@ private:
     static constexpr uint32_t C_UP       = 0xE74C3C;  // 涨 → 红
     static constexpr uint32_t C_DOWN     = 0x2ECC71;  // 跌 → 绿
     static constexpr uint32_t C_FLAT     = 0x95A5A6;  // 平 → 灰
-    static constexpr uint32_t C_ACCENT   = 0x4FA3FF;
 
     // ── LED ────────────────────────────────────────────────────────────
     static constexpr int LED_W = 40;
