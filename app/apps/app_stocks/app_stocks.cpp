@@ -174,9 +174,9 @@ void AppStocks::_teardownHardware()
 // ════════════════════════════════════════════════════════════════════════════
 uint32_t AppStocks::_chgColor(float chg)
 {
-    if (chg > 0.01f)  return C_UP;
-    if (chg < -0.01f) return C_DOWN;
-    return C_FLAT;
+    if (chg > 0.01f)  return C_UP();
+    if (chg < -0.01f) return C_DOWN();
+    return C_FLAT();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -187,14 +187,14 @@ void AppStocks::_buildUi()
     LvglLockGuard lock;
 
     _scr = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG()), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     // ── Header ────────────────────────────────────────────────────────
     _header = lv_obj_create(_scr);
     lv_obj_set_size(_header, SCREEN_W, HEADER_H);
     lv_obj_align(_header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(_header, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_bg_color(_header, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_border_width(_header, 0, 0);
     lv_obj_set_style_radius(_header, 0, 0);
     lv_obj_set_style_pad_all(_header, 0, 0);
@@ -207,20 +207,20 @@ void AppStocks::_buildUi()
     lv_obj_t* title = lv_label_create(_header);
     lv_label_set_text(title, "自选股");
     lv_obj_set_style_text_font(title, stock_row_font(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 24, 0);
 
     _status_text = lv_label_create(_header);
     lv_label_set_text(_status_text, "● 加载中...");
     lv_obj_set_style_text_font(_status_text, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(_status_text, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(_status_text, lv_color_hex(C_DIM()), 0);
     lv_obj_align(_status_text, LV_ALIGN_RIGHT_MID, -24, 0);
 
     // ── Column header ─────────────────────────────────────────────────
     _col_header = lv_obj_create(_scr);
     lv_obj_set_size(_col_header, SCREEN_W, 40);
     lv_obj_align(_col_header, LV_ALIGN_TOP_MID, 0, HEADER_H + 4);
-    lv_obj_set_style_bg_color(_col_header, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_bg_color(_col_header, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_bg_opa(_col_header, LV_OPA_60, 0);
     lv_obj_set_style_border_width(_col_header, 0, 0);
     lv_obj_set_style_radius(_col_header, 0, 0);
@@ -230,7 +230,7 @@ void AppStocks::_buildUi()
         lv_obj_t* lbl = lv_label_create(_col_header);
         lv_label_set_text(lbl, COLS[i]);
         lv_obj_set_style_text_font(lbl, stock_row_font(), 0);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(C_DIM), 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(C_DIM()), 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, COL_X[i], 0);
     }
 
@@ -240,7 +240,7 @@ void AppStocks::_buildUi()
         _rows[i] = lv_obj_create(_scr);
         lv_obj_set_size(_rows[i], SCREEN_W, ROW_H);
         lv_obj_align(_rows[i], LV_ALIGN_TOP_MID, 0, rows_top + i * ROW_H);
-        lv_obj_set_style_bg_color(_rows[i], lv_color_hex(C_HEADER), 0);
+        lv_obj_set_style_bg_color(_rows[i], lv_color_hex(C_HEADER()), 0);
         lv_obj_set_style_bg_opa(_rows[i], i % 2 ? LV_OPA_30 : LV_OPA_10, 0);
         lv_obj_set_style_bg_color(_rows[i], lv_color_hex(theme::cur().accent), LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(_rows[i], LV_OPA_40, LV_STATE_PRESSED);
@@ -261,7 +261,7 @@ void AppStocks::_buildUi()
             lv_obj_t* cell = lv_label_create(_rows[i]);
             lv_label_set_text(cell, "--");
             lv_obj_set_style_text_font(cell, stock_row_font(), 0);
-            lv_obj_set_style_text_color(cell, lv_color_hex(C_DIM), 0);
+            lv_obj_set_style_text_color(cell, lv_color_hex(C_DIM()), 0);
             lv_obj_align(cell, LV_ALIGN_LEFT_MID, COL_X[c], 0);
             lv_obj_add_flag(cell, LV_OBJ_FLAG_EVENT_BUBBLE);  // 点击冒泡到 row
         }
@@ -271,7 +271,7 @@ void AppStocks::_buildUi()
     _status_bar = lv_obj_create(_scr);
     lv_obj_set_size(_status_bar, SCREEN_W, STATUS_H);
     lv_obj_align(_status_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(_status_bar, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_bg_color(_status_bar, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_border_width(_status_bar, 0, 0);
     lv_obj_set_style_radius(_status_bar, 0, 0);
     lv_obj_set_style_pad_all(_status_bar, 0, 0);
@@ -280,7 +280,7 @@ void AppStocks::_buildUi()
     _status_dot = lv_label_create(_status_bar);
     lv_label_set_text(_status_dot, "LED 滚动播报中");
     lv_obj_set_style_text_font(_status_dot, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(_status_dot, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(_status_dot, lv_color_hex(C_DIM()), 0);
     lv_obj_align(_status_dot, LV_ALIGN_LEFT_MID, 24, 0);
 
     _refresh_btn = lv_button_create(_status_bar);
@@ -390,7 +390,7 @@ void AppStocks::_setStatus(bool online, const char* text)
     if (text) { s += "  "; s += text; }
     lv_label_set_text(_status_text, s.c_str());
     lv_obj_set_style_text_color(_status_text,
-        lv_color_hex(online ? C_UP : C_DOWN), 0);
+        lv_color_hex(online ? C_UP() : C_DOWN()), 0);
 }
 
 void AppStocks::_showDetail(int row_idx)
@@ -408,7 +408,7 @@ void AppStocks::_showDetail(int row_idx)
     _detail_modal = lv_obj_create(_scr);
     lv_obj_set_size(_detail_modal, 1000, 560);  // 摘要较长, 加大弹窗
     lv_obj_center(_detail_modal);
-    lv_obj_set_style_bg_color(_detail_modal, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_bg_color(_detail_modal, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_border_color(_detail_modal, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_border_width(_detail_modal, 2, 0);
     lv_obj_set_style_radius(_detail_modal, 16, 0);
@@ -418,7 +418,7 @@ void AppStocks::_showDetail(int row_idx)
     lv_obj_t* title = lv_label_create(_detail_modal);
     lv_label_set_text_fmt(title, "%s  %s", s.name.c_str(), s.code.c_str());
     lv_obj_set_style_text_font(title, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
 
     lv_obj_t* date = lv_label_create(_detail_modal);
@@ -426,7 +426,7 @@ void AppStocks::_showDetail(int row_idx)
         ? "分析日期：--" : "分析日期：" + s.analysis_date;
     lv_label_set_text(date, date_text.c_str());
     lv_obj_set_style_text_font(date, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(date, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(date, lv_color_hex(C_DIM()), 0);
     lv_obj_align(date, LV_ALIGN_TOP_LEFT, 0, 48);
 
     // 摘要可能很长 → 放进一个可竖向滚动的容器, 不会盖住关闭键.
@@ -448,7 +448,7 @@ void AppStocks::_showDetail(int row_idx)
     lv_label_set_long_mode(conclusion, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(conclusion, 920);
     lv_obj_set_style_text_font(conclusion, zh_font_lg(), 0);  // 大字号 (30px), 容器可滚动
-    lv_obj_set_style_text_color(conclusion, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(conclusion, lv_color_hex(C_TEXT()), 0);
     lv_obj_set_style_text_line_space(conclusion, 10, 0);
     lv_obj_align(conclusion, LV_ALIGN_TOP_LEFT, 0, 0);
 
@@ -490,20 +490,20 @@ void AppStocks::_refreshUiFromItems()
         if (i < (int)snapshot.size()) {
             const auto& s = snapshot[i];
             char buf[32];
-            _setCellText(_rows[i], 0, s.code.c_str(), C_TEXT);
-            _setCellText(_rows[i], 1, s.name.c_str(), C_TEXT);
+            _setCellText(_rows[i], 0, s.code.c_str(), C_TEXT());
+            _setCellText(_rows[i], 1, s.name.c_str(), C_TEXT());
             snprintf(buf, sizeof(buf), "%.2f", s.price);
-            _setCellText(_rows[i], 2, buf, C_TEXT);
+            _setCellText(_rows[i], 2, buf, C_TEXT());
             snprintf(buf, sizeof(buf), "%+.2f%%", s.chg);
             _setCellText(_rows[i], 3, buf, _chgColor(s.chg));
             snprintf(buf, sizeof(buf), "%+.2f", s.pchg);
             _setCellText(_rows[i], 4, buf, _chgColor(s.chg));
             snprintf(buf, sizeof(buf), "%.2f%%", s.turnover);
-            _setCellText(_rows[i], 5, buf, C_DIM);
+            _setCellText(_rows[i], 5, buf, C_DIM());
             snprintf(buf, sizeof(buf), "%.2f", s.liangbi);
-            _setCellText(_rows[i], 6, buf, C_DIM);
+            _setCellText(_rows[i], 6, buf, C_DIM());
         } else {
-            for (int c = 0; c < 7; c++) _setCellText(_rows[i], c, "--", C_DIM);
+            for (int c = 0; c < 7; c++) _setCellText(_rows[i], c, "--", C_DIM());
         }
     }
     char count_buf[32];

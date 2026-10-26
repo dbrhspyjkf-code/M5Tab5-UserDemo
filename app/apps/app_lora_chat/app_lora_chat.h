@@ -1,4 +1,5 @@
 #pragma once
+#include "../utils/theme/theme.h"
 #include <mooncake.h>
 #include <lvgl.h>
 #include <functional>
@@ -27,15 +28,16 @@ private:
     static constexpr int KB_H = 340;   // 屏幕虚拟键盘高度
 
     // ── Palette ───────────────────────────────────────────────────────────
-    static constexpr uint32_t C_BG        = 0x081522;
-    static constexpr uint32_t C_HEADER    = 0x0D1F35;
-    static constexpr uint32_t C_USER_BUB  = 0x1A4A7A;
-    static constexpr uint32_t C_PEER_BUB  = 0x132A43;
-    static constexpr uint32_t C_INPUT_BG  = 0x102033;
-    static constexpr uint32_t C_TEXT      = 0xEAF3FB;
-    static constexpr uint32_t C_SEND      = 0x1A6B3A;
-    static constexpr uint32_t C_STATUS_OK = 0x2ECC71;
-    static constexpr uint32_t C_STATUS_NG = 0xF39C12;
+    // 配色: 实时读全局主题 (utils/theme/theme.h)
+    static uint32_t C_BG()        { return 0x000000; }
+    static uint32_t C_HEADER()    { return theme::cur().card[1]; }
+    static uint32_t C_USER_BUB()  { return theme::cur().card[0]; }  // 自己气泡: 强调一档
+    static uint32_t C_PEER_BUB()  { return theme::cur().card[2]; }
+    static uint32_t C_INPUT_BG()  { return theme::cur().card[2]; }
+    static uint32_t C_TEXT()      { return theme::cur().text_hi; }
+    static uint32_t C_SEND()      { return theme::cur().press; }
+    static uint32_t C_STATUS_OK() { return theme::cur().ok; }
+    static uint32_t C_STATUS_NG() { return theme::cur().warn; }
 
     // ── UART (PORT.A: GPIO53=RX, GPIO54=TX) ──────────────────────────────
     static constexpr int UART_PORT_NUM = 2;   // UART_NUM_2

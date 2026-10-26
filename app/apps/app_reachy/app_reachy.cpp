@@ -60,14 +60,14 @@ static std::string _format_uptime(int seconds) {
     return out;
 }
 
-static void set_label(lv_obj_t* label, const std::string& text, uint32_t color = kText) {
+static void set_label(lv_obj_t* label, const std::string& text, uint32_t color = kText()) {
     if (!label) return;
     lv_label_set_text(label, text.c_str());
     lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
 }
 
 static lv_obj_t* value_label(lv_obj_t* parent, const char* text, int x, int y,
-                             int width, uint32_t color = kText) {
+                             int width, uint32_t color = kText()) {
     lv_obj_t* label = makeLabel(parent, text, x, y, zh_font_lg(), color);
     lv_obj_set_width(label, width);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
@@ -129,7 +129,7 @@ void AppReachy::onRunning() {
                 _base_reacquire_fails = 0;
                 _last_base_frame_ms = 0;   // first frame leaves immediately
                 mclog::tagInfo(_tag, "base lease acquired: %.16s", lease.session_id.c_str());
-                set_label(_ba_state, "已接管底盘，按住 Deadman 驾驶", kOk);
+                set_label(_ba_state, "已接管底盘，按住 Deadman 驾驶", kOk());
             } else if (lease.ok) {
                 _base_arm_wanted.store(false);
                 // Abandoned mid-flight (page left / disarmed): drop the lease
@@ -140,7 +140,7 @@ void AppReachy::onRunning() {
                 _base_arm_wanted.store(false);
                 _base_reacquire_fails += 1;
                 mclog::tagWarn(_tag, "base acquire failed: %s", lease.error.c_str());
-                set_label(_ba_state, "接管失败：「" + lease.error + "」", kError);
+                set_label(_ba_state, "接管失败：「" + lease.error + "」", kError());
             }
             _baseUpdateControls();
         }
@@ -159,10 +159,10 @@ void AppReachy::onRunning() {
             if (_base_deadman && _base_armed && _base_reacquire_fails < 3 &&
                 !_base_acquire_inflight.load()) {
                 _base_reacquire_fails += 1;
-                set_label(_ba_state, "信号波动，重新接管底盘…", kWarn);
+                set_label(_ba_state, "信号波动，重新接管底盘…", kWarn());
                 _baseStartAcquire(false);
             } else {
-                set_label(_ba_state, "已停车：「" + (err.empty() ? "通信中断" : err) + "」", kError);
+                set_label(_ba_state, "已停车：「" + (err.empty() ? "通信中断" : err) + "」", kError());
                 _baseEndDrive(false);
             }
         }
@@ -218,7 +218,7 @@ void AppReachy::onRunning() {
 void AppReachy::_buildUI() {
     _scr = lv_obj_create(nullptr);
     lv_obj_set_size(_scr, W, H);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(kBg), 0);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(kBg()), 0);
     lv_obj_set_style_bg_opa(_scr, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(_scr, 0, 0);
     lv_obj_set_style_pad_all(_scr, 0, 0);
@@ -262,26 +262,26 @@ void AppReachy::_buildHeader() {
     lv_obj_t* header = lv_obj_create(_scr);
     lv_obj_set_size(header, W, HEADER_H);
     lv_obj_set_pos(header, 0, 0);
-    lv_obj_set_style_bg_color(header, lv_color_hex(kBg), 0);
-    lv_obj_set_style_border_color(header, lv_color_hex(kStroke), 0);
+    lv_obj_set_style_bg_color(header, lv_color_hex(kBg()), 0);
+    lv_obj_set_style_border_color(header, lv_color_hex(kStroke()), 0);
     lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_border_width(header, 1, 0);
     lv_obj_set_style_pad_all(header, 0, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    makeLabel(header, "YRobot 控制台", 28, 17, zh_font_lg(), kText);
-    _hdr_host = makeLabel(header, "等待连接", 290, 20, zh_font_sm(), kTextMuted);
-    _hdr_state = makeStatusPill(header, "连接中…", 1020, 12, 220, zh_font_sm(), kWarn);
+    makeLabel(header, "YRobot 控制台", 28, 17, zh_font_lg(), kText());
+    _hdr_host = makeLabel(header, "等待连接", 290, 20, zh_font_sm(), kTextMuted());
+    _hdr_state = makeStatusPill(header, "连接中…", 1020, 12, 220, zh_font_sm(), kWarn());
 }
 
 void AppReachy::_buildBottomDock() {
-    _bottom_dock = makeSurface(_scr, 16, H - DOCK_H + 8, W - 32, DOCK_H - 16, kSurfaceAlt, 28);
+    _bottom_dock = makeSurface(_scr, 16, H - DOCK_H + 8, W - 32, DOCK_H - 16, kSurfaceAlt(), 28);
     static const char* labels[(int)Tab::Count] = {"概览", "语音", "互动", "相机", "底盘", "维护"};
     const int dock_w = (W - 64) / (int)Tab::Count;
     for (int i = 0; i < (int)Tab::Count; ++i) {
         lv_obj_t* button = makeButton(_bottom_dock, labels[i], i * dock_w + 8, 8,
                                       dock_w - 16, DOCK_H - 32, zh_font_lg(),
-                                      kSurfaceAlt, kTextMuted);
+                                      kSurfaceAlt(), kTextMuted());
         lv_obj_set_style_border_width(button, 0, 0);
         _dock_btns[i] = button;
         auto* ctx = new TabCtx{this, i};
@@ -307,33 +307,33 @@ void AppReachy::_buildOverviewPage() {
     lv_obj_t* page = make_page(_scr);
     _tab_pages[(int)Tab::Overview] = page;
     lv_obj_t* hero = makeSurface(page, 0, 0, 700, 274);
-    makeLabel(hero, "YRobot 状态", 28, 28, zh_font_sm(), kTextMuted);
-    _st_service_state = value_label(hero, "正在检查服务…", 28, 66, 620, kAccent);
+    makeLabel(hero, "YRobot 状态", 28, 28, zh_font_sm(), kTextMuted());
+    _st_service_state = value_label(hero, "正在检查服务…", 28, 66, 620, kAccent());
     lv_obj_set_style_text_font(_st_service_state, zh_font_lg(), 0);
-    _st_uptime = value_label(hero, "连接后显示运行时长", 28, 124, 620, kTextMuted);
-    _st_backend = value_label(hero, "对话后端 —", 28, 174, 620, kText);
-    _st_wake = value_label(hero, "等待语音活动", 28, 218, 620, kTextMuted);
+    _st_uptime = value_label(hero, "连接后显示运行时长", 28, 124, 620, kTextMuted());
+    _st_backend = value_label(hero, "对话后端 —", 28, 174, 620, kText());
+    _st_wake = value_label(hero, "等待语音活动", 28, 218, 620, kTextMuted());
 
     const char* metric_titles[] = {"服务", "摄像头", "语音"};
     lv_obj_t** metric_values[] = {&_st_daemon, &_st_camera_metric, &_st_voice_metric};
     for (int i = 0; i < 3; ++i) {
         lv_obj_t* metric = makeSurface(page, 716, i * 94, 532, 82);
-        makeLabel(metric, metric_titles[i], 20, 15, zh_font_sm(), kTextMuted);
-        *metric_values[i] = value_label(metric, "检查中", 20, 42, 480, kText);
+        makeLabel(metric, metric_titles[i], 20, 15, zh_font_sm(), kTextMuted());
+        *metric_values[i] = value_label(metric, "检查中", 20, 42, 480, kText());
     }
 
     lv_obj_t* volume = makeSurface(page, 0, 290, 292, 268);
     makeLabel(volume, "音量控制", 20, 20, zh_font_lg());
-    makeLabel(volume, "请到语音页调整", 20, 72, zh_font_sm(), kTextMuted);
+    makeLabel(volume, "请到语音页调整", 20, 72, zh_font_sm(), kTextMuted());
     lv_obj_t* mic = makeSurface(page, 308, 290, 292, 268);
     makeLabel(mic, "麦克风", 20, 20, zh_font_lg());
-    makeLabel(mic, "状态将在语音页显示", 20, 72, zh_font_sm(), kTextMuted);
+    makeLabel(mic, "状态将在语音页显示", 20, 72, zh_font_sm(), kTextMuted());
     lv_obj_t* backend = makeSurface(page, 616, 290, 292, 268);
     makeLabel(backend, "对话后端", 20, 20, zh_font_lg());
-    _st_video = value_label(backend, "读取中", 20, 72, 252, kAccent);
+    _st_video = value_label(backend, "读取中", 20, 72, 252, kAccent());
     lv_obj_t* chat = makeSurface(page, 924, 290, 324, 268);
     makeLabel(chat, "最近对话", 20, 20, zh_font_lg());
-    makeLabel(chat, "在“互动”页查看对话记录", 20, 72, zh_font_sm(), kTextMuted);
+    makeLabel(chat, "在“互动”页查看对话记录", 20, 72, zh_font_sm(), kTextMuted());
 }
 
 void AppReachy::_buildVoicePage() {
@@ -342,7 +342,7 @@ void AppReachy::_buildVoicePage() {
 
     lv_obj_t* volume = makeSurface(page, 0, 0, 430, 250);
     makeLabel(volume, "音量", 20, 20, zh_font_lg());
-    _au_volume_lbl = value_label(volume, "—", 20, 66, 250, kAccent);
+    _au_volume_lbl = value_label(volume, "—", 20, 66, 250, kAccent());
     _au_volume_slider = lv_slider_create(volume);
     lv_obj_set_size(_au_volume_slider, 270, 18);
     lv_obj_set_pos(_au_volume_slider, 20, 142);
@@ -355,13 +355,13 @@ void AppReachy::_buildVoicePage() {
 
     lv_obj_t* mic = makeSurface(page, 446, 0, 332, 250);
     makeLabel(mic, "麦克风", 20, 20, zh_font_lg());
-    _au_mic_lbl = value_label(mic, "—", 20, 66, 280, kAccent);
+    _au_mic_lbl = value_label(mic, "—", 20, 66, 280, kAccent());
     _au_mic_btn = makeButton(mic, "启用 Mic", 20, 176, 220, 52, zh_font_lg());
     lv_obj_add_event_cb(_au_mic_btn, _audioEventCb, LV_EVENT_CLICKED, this);
 
     lv_obj_t* server = makeSurface(page, 794, 0, 454, 250);
     makeLabel(server, "后端与音色", 20, 20, zh_font_lg());
-    _ct_backend_state = value_label(server, "读取中", 20, 66, 414, kText);
+    _ct_backend_state = value_label(server, "读取中", 20, 66, 414, kText());
     _ct_xiaozhi_btn = makeButton(server, "XIAOZHI", 20, 120, 178, 52, zh_font_sm());
     _ct_qwen_btn = makeButton(server, "QWEN", 212, 120, 178, 52, zh_font_sm());
     _ct_voice_dropdown = lv_dropdown_create(server);
@@ -375,14 +375,14 @@ void AppReachy::_buildVoicePage() {
 
     lv_obj_t* vad = makeSurface(page, 0, 266, 606, 292);
     makeLabel(vad, "VAD 灵敏度", 20, 20, zh_font_lg());
-    _au_vad_lbl = value_label(vad, "—", 20, 72, 300, kAccent);
+    _au_vad_lbl = value_label(vad, "—", 20, 72, 300, kAccent());
     _au_vad_slider = lv_slider_create(vad);
     lv_obj_set_size(_au_vad_slider, 520, 18);
     lv_obj_set_pos(_au_vad_slider, 20, 142);
     lv_slider_set_range(_au_vad_slider, 1, 500);
     lv_obj_add_event_cb(_au_vad_slider, _audioEventCb, LV_EVENT_VALUE_CHANGED, this);
     lv_obj_add_event_cb(_au_vad_slider, _audioEventCb, LV_EVENT_RELEASED, this);
-    _au_status = value_label(vad, "调整后将在后台同步", 20, 196, 540, kTextMuted);
+    _au_status = value_label(vad, "调整后将在后台同步", 20, 196, 540, kTextMuted());
 
     lv_obj_t* camera = makeSurface(page, 622, 266, 626, 292);
     makeLabel(camera, "相机与视频", 20, 20, zh_font_lg());
@@ -390,7 +390,7 @@ void AppReachy::_buildVoicePage() {
     _ct_video_lbl = lv_obj_get_child(_ct_video_btn, 0);
     _ct_camera_btn = makeButton(camera, "摄像头", 258, 76, 220, 54, zh_font_lg());
     _ct_camera_lbl = lv_obj_get_child(_ct_camera_btn, 0);
-    makeLabel(camera, "开启预览请前往“相机”页", 20, 170, zh_font_sm(), kTextMuted);
+    makeLabel(camera, "开启预览请前往“相机”页", 20, 170, zh_font_sm(), kTextMuted());
     lv_obj_add_event_cb(_ct_video_btn, _controlEventCb, LV_EVENT_CLICKED, this);
     lv_obj_add_event_cb(_ct_camera_btn, _controlEventCb, LV_EVENT_CLICKED, this);
 }
@@ -400,14 +400,14 @@ void AppReachy::_buildInteractionPage() {
     _tab_pages[(int)Tab::Interaction] = page;
     lv_obj_t* motion = makeSurface(page, 0, 0, 1248, 154);
     makeLabel(motion, "动作与注视", 20, 18, zh_font_lg());
-    makeLabel(motion, "模式", 20, 70, zh_font_sm(), kTextMuted);
-    _mo_mode = value_label(motion, "—", 20, 102, 250, kText);
-    makeLabel(motion, "当前动作", 310, 70, zh_font_sm(), kTextMuted);
-    _mo_current = value_label(motion, "—", 310, 102, 260, kAccent);
-    makeLabel(motion, "天线", 600, 70, zh_font_sm(), kTextMuted);
-    _mo_antennas = value_label(motion, "—", 600, 102, 260, kText);
-    makeLabel(motion, "注视", 890, 70, zh_font_sm(), kTextMuted);
-    _mo_gaze = value_label(motion, "—", 890, 102, 330, kText);
+    makeLabel(motion, "模式", 20, 70, zh_font_sm(), kTextMuted());
+    _mo_mode = value_label(motion, "—", 20, 102, 250, kText());
+    makeLabel(motion, "当前动作", 310, 70, zh_font_sm(), kTextMuted());
+    _mo_current = value_label(motion, "—", 310, 102, 260, kAccent());
+    makeLabel(motion, "天线", 600, 70, zh_font_sm(), kTextMuted());
+    _mo_antennas = value_label(motion, "—", 600, 102, 260, kText());
+    makeLabel(motion, "注视", 890, 70, zh_font_sm(), kTextMuted());
+    _mo_gaze = value_label(motion, "—", 890, 102, 330, kText());
     _mo_queue = nullptr;
     _mo_loop = nullptr;
 
@@ -425,11 +425,11 @@ void AppReachy::_buildInteractionPage() {
 void AppReachy::_buildCameraPage() {
     lv_obj_t* page = make_page(_scr);
     _tab_pages[(int)Tab::Camera] = page;
-    lv_obj_t* frame = makeSurface(page, 0, 0, 1248, 490, kSurfaceAlt);
+    lv_obj_t* frame = makeSurface(page, 0, 0, 1248, 490, kSurfaceAlt());
     _vi_image = lv_image_create(frame);
     lv_obj_align(_vi_image, LV_ALIGN_CENTER, 0, -12);
-    _vi_status = makeLabel(frame, "预览已停止。开始后以 2 FPS 接收 JPEG 帧。", 24, 442, zh_font_sm(), kTextMuted);
-    _vi_toggle_btn = makeButton(page, "开始预览", 1004, 506, 244, 52, zh_font_lg(), kAccent, kBg);
+    _vi_status = makeLabel(frame, "预览已停止。开始后以 2 FPS 接收 JPEG 帧。", 24, 442, zh_font_sm(), kTextMuted());
+    _vi_toggle_btn = makeButton(page, "开始预览", 1004, 506, 244, 52, zh_font_lg(), kAccent(), kBg());
     _vi_toggle_lbl = lv_obj_get_child(_vi_toggle_btn, 0);
     lv_obj_add_event_cb(_vi_toggle_btn, _videoToggleCb, LV_EVENT_CLICKED, this);
     makeLabel(page, "相机预览", 0, 514, zh_font_lg());
@@ -443,16 +443,16 @@ void AppReachy::_buildBasePage() {
     // Left: virtual joystick card (560x574).
     lv_obj_t* joy = makeSurface(page, 0, 0, 560, 574);
     makeLabel(joy, "虚拟摇杆", 20, 18, zh_font_lg());
-    makeLabel(joy, "上 = 前进　下 = 后退\n左/右 = 原地转向", 20, 56, zh_font_sm(), kTextMuted);
+    makeLabel(joy, "上 = 前进　下 = 后退\n左/右 = 原地转向", 20, 56, zh_font_sm(), kTextMuted());
     constexpr int PAD_SIZE = 340;
     constexpr int PAD_X = (560 - PAD_SIZE) / 2;
     constexpr int PAD_Y = 170;
-    _ba_joy_pad = makeSurface(joy, PAD_X, PAD_Y, PAD_SIZE, PAD_SIZE, kSurfaceAlt, PAD_SIZE / 2);
-    lv_obj_set_style_border_color(_ba_joy_pad, lv_color_hex(kStroke), 0);
+    _ba_joy_pad = makeSurface(joy, PAD_X, PAD_Y, PAD_SIZE, PAD_SIZE, kSurfaceAlt(), PAD_SIZE / 2);
+    lv_obj_set_style_border_color(_ba_joy_pad, lv_color_hex(kStroke()), 0);
     constexpr int KNOB_SIZE = 96;
     _ba_joy_knob = makeSurface(_ba_joy_pad,
                                (PAD_SIZE - KNOB_SIZE) / 2, (PAD_SIZE - KNOB_SIZE) / 2,
-                               KNOB_SIZE, KNOB_SIZE, kAccentSoft, KNOB_SIZE / 2);
+                               KNOB_SIZE, KNOB_SIZE, kAccentSoft(), KNOB_SIZE / 2);
     // LVGL9 base objects are CLICKABLE by default; the knob must never eat
     // touches aimed at the pad underneath.
     lv_obj_clear_flag(_ba_joy_knob, LV_OBJ_FLAG_CLICKABLE);
@@ -463,21 +463,21 @@ void AppReachy::_buildBasePage() {
     lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_PRESSING, this);
     lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_RELEASED, this);
     lv_obj_add_event_cb(_ba_joy_pad, _baseJoyCb, LV_EVENT_PRESS_LOST, this);
-    _ba_hint = value_label(joy, "按住摇杆即驾驶（集成 Deadman）\n松开立即停车", 20, 500, 516, kTextMuted);
+    _ba_hint = value_label(joy, "按住摇杆即驾驶（集成 Deadman）\n松开立即停车", 20, 500, 516, kTextMuted());
 
     // Right top: status card (672x150).
     lv_obj_t* status = makeSurface(page, 576, 0, 672, 150);
     makeLabel(status, "底盘状态", 20, 16, zh_font_lg());
-    _ba_state  = value_label(status, "未接管", 20, 60, 620, kAccent);
-    _ba_goto   = value_label(status, "Goto 巡航：—", 20, 88, 300, kTextMuted);
-    _ba_gamepad = value_label(status, "物理手柄：—", 340, 88, 300, kTextMuted);
-    _ba_lease  = value_label(status, "远端租约：—", 20, 116, 620, kTextMuted);
+    _ba_state  = value_label(status, "未接管", 20, 60, 620, kAccent());
+    _ba_goto   = value_label(status, "Goto 巡航：—", 20, 88, 300, kTextMuted());
+    _ba_gamepad = value_label(status, "物理手柄：—", 340, 88, 300, kTextMuted());
+    _ba_lease  = value_label(status, "远端租约：—", 20, 116, 620, kTextMuted());
 
     // Arm toggle + emergency stop (row at y=166).
-    _ba_arm_btn = makeButton(page, "启用底盘控制", 576, 166, 400, 90, zh_font_lg(), kAccentSoft);
+    _ba_arm_btn = makeButton(page, "启用底盘控制", 576, 166, 400, 90, zh_font_lg(), kAccentSoft());
     _ba_arm_lbl = lv_obj_get_child(_ba_arm_btn, 0);
     lv_obj_add_event_cb(_ba_arm_btn, _baseArmCb, LV_EVENT_CLICKED, this);
-    _ba_stop_btn = makeButton(page, "紧急停止", 992, 166, 256, 90, zh_font_lg(), kError);
+    _ba_stop_btn = makeButton(page, "紧急停止", 992, 166, 256, 90, zh_font_lg(), kError());
     lv_obj_add_event_cb(_ba_stop_btn, _baseStopCb, LV_EVENT_CLICKED, this);
 
     // Usage / safety card (672x272).
@@ -488,7 +488,7 @@ void AppReachy::_buildBasePage() {
               "· 松开摇杆、离开本页立即零速并释放\n"
               "· Goto 巡航或物理手柄占用时禁止遥控\n"
               "· 最大速度 0.12 m/s，服务端双重限幅",
-              20, 58, zh_font_sm(), kTextMuted);
+              20, 58, zh_font_sm(), kTextMuted());
 }
 
 void AppReachy::_renderBase() {
@@ -499,19 +499,19 @@ void AppReachy::_renderBase() {
         st = _base_status;
     }
     if (!st.ok) {
-        set_label(_ba_goto, "Goto 巡航：未知", kWarn);
-        set_label(_ba_gamepad, "物理手柄：未知", kWarn);
-        set_label(_ba_lease, "远端租约：不可达", kWarn);
+        set_label(_ba_goto, "Goto 巡航：未知", kWarn());
+        set_label(_ba_gamepad, "物理手柄：未知", kWarn());
+        set_label(_ba_lease, "远端租约：不可达", kWarn());
         return;
     }
     set_label(_ba_goto, std::string("Goto 巡航：") + (st.goto_on ? "开启（禁止遥控）" : "关闭"),
-              st.goto_on ? kError : (st.goto_known ? kOk : kWarn));
+              st.goto_on ? kError() : (st.goto_known ? kOk() : kWarn()));
     set_label(_ba_gamepad, std::string("物理手柄：") + (st.gamepad_on ? "占用中" : "空闲"),
-              st.gamepad_on ? kError : (st.gamepad_known ? kOk : kWarn));
+              st.gamepad_on ? kError() : (st.gamepad_known ? kOk() : kWarn()));
     if (_base_session.empty())
-        set_label(_ba_lease, st.lease_active ? "远端租约：他方持有中" : "远端租约：空闲", kTextMuted);
+        set_label(_ba_lease, st.lease_active ? "远端租约：他方持有中" : "远端租约：空闲", kTextMuted());
     else
-        set_label(_ba_lease, "远端租约：本机持有", kOk);
+        set_label(_ba_lease, "远端租约：本机持有", kOk());
 }
 
 void AppReachy::_baseUpdateControls() {
@@ -519,10 +519,10 @@ void AppReachy::_baseUpdateControls() {
         lv_label_set_text(_ba_arm_lbl, _base_armed ? "停用底盘控制" : "启用底盘控制");
     if (_ba_arm_btn)
         lv_obj_set_style_bg_color(_ba_arm_btn,
-            lv_color_hex(_base_armed ? kWarn : kAccentSoft), 0);
+            lv_color_hex(_base_armed ? kWarn() : kAccentSoft()), 0);
     if (_ba_joy_knob)
         lv_obj_set_style_bg_color(_ba_joy_knob,
-            lv_color_hex(_base_deadman && !_base_session.empty() ? kAccent : kAccentSoft), 0);
+            lv_color_hex(_base_deadman && !_base_session.empty() ? kAccent() : kAccentSoft()), 0);
 }
 
 void AppReachy::_baseStartAcquire(bool interlocks) {
@@ -576,7 +576,7 @@ void AppReachy::_baseStartAcquire(bool interlocks) {
     if (!started) {
         _base_acquire_inflight.store(false);
         _base_arm_wanted.store(false);
-        set_label(_ba_state, "无法启动底盘任务", kError);
+        set_label(_ba_state, "无法启动底盘任务", kError());
     }
 }
 
@@ -624,7 +624,7 @@ void AppReachy::_baseEndDrive(bool sendStop) {
     _base_lin = _base_ang = 0.f;
     _base_seq += 1;
     const uint32_t seq = _base_seq;
-    set_label(_ba_state, sendStop ? "已紧急停止" : "已停车并释放底盘", kWarn);
+    set_label(_ba_state, sendStop ? "已紧急停止" : "已停车并释放底盘", kWarn());
     _baseUpdateControls();
     if (_ba_joy_knob)
         lv_obj_set_pos(_ba_joy_knob, (340 - 96) / 2, (340 - 96) / 2);
@@ -644,16 +644,16 @@ void AppReachy::_baseShowArmConfirm() {
     lv_obj_set_style_border_width(bg, 0, 0); lv_obj_set_style_pad_all(bg, 0, 0);
     lv_obj_clear_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(bg, _modalBgCb, LV_EVENT_CLICKED, this);
-    lv_obj_t* dlg = makeSurface(bg, 0, 0, 620, 340, kSurface, 22);
+    lv_obj_t* dlg = makeSurface(bg, 0, 0, 620, 340, kSurface(), 22);
     lv_obj_align(dlg, LV_ALIGN_CENTER, 0, 0);
-    makeLabel(dlg, "接管移动底盘？", 28, 28, zh_font_lg(), kAccent);
+    makeLabel(dlg, "接管移动底盘？", 28, 28, zh_font_lg(), kAccent());
     lv_obj_t* note = makeLabel(dlg,
         "确认机器人周围无人和障碍物。\n"
         "接管后需按住 Deadman 才会移动；\n"
-        "松开立即停车。最大速度 0.12 m/s。", 28, 96, zh_font_sm(), kTextMuted);
+        "松开立即停车。最大速度 0.12 m/s。", 28, 96, zh_font_sm(), kTextMuted());
     lv_obj_set_width(note, 560);
-    lv_obj_t* yes = makeButton(dlg, "确认接管", 28, 236, 258, 62, zh_font_lg(), kError);
-    lv_obj_t* no = makeButton(dlg, "取消", 326, 236, 258, 62, zh_font_lg(), kAccentSoft);
+    lv_obj_t* yes = makeButton(dlg, "确认接管", 28, 236, 258, 62, zh_font_lg(), kError());
+    lv_obj_t* no = makeButton(dlg, "取消", 326, 236, 258, 62, zh_font_lg(), kAccentSoft());
     lv_obj_add_event_cb(yes, _baseArmConfirmYesCb, LV_EVENT_CLICKED, this);
     lv_obj_add_event_cb(no, _baseArmConfirmNoCb, LV_EVENT_CLICKED, this);
 }
@@ -663,17 +663,17 @@ void AppReachy::_buildMaintenancePage() {
     _tab_pages[(int)Tab::Maintenance] = page;
     lv_obj_t* system = makeSurface(page, 0, 0, 610, 144);
     makeLabel(system, "YRobot 服务", 20, 20, zh_font_lg());
-    _sy_state = value_label(system, "检查中", 20, 74, 560, kAccent);
+    _sy_state = value_label(system, "检查中", 20, 74, 560, kAccent());
     lv_obj_t* daemon = makeSurface(page, 626, 0, 622, 144);
     makeLabel(daemon, "Reachy Daemon", 20, 20, zh_font_lg());
-    _sy_daemon = value_label(daemon, "检查中", 20, 74, 574, kAccent);
+    _sy_daemon = value_label(daemon, "检查中", 20, 74, 574, kAccent());
 
     lv_obj_t* actions = makeSurface(page, 0, 160, 1248, 118);
     makeLabel(actions, "维护操作", 20, 18, zh_font_lg());
-    _ct_wake_btn = makeButton(actions, "唤醒 Daemon", 20, 58, 230, 46, zh_font_sm(), kAccentSoft);
-    _ct_sleep_btn = makeButton(actions, "休眠 Daemon", 266, 58, 230, 46, zh_font_sm(), kError);
-    _ct_daemon_restart_btn = makeButton(actions, "重启 Daemon", 512, 58, 230, 46, zh_font_sm(), kError);
-    _sy_restart_btn = makeButton(actions, "重启 YRobot 服务", 758, 58, 300, 46, zh_font_sm(), kError);
+    _ct_wake_btn = makeButton(actions, "唤醒 Daemon", 20, 58, 230, 46, zh_font_sm(), kAccentSoft());
+    _ct_sleep_btn = makeButton(actions, "休眠 Daemon", 266, 58, 230, 46, zh_font_sm(), kError());
+    _ct_daemon_restart_btn = makeButton(actions, "重启 Daemon", 512, 58, 230, 46, zh_font_sm(), kError());
+    _sy_restart_btn = makeButton(actions, "重启 YRobot 服务", 758, 58, 300, 46, zh_font_sm(), kError());
     lv_obj_add_event_cb(_ct_wake_btn, _controlEventCb, LV_EVENT_CLICKED, this);
     lv_obj_add_event_cb(_ct_sleep_btn, _controlEventCb, LV_EVENT_CLICKED, this);
     lv_obj_add_event_cb(_ct_daemon_restart_btn, _controlEventCb, LV_EVENT_CLICKED, this);
@@ -681,10 +681,10 @@ void AppReachy::_buildMaintenancePage() {
 
     lv_obj_t* logs = makeSurface(page, 0, 294, 1248, 264);
     makeLabel(logs, "服务日志", 20, 16, zh_font_lg());
-    _lg_text = value_label(logs, "日志按需加载，不会持续轮询。", 20, 62, 970, kTextMuted);
+    _lg_text = value_label(logs, "日志按需加载，不会持续轮询。", 20, 62, 970, kTextMuted());
     lv_obj_set_width(_lg_text, 960);
     lv_label_set_long_mode(_lg_text, LV_LABEL_LONG_WRAP);
-    _lg_refresh_btn = makeButton(logs, "查看日志", 1014, 16, 210, 48, zh_font_sm(), kAccent, kBg);
+    _lg_refresh_btn = makeButton(logs, "查看日志", 1014, 16, 210, 48, zh_font_sm(), kAccent(), kBg());
     lv_obj_add_event_cb(_lg_refresh_btn, _logsRefreshCb, LV_EVENT_CLICKED, this);
 }
 
@@ -700,9 +700,9 @@ void AppReachy::_selectDestination(Tab t) {
     _active = t;
     for (int i = 0; i < (int)Tab::Count; ++i) {
         const bool selected = i == (int)t;
-        lv_obj_set_style_bg_color(_dock_btns[i], lv_color_hex(selected ? kAccentSoft : kSurfaceAlt), 0);
+        lv_obj_set_style_bg_color(_dock_btns[i], lv_color_hex(selected ? kAccentSoft() : kSurfaceAlt()), 0);
         lv_obj_t* label = lv_obj_get_child(_dock_btns[i], 0);
-        if (label) lv_obj_set_style_text_color(label, lv_color_hex(selected ? kAccent : kTextMuted), 0);
+        if (label) lv_obj_set_style_text_color(label, lv_color_hex(selected ? kAccent() : kTextMuted()), 0);
         if (_tab_pages[i]) {
             if (selected) lv_obj_clear_flag(_tab_pages[i], LV_OBJ_FLAG_HIDDEN);
             else lv_obj_add_flag(_tab_pages[i], LV_OBJ_FLAG_HIDDEN);
@@ -812,23 +812,23 @@ void AppReachy::_refreshHeader() {
     const bool ok = _last_ok;
     if (label) {
         lv_label_set_text(label, ok ? "已连接" : "无法连接");
-        lv_obj_set_style_text_color(label, lv_color_hex(ok ? kOk : kError), 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(ok ? kOk() : kError()), 0);
     }
-    lv_obj_set_style_border_color(_hdr_state, lv_color_hex(ok ? kOk : kError), 0);
+    lv_obj_set_style_border_color(_hdr_state, lv_color_hex(ok ? kOk() : kError()), 0);
 }
 
 void AppReachy::_showOfflineBanner() {
     _last_ok = false;
-    set_label(_st_service_state, "无法连接 YRobot", kError);
-    set_label(_st_uptime, "检查主机地址和网络后重试", kTextMuted);
-    set_label(_st_backend, "—", kTextMuted); set_label(_st_video, "—", kTextMuted);
-    set_label(_st_wake, "—", kTextMuted); set_label(_st_daemon, "—", kTextMuted);
-    set_label(_st_camera_metric, "不可用", kError); set_label(_st_voice_metric, "不可用", kError);
-    set_label(_au_volume_lbl, "—", kTextMuted); set_label(_au_vad_lbl, "—", kTextMuted);
-    set_label(_au_status, "无法连接 YRobot", kError); set_label(_ct_backend_state, "—", kTextMuted);
-    set_label(_mo_mode, "—", kTextMuted); set_label(_mo_current, "—", kTextMuted);
-    set_label(_mo_antennas, "—", kTextMuted); set_label(_mo_gaze, "—", kTextMuted);
-    set_label(_sy_state, "无法连接", kError); set_label(_sy_daemon, "—", kTextMuted);
+    set_label(_st_service_state, "无法连接 YRobot", kError());
+    set_label(_st_uptime, "检查主机地址和网络后重试", kTextMuted());
+    set_label(_st_backend, "—", kTextMuted()); set_label(_st_video, "—", kTextMuted());
+    set_label(_st_wake, "—", kTextMuted()); set_label(_st_daemon, "—", kTextMuted());
+    set_label(_st_camera_metric, "不可用", kError()); set_label(_st_voice_metric, "不可用", kError());
+    set_label(_au_volume_lbl, "—", kTextMuted()); set_label(_au_vad_lbl, "—", kTextMuted());
+    set_label(_au_status, "无法连接 YRobot", kError()); set_label(_ct_backend_state, "—", kTextMuted());
+    set_label(_mo_mode, "—", kTextMuted()); set_label(_mo_current, "—", kTextMuted());
+    set_label(_mo_antennas, "—", kTextMuted()); set_label(_mo_gaze, "—", kTextMuted());
+    set_label(_sy_state, "无法连接", kError()); set_label(_sy_daemon, "—", kTextMuted());
 }
 
 void AppReachy::_renderOverview() {
@@ -837,14 +837,14 @@ void AppReachy::_renderOverview() {
     if (!status.ok) { _showOfflineBanner(); return; }
     _last_ok = true;
     const bool running = status.service_state == "running" || status.service_state == "active";
-    set_label(_st_service_state, running ? "服务正常" : "需要注意", running ? kOk : kWarn);
-    set_label(_st_uptime, "运行 " + _format_uptime(status.uptime_s), kTextMuted);
+    set_label(_st_service_state, running ? "服务正常" : "需要注意", running ? kOk() : kWarn());
+    set_label(_st_uptime, "运行 " + _format_uptime(status.uptime_s), kTextMuted());
     set_label(_st_backend, "对话后端 · " + (status.configured_backend.empty() ? status.runtime_backend : status.configured_backend));
-    set_label(_st_wake, status.wake_active ? "正在响应语音" : "等待语音活动", status.wake_active ? kAccent : kTextMuted);
-    set_label(_st_daemon, status.daemon_available ? "运行中" : "不可用", status.daemon_available ? kOk : kWarn);
-    set_label(_st_camera_metric, status.video_enabled ? "待命" : "已关闭", status.video_enabled ? kOk : kWarn);
-    set_label(_st_voice_metric, status.ws_state == "connected" ? "在线" : "待确认", status.ws_state == "connected" ? kOk : kWarn);
-    set_label(_st_video, status.video_enabled ? "视频服务已开启" : "视频服务已关闭", status.video_enabled ? kAccent : kTextMuted);
+    set_label(_st_wake, status.wake_active ? "正在响应语音" : "等待语音活动", status.wake_active ? kAccent() : kTextMuted());
+    set_label(_st_daemon, status.daemon_available ? "运行中" : "不可用", status.daemon_available ? kOk() : kWarn());
+    set_label(_st_camera_metric, status.video_enabled ? "待命" : "已关闭", status.video_enabled ? kOk() : kWarn());
+    set_label(_st_voice_metric, status.ws_state == "connected" ? "在线" : "待确认", status.ws_state == "connected" ? kOk() : kWarn());
+    set_label(_st_video, status.video_enabled ? "视频服务已开启" : "视频服务已关闭", status.video_enabled ? kAccent() : kTextMuted());
 }
 
 void AppReachy::_renderVoice() {
@@ -854,20 +854,20 @@ void AppReachy::_renderVoice() {
     if (!audio.ok || !control.ok) { _showOfflineBanner(); return; }
     _last_ok = true;
     if (audio.volume_percent < 0) {
-        set_label(_au_volume_lbl, "不可用", kWarn);
+        set_label(_au_volume_lbl, "不可用", kWarn());
     } else {
-        set_label(_au_volume_lbl, std::to_string(audio.volume_percent) + "%", kAccent);
+        set_label(_au_volume_lbl, std::to_string(audio.volume_percent) + "%", kAccent());
         if (audio.volume_percent > 0) _last_nonzero_volume = audio.volume_percent;
         lv_slider_set_value(_au_volume_slider, audio.volume_percent, LV_ANIM_ON);
     }
     if (_au_mute_lbl) lv_label_set_text(_au_mute_lbl, audio.volume_percent == 0 ? "恢复音量" : "静音");
     if (_au_mic_lbl) lv_label_set_text(_au_mic_lbl, audio.mic_input_enabled ? "禁用 Mic" : "启用 Mic");
     char vad[32]; snprintf(vad, sizeof(vad), "%.3f %s", audio.vad_rms_min, audio.vad_unit.c_str());
-    set_label(_au_vad_lbl, vad, kAccent);
+    set_label(_au_vad_lbl, vad, kAccent());
     lv_slider_set_value(_au_vad_slider, (int)(audio.vad_rms_min * 1000.f + .5f), LV_ANIM_ON);
     std::string backend = "配置: " + control.configured_backend + "  ·  运行: " + control.running_backend;
     if (!control.backend_error.empty()) backend += "  ·  " + control.backend_error;
-    set_label(_ct_backend_state, backend, control.backend_error.empty() ? kText : kWarn);
+    set_label(_ct_backend_state, backend, control.backend_error.empty() ? kText() : kWarn());
     if (_ct_video_lbl) lv_label_set_text(_ct_video_lbl, control.video_enabled ? "关闭视频" : "开启视频");
     if (_ct_camera_lbl) lv_label_set_text(_ct_camera_lbl, control.camera_running ? "关闭摄像头" : "开启摄像头");
     if (!control.available_voices.empty()) {
@@ -884,7 +884,7 @@ void AppReachy::_renderVoice() {
     std::lock_guard<std::mutex> lock(_cache_mutex);
     if (_operation_result_ready) {
         set_label(_au_status, _operation_result.ok ? "已同步到 YRobot" : _operation_result.error,
-                  _operation_result.ok ? kOk : kError);
+                  _operation_result.ok ? kOk() : kError());
         _operation_result_ready = false;
     }
 }
@@ -895,7 +895,7 @@ void AppReachy::_renderInteraction() {
     if (!motion.ok) { _showOfflineBanner(); return; }
     _last_ok = true;
     set_label(_mo_mode, motion.mode.empty() ? "—" : motion.mode);
-    set_label(_mo_current, motion.current_move.empty() ? "当前无动作" : motion.current_move, kAccent);
+    set_label(_mo_current, motion.current_move.empty() ? "当前无动作" : motion.current_move, kAccent());
     set_label(_mo_antennas, motion.antennas.empty() ? "—" : motion.antennas);
     char gaze[64]; snprintf(gaze, sizeof(gaze), "%s %.2f rad%s", motion.gaze_source.c_str(), motion.gaze_target_rad, motion.face_detected ? "（人脸）" : "");
     set_label(_mo_gaze, gaze);
@@ -914,7 +914,7 @@ void AppReachy::_renderChat() {
     for (const auto& item : messages) {
         const bool user = item.role == reachy_client::ChatMessage::Role::User;
         lv_obj_t* bubble = makeSurface(_chat_container, 0, 0, 520, LV_SIZE_CONTENT,
-                                       user ? kAccentSoft : kSurface, 18);
+                                       user ? kAccentSoft() : kSurface(), 18);
         lv_obj_set_style_min_height(bubble, 52, 0);
         lv_obj_set_style_shadow_width(bubble, 0, 0);
         lv_obj_align(bubble, user ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_TOP_LEFT, 0, y);
@@ -935,14 +935,14 @@ void AppReachy::_renderMaintenance() {
     if (!sys.ok) { _showOfflineBanner(); return; }
     _last_ok = true;
     std::string service = sys.service + (sys.running ? " · 运行中" : " · 已停止") + " · " + _format_uptime(sys.uptime_s);
-    set_label(_sy_state, service, sys.running ? kOk : kWarn);
+    set_label(_sy_state, service, sys.running ? kOk() : kWarn());
     set_label(_sy_daemon, has_status && status.daemon_available ? status.daemon_state : "状态待确认",
-              has_status && status.daemon_available ? kOk : kWarn);
+              has_status && status.daemon_available ? kOk() : kWarn());
     _renderLogs();
     std::lock_guard<std::mutex> lock(_cache_mutex);
     if (_operation_result_ready) {
         set_label(_sy_state, _operation_result.ok ? "维护请求已发送" : _operation_result.error,
-                  _operation_result.ok ? kOk : kError);
+                  _operation_result.ok ? kOk() : kError());
         _operation_result_ready = false;
     }
 }
@@ -950,17 +950,17 @@ void AppReachy::_renderMaintenance() {
 void AppReachy::_renderLogs() {
     std::string logs;
     { std::lock_guard<std::mutex> lock(_cache_mutex); if (!_has_logs) return; logs = _logs_text; }
-    set_label(_lg_text, logs.empty() ? "无日志" : logs, logs.empty() ? kTextMuted : kText);
+    set_label(_lg_text, logs.empty() ? "无日志" : logs, logs.empty() ? kTextMuted() : kText());
 }
 
 bool AppReachy::_queueOperation(Operation operation) {
     lv_obj_t* status = _active == Tab::Maintenance ? _sy_state : _au_status;
     if (_fetch_inflight.load() || _operation_pending.load()) {
-        set_label(status, "正在处理，请稍候", kWarn);
+        set_label(status, "正在处理，请稍候", kWarn());
         return false;
     }
     { std::lock_guard<std::mutex> lock(_cache_mutex); _pending_operation = std::move(operation); _operation_pending.store(true); }
-    set_label(status, "处理中…", kWarn);
+    set_label(status, "处理中…", kWarn());
     _last_poll_ms = 0;
     return true;
 }
@@ -1009,13 +1009,13 @@ void AppReachy::_pollVideoFrame() {
     });
     if (!started) {
         _video_fetch_inflight.store(false);
-        set_label(_vi_status, "无法启动视频任务", kError);
+        set_label(_vi_status, "无法启动视频任务", kError());
     }
 }
 
 void AppReachy::_renderVideoFrame() {
     { std::lock_guard<std::mutex> lock(_cache_mutex); _video_frame = std::move(_video_pending_frame); }
-    if (_video_frame.empty()) { set_label(_vi_status, "视频连接中断", kError); return; }
+    if (_video_frame.empty()) { set_label(_vi_status, "视频连接中断", kError()); return; }
     _video_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
     _video_dsc.header.cf = LV_COLOR_FORMAT_RAW;
     _video_dsc.header.w = 640; _video_dsc.header.h = 360; _video_dsc.header.stride = 0;
@@ -1023,14 +1023,14 @@ void AppReachy::_renderVideoFrame() {
     _video_dsc.data = reinterpret_cast<const uint8_t*>(_video_frame.data());
     lv_image_set_src(_vi_image, &_video_dsc);
     lv_obj_align(_vi_image, LV_ALIGN_CENTER, 0, -12);
-    set_label(_vi_status, "实时预览  ·  640 × 360  ·  2 FPS", kOk);
+    set_label(_vi_status, "实时预览  ·  640 × 360  ·  2 FPS", kOk());
 }
 
 void AppReachy::_stopVideoPreview() {
     _video_preview_enabled.store(false);
     _last_video_poll_ms = 0;
     if (_vi_toggle_lbl) lv_label_set_text(_vi_toggle_lbl, "开始预览");
-    set_label(_vi_status, "预览已停止。开始后以 2 FPS 接收 JPEG 帧。", kTextMuted);
+    set_label(_vi_status, "预览已停止。开始后以 2 FPS 接收 JPEG 帧。", kTextMuted());
 }
 
 void AppReachy::_confirmAndRestart() {
@@ -1046,13 +1046,13 @@ void AppReachy::_confirmOperation(Operation operation, const char* message) {
     lv_obj_set_style_border_width(bg, 0, 0); lv_obj_set_style_pad_all(bg, 0, 0);
     lv_obj_clear_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(bg, _modalBgCb, LV_EVENT_CLICKED, this);
-    lv_obj_t* dlg = makeSurface(bg, 0, 0, 600, 320, kSurface, 22);
+    lv_obj_t* dlg = makeSurface(bg, 0, 0, 600, 320, kSurface(), 22);
     lv_obj_align(dlg, LV_ALIGN_CENTER, 0, 0);
-    makeLabel(dlg, message, 28, 28, zh_font_lg(), kAccent);
-    lv_obj_t* note = makeLabel(dlg, "此操作可能短暂中断对话或运动。\n确认后将立即发送到 YRobot。", 28, 92, zh_font_sm(), kTextMuted);
+    makeLabel(dlg, message, 28, 28, zh_font_lg(), kAccent());
+    lv_obj_t* note = makeLabel(dlg, "此操作可能短暂中断对话或运动。\n确认后将立即发送到 YRobot。", 28, 92, zh_font_sm(), kTextMuted());
     lv_obj_set_width(note, 540);
-    lv_obj_t* yes = makeButton(dlg, "确认", 28, 224, 246, 60, zh_font_lg(), kError);
-    lv_obj_t* no = makeButton(dlg, "取消", 326, 224, 246, 60, zh_font_lg(), kAccentSoft);
+    lv_obj_t* yes = makeButton(dlg, "确认", 28, 224, 246, 60, zh_font_lg(), kError());
+    lv_obj_t* no = makeButton(dlg, "取消", 326, 224, 246, 60, zh_font_lg(), kAccentSoft());
     lv_obj_add_event_cb(yes, _confirmYesCb, LV_EVENT_CLICKED, this);
     lv_obj_add_event_cb(no, _confirmNoCb, LV_EVENT_CLICKED, this);
 }
@@ -1068,13 +1068,13 @@ void AppReachy::_audioEventCb(lv_event_t* e) {
     const auto code = lv_event_get_code(e);
     if (target == self->_au_volume_slider) {
         const int value = lv_slider_get_value(target);
-        if (code == LV_EVENT_VALUE_CHANGED) set_label(self->_au_volume_lbl, std::to_string(value) + "%", kAccent);
+        if (code == LV_EVENT_VALUE_CHANGED) set_label(self->_au_volume_lbl, std::to_string(value) + "%", kAccent());
         else if (code == LV_EVENT_RELEASED) self->_queueOperation({OperationKind::SetVolume, value});
     } else if (target == self->_au_vad_slider) {
         const int value = lv_slider_get_value(target);
         if (code == LV_EVENT_VALUE_CHANGED) {
             char text[20]; snprintf(text, sizeof(text), "%.3f RMS", value / 1000.f);
-            set_label(self->_au_vad_lbl, text, kAccent);
+            set_label(self->_au_vad_lbl, text, kAccent());
         } else if (code == LV_EVENT_RELEASED) {
             Operation op; op.kind = OperationKind::SetVad; op.float_value = value / 1000.f; self->_queueOperation(op);
         }
@@ -1119,7 +1119,7 @@ void AppReachy::_videoToggleCb(lv_event_t* e) {
     if (self->_video_preview_enabled.load()) { self->_stopVideoPreview(); return; }
     self->_video_preview_enabled.store(true); self->_last_video_poll_ms = 0;
     lv_label_set_text(self->_vi_toggle_lbl, "停止预览");
-    set_label(self->_vi_status, "正在连接视频…", kWarn);
+    set_label(self->_vi_status, "正在连接视频…", kWarn());
 }
 
 void AppReachy::_restartCb(lv_event_t* e) { static_cast<AppReachy*>(lv_event_get_user_data(e))->_confirmAndRestart(); }
@@ -1160,7 +1160,7 @@ void AppReachy::_baseArmCb(lv_event_t* e) {
         self->_baseEndDrive(false);
         self->_base_armed = false;
         self->_base_arm_wanted.store(false);
-        set_label(self->_ba_state, "已停用，未接管", kTextMuted);
+        set_label(self->_ba_state, "已停用，未接管", kTextMuted());
         self->_baseUpdateControls();
         return;
     }
@@ -1174,7 +1174,7 @@ void AppReachy::_baseArmConfirmYesCb(lv_event_t* e) {
     // first Deadman press (iOS L2 semantics — a lease without held frames
     // would just expire against the 250 ms server TTL).
     self->_base_armed = true;
-    set_label(self->_ba_state, "已启用。按住 Deadman 接管底盘", kOk);
+    set_label(self->_ba_state, "已启用。按住 Deadman 接管底盘", kOk());
     self->_baseUpdateControls();
 }
 

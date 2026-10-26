@@ -250,7 +250,7 @@ void AppRfid::_hwInit()
     if (!ack) {
         mclog::tagWarn(TAG, "no ACK from 0x{:02X}", NFC_I2C_ADDR);
         _setStatus("● 未检测到读卡器", false);
-        _setMsg("请把 Unit NFC 插到 PORT A (红色 Grove 口)", C_DIM);
+        _setMsg("请把 Unit NFC 插到 PORT A (红色 Grove 口)", C_DIM());
         return;
     }
 
@@ -279,14 +279,14 @@ void AppRfid::_buildUi()
     LvglLockGuard lock;
 
     _scr = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG()), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     // ── Header ─────────────────────────────────────────────────────────────
     lv_obj_t* header = lv_obj_create(_scr);
     lv_obj_set_size(header, SCREEN_W, HEADER_H);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(header, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_bg_color(header, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_border_width(header, 0, 0);
     lv_obj_set_style_radius(header, 0, 0);
     lv_obj_set_style_pad_all(header, 0, 0);
@@ -295,20 +295,20 @@ void AppRfid::_buildUi()
     lv_obj_t* title = lv_label_create(header);
     lv_label_set_text(title, "RFID Reader");
     lv_obj_set_style_text_font(title, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 24, 0);
 
     _status_lbl = lv_label_create(header);
     lv_label_set_text(_status_lbl, "● 初始化...");
     lv_obj_set_style_text_font(_status_lbl, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(C_DIM()), 0);
     lv_obj_align(_status_lbl, LV_ALIGN_RIGHT_MID, -24, 0);
 
     // ── 左面板: 卡片信息 ─────────────────────────────────────────────────────
     lv_obj_t* left = lv_obj_create(_scr);
     lv_obj_set_size(left, 560, 596);
     lv_obj_align(left, LV_ALIGN_TOP_LEFT, 24, HEADER_H + 20);
-    lv_obj_set_style_bg_color(left, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_bg_color(left, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_radius(left, 16, 0);
     lv_obj_set_style_border_width(left, 0, 0);
     lv_obj_set_style_pad_all(left, 24, 0);
@@ -317,13 +317,13 @@ void AppRfid::_buildUi()
     lv_obj_t* lt = lv_label_create(left);
     lv_label_set_text(lt, "卡片信息");
     lv_obj_set_style_text_font(lt, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(lt, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(lt, lv_color_hex(C_DIM()), 0);
     lv_obj_align(lt, LV_ALIGN_TOP_LEFT, 0, 0);
 
     _hint_lbl = lv_label_create(left);
     lv_label_set_text(_hint_lbl, "将卡片靠近 Unit NFC 读卡器");
     lv_obj_set_style_text_font(_hint_lbl, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(_hint_lbl, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(_hint_lbl, lv_color_hex(C_DIM()), 0);
     lv_obj_align(_hint_lbl, LV_ALIGN_CENTER, 0, 0);
 
     _uid_lbl = lv_label_create(left);
@@ -335,20 +335,20 @@ void AppRfid::_buildUi()
     _type_lbl = lv_label_create(left);
     lv_label_set_text(_type_lbl, "");
     lv_obj_set_style_text_font(_type_lbl, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(_type_lbl, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(_type_lbl, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(_type_lbl, LV_ALIGN_TOP_LEFT, 0, 130);
 
     _proto_lbl = lv_label_create(left);
     lv_label_set_text(_proto_lbl, "");
     lv_obj_set_style_text_font(_proto_lbl, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(_proto_lbl, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(_proto_lbl, lv_color_hex(C_DIM()), 0);
     lv_obj_align(_proto_lbl, LV_ALIGN_TOP_LEFT, 0, 200);
 
     // ── 嘀卡关灯配置: 放卡后点按钮把该卡加入触发卡列表 (后台服务用) ──────────
     lv_obj_t* off_btn = lv_button_create(left);
     lv_obj_set_size(off_btn, 200, 56);
     lv_obj_align(off_btn, LV_ALIGN_TOP_LEFT, 0, 440);
-    lv_obj_set_style_bg_color(off_btn, lv_color_hex(0x8E44AD), 0);
+    lv_obj_set_style_bg_color(off_btn, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_radius(off_btn, 10, 0);
     lv_obj_t* off_btn_l = lv_label_create(off_btn);
     lv_label_set_text(off_btn_l, "设为关灯卡");
@@ -360,7 +360,7 @@ void AppRfid::_buildUi()
     lv_obj_t* off_clr = lv_button_create(left);
     lv_obj_set_size(off_clr, 200, 56);
     lv_obj_align(off_clr, LV_ALIGN_TOP_LEFT, 0, 506);
-    lv_obj_set_style_bg_color(off_clr, lv_color_hex(0x5A7186), 0);
+    lv_obj_set_style_bg_color(off_clr, lv_color_hex(theme::cur().press), 0);
     lv_obj_set_style_radius(off_clr, 10, 0);
     lv_obj_t* off_clr_l = lv_label_create(off_clr);
     lv_label_set_text(off_clr_l, "清空关灯卡");
@@ -371,7 +371,7 @@ void AppRfid::_buildUi()
 
     _offuid_lbl = lv_label_create(left);
     lv_obj_set_style_text_font(_offuid_lbl, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(_offuid_lbl, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(_offuid_lbl, lv_color_hex(C_DIM()), 0);
     lv_obj_align(_offuid_lbl, LV_ALIGN_TOP_LEFT, 216, 452);
     lv_label_set_long_mode(_offuid_lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(_offuid_lbl, 296);
@@ -381,7 +381,7 @@ void AppRfid::_buildUi()
     lv_obj_t* right = lv_obj_create(_scr);
     lv_obj_set_size(right, 648, 596);
     lv_obj_align(right, LV_ALIGN_TOP_LEFT, 608, HEADER_H + 20);
-    lv_obj_set_style_bg_color(right, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_bg_color(right, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_radius(right, 16, 0);
     lv_obj_set_style_border_width(right, 0, 0);
     lv_obj_set_style_pad_all(right, 24, 0);
@@ -390,7 +390,7 @@ void AppRfid::_buildUi()
     lv_obj_t* rt = lv_label_create(right);
     lv_label_set_text(rt, "数据读写 (MIFARE Classic 默认密钥 FF×6)");
     lv_obj_set_style_text_font(rt, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(rt, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(rt, lv_color_hex(C_DIM()), 0);
     lv_obj_align(rt, LV_ALIGN_TOP_LEFT, 0, 0);
 
     // 块地址选择: − [块 4 (扇区 1)] +
@@ -411,7 +411,7 @@ void AppRfid::_buildUi()
 
     _block_lbl = lv_label_create(right);
     lv_obj_set_style_text_font(_block_lbl, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(_block_lbl, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(_block_lbl, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(_block_lbl, LV_ALIGN_TOP_LEFT, 72, 58);
     _updateBlockLabel();
 
@@ -443,14 +443,14 @@ void AppRfid::_buildUi()
         lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, this);
     };
     mk_btn("读取", _readBtn_cb,  0,   theme::cur().accent);
-    mk_btn("写入", _writeBtn_cb, 206, 0x27AE60);
+    mk_btn("写入", _writeBtn_cb, 206, theme::cur().ok);
     mk_btn("清空", _clearBtn_cb, 412, 0x5A7186);
 
     // 关灯设备选择页入口 (从 HA 拉实体勾选, 覆盖内置默认五件套)
     lv_obj_t* pk_btn = lv_button_create(right);
     lv_obj_set_size(pk_btn, 296, 56);
     lv_obj_align(pk_btn, LV_ALIGN_TOP_LEFT, 0, 500);
-    lv_obj_set_style_bg_color(pk_btn, lv_color_hex(0x8E44AD), 0);
+    lv_obj_set_style_bg_color(pk_btn, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_radius(pk_btn, 10, 0);
     lv_obj_t* pk_l = lv_label_create(pk_btn);
     lv_label_set_text(pk_l, "选择关灯设备");
@@ -463,14 +463,14 @@ void AppRfid::_buildUi()
     _hex_lbl = lv_label_create(right);
     lv_label_set_text(_hex_lbl, "--");
     lv_obj_set_style_text_font(_hex_lbl, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(_hex_lbl, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(_hex_lbl, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(_hex_lbl, LV_ALIGN_TOP_LEFT, 0, 300);
 
     // 操作结果提示
     _msg_lbl = lv_label_create(right);
     lv_label_set_text(_msg_lbl, "");
     lv_obj_set_style_text_font(_msg_lbl, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(_msg_lbl, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(_msg_lbl, lv_color_hex(C_DIM()), 0);
     lv_label_set_long_mode(_msg_lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(_msg_lbl, 600);
     lv_obj_align(_msg_lbl, LV_ALIGN_TOP_LEFT, 0, 400);
@@ -570,7 +570,7 @@ void AppRfid::_setStatus(const char* text, bool ok)
 {
     if (!_status_lbl) return;
     lv_label_set_text(_status_lbl, text);
-    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(ok ? C_OK : C_ERR), 0);
+    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(ok ? C_OK() : C_ERR()), 0);
 }
 
 void AppRfid::_setMsg(const char* text, uint32_t color)
@@ -656,7 +656,7 @@ void AppRfid::_clearBtn_cb(lv_event_t* e)
     auto* self = static_cast<AppRfid*>(lv_event_get_user_data(e));
     if (self->_data_ta) lv_textarea_set_text(self->_data_ta, "");
     if (self->_hex_lbl) lv_label_set_text(self->_hex_lbl, "--");
-    self->_setMsg("", C_DIM);
+    self->_setMsg("", C_DIM());
 }
 
 void AppRfid::_setOffCard_cb(lv_event_t* e)
@@ -744,7 +744,7 @@ bool off_entity_contains(const std::vector<std::string>& list, const std::string
 void AppRfid::_saveOffCard()
 {
 #ifndef PLATFORM_BUILD_DESKTOP
-    if (!_card_present) { _setMsg("未检测到卡片, 请先放卡", C_ERR); return; }
+    if (!_card_present) { _setMsg("未检测到卡片, 请先放卡", C_ERR()); return; }
     char hex[24] = {0};
     int off = 0;
     for (int i = 0; i < _uid_len; i++) off += snprintf(hex + off, sizeof(hex) - off, "%02X", _uid[i]);
@@ -752,17 +752,17 @@ void AppRfid::_saveOffCard()
     auto list = off_uid_list();
     for (const auto& u : list) {
         if (u == hex) {
-            _setMsg("这张卡已经在关灯卡列表里", C_DIM);
+            _setMsg("这张卡已经在关灯卡列表里", C_DIM());
             return;
         }
     }
     list.push_back(hex);
     off_uid_save(list);
     _updateOffUidLabel();
-    _setMsg("已加入关灯卡, 后台嘀这张卡即关灯", C_OK);
+    _setMsg("已加入关灯卡, 后台嘀这张卡即关灯", C_OK());
     mclog::tagInfo(TAG, "off-card added: {} (total {})", hex, list.size());
 #else
-    _setMsg("仅 Tab5 真机可用", C_ERR);
+    _setMsg("仅 Tab5 真机可用", C_ERR());
 #endif
 }
 
@@ -772,10 +772,10 @@ void AppRfid::_clearOffCards()
     GetHAL()->setConfig("rfid_off_uids", "");
     GetHAL()->setConfig("rfid_off_uid", "");  // 旧单卡键一并清掉
     _updateOffUidLabel();
-    _setMsg("关灯卡列表已清空", C_OK);
+    _setMsg("关灯卡列表已清空", C_OK());
     mclog::tagInfo(TAG, "off-card list cleared");
 #else
-    _setMsg("仅 Tab5 真机可用", C_ERR);
+    _setMsg("仅 Tab5 真机可用", C_ERR());
 #endif
 }
 
@@ -813,7 +813,7 @@ void AppRfid::_openPicker()
     _picker_page = lv_obj_create(_scr);
     lv_obj_set_size(_picker_page, SCREEN_W, SCREEN_H);
     lv_obj_align(_picker_page, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(_picker_page, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_color(_picker_page, lv_color_hex(C_BG()), 0);
     lv_obj_set_style_border_width(_picker_page, 0, 0);
     lv_obj_set_style_radius(_picker_page, 0, 0);
     lv_obj_clear_flag(_picker_page, LV_OBJ_FLAG_SCROLLABLE);
@@ -821,7 +821,7 @@ void AppRfid::_openPicker()
     lv_obj_t* title = lv_label_create(_picker_page);
     lv_label_set_text(title, "选择关灯设备  (勾选即保存)");
     lv_obj_set_style_text_font(title, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 20);
 
     // 显式返回按钮 — 列表滚动会吃掉上拨手势 (LVGL 滚动物件消耗 drag 后
@@ -829,7 +829,7 @@ void AppRfid::_openPicker()
     lv_obj_t* back = lv_button_create(_picker_page);
     lv_obj_set_size(back, 140, 56);
     lv_obj_align(back, LV_ALIGN_TOP_RIGHT, -24, 10);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0x5A7186), 0);
+    lv_obj_set_style_bg_color(back, lv_color_hex(theme::cur().press), 0);
     lv_obj_set_style_radius(back, 10, 0);
     lv_obj_t* back_l = lv_label_create(back);
     lv_label_set_text(back_l, "返回");
@@ -843,14 +843,14 @@ void AppRfid::_openPicker()
     _picker_status = lv_label_create(_picker_page);
     lv_label_set_text(_picker_status, "正在从 HA 拉取设备列表...");
     lv_obj_set_style_text_font(_picker_status, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(_picker_status, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_color(_picker_status, lv_color_hex(C_DIM()), 0);
     lv_obj_align(_picker_status, LV_ALIGN_TOP_LEFT, 24, 76);
 
     // 滚动容器: 每行一个 lv_checkbox
     _picker_list = lv_obj_create(_picker_page);
     lv_obj_set_size(_picker_list, SCREEN_W - 48, SCREEN_H - 130);
     lv_obj_align(_picker_list, LV_ALIGN_TOP_MID, 0, 116);
-    lv_obj_set_style_bg_color(_picker_list, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_bg_color(_picker_list, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_radius(_picker_list, 16, 0);
     lv_obj_set_style_border_width(_picker_list, 0, 0);
     lv_obj_set_flex_flow(_picker_list, LV_FLEX_FLOW_COLUMN);
@@ -939,7 +939,7 @@ void AppRfid::_rebuildPickerList()
         std::string line = pe.name + "   " + pe.entity_id;
         lv_checkbox_set_text(cb, line.c_str());
         lv_obj_set_style_text_font(cb, zh_font_lg(), 0);  // 30px, 触摸行高随之撑大
-        lv_obj_set_style_text_color(cb, lv_color_hex(C_TEXT), 0);
+        lv_obj_set_style_text_color(cb, lv_color_hex(C_TEXT()), 0);
         if (pe.checked) lv_obj_add_state(cb, LV_STATE_CHECKED);
         lv_obj_set_user_data(cb, (void*)i);  // 行索引跟对象走, event user_data 留给 app
         lv_obj_add_event_cb(cb, _pickerItem_cb, LV_EVENT_VALUE_CHANGED, this);
@@ -972,14 +972,14 @@ void AppRfid::_savePickedEntities()
 void AppRfid::_readBlockNow()
 {
 #ifndef PLATFORM_BUILD_DESKTOP
-    if (!_reader_ok)    { _setMsg("读卡器未连接", C_ERR); return; }
-    if (!_card_present) { _setMsg("未检测到卡片, 请先放卡", C_ERR); return; }
-    if (!_wakeAndSelect()) { _setMsg("卡片激活失败, 请重新放卡", C_ERR); return; }
+    if (!_reader_ok)    { _setMsg("读卡器未连接", C_ERR()); return; }
+    if (!_card_present) { _setMsg("未检测到卡片, 请先放卡", C_ERR()); return; }
+    if (!_wakeAndSelect()) { _setMsg("卡片激活失败, 请重新放卡", C_ERR()); return; }
 
     uint8_t buf[16] = {0};
     if (!_cardReadBlock((uint8_t)_block, buf)) {
         _stHaltA();
-        _setMsg("读取失败 (认证失败或无权限)", C_ERR);
+        _setMsg("读取失败 (认证失败或无权限)", C_ERR());
         return;
     }
     char hex[64]; int off = 0;
@@ -992,23 +992,23 @@ void AppRfid::_readBlockNow()
     _stHaltA();  // 读完回 HALT, 保持轮询检测稳定
     if (_hex_lbl) lv_label_set_text_fmt(_hex_lbl, "%s\n%s", hex, ascii);
     if (_data_ta) lv_textarea_set_text(_data_ta, ascii);
-    _setMsg("读取成功", C_OK);
+    _setMsg("读取成功", C_OK());
 #else
-    _setMsg("仅 Tab5 真机可用", C_ERR);
+    _setMsg("仅 Tab5 真机可用", C_ERR());
 #endif
 }
 
 void AppRfid::_writeBlockNow()
 {
 #ifndef PLATFORM_BUILD_DESKTOP
-    if (!_reader_ok)    { _setMsg("读卡器未连接", C_ERR); return; }
-    if (!_card_present) { _setMsg("未检测到卡片, 请先放卡", C_ERR); return; }
+    if (!_reader_ok)    { _setMsg("读卡器未连接", C_ERR()); return; }
+    if (!_card_present) { _setMsg("未检测到卡片, 请先放卡", C_ERR()); return; }
     if (_block == 0) {
-        _setMsg("块 0 是厂商块 (UID), 禁止写入", C_ERR);
+        _setMsg("块 0 是厂商块 (UID), 禁止写入", C_ERR());
         return;
     }
     if (_classic && _block % 4 == 3) {
-        _setMsg("这是扇区尾块 (存密钥), 写入会锁死扇区, 已拒绝", C_ERR);
+        _setMsg("这是扇区尾块 (存密钥), 写入会锁死扇区, 已拒绝", C_ERR());
         return;
     }
 
@@ -1018,16 +1018,16 @@ void AppRfid::_writeBlockNow()
     if (n > 16) n = 16;
     memcpy(buf, text, n);
 
-    if (!_wakeAndSelect()) { _setMsg("卡片激活失败, 请重新放卡", C_ERR); return; }
+    if (!_wakeAndSelect()) { _setMsg("卡片激活失败, 请重新放卡", C_ERR()); return; }
     if (!_cardWriteBlock((uint8_t)_block, buf)) {
         _stHaltA();
-        _setMsg("写入失败 (认证失败或卡片拒绝)", C_ERR);
+        _setMsg("写入失败 (认证失败或卡片拒绝)", C_ERR());
         return;
     }
-    _setMsg("写入成功, 已回读校验", C_OK);
+    _setMsg("写入成功, 已回读校验", C_OK());
     _readBlockNow();  // 回读显示 (内部会重新激活并 HLTA)
 #else
-    _setMsg("仅 Tab5 真机可用", C_ERR);
+    _setMsg("仅 Tab5 真机可用", C_ERR());
 #endif
 }
 
@@ -1090,7 +1090,7 @@ void AppRfid::_pollTick(lv_timer_t* t)
         self->_card_active = false;
         mclog::tagInfo(TAG, "card removed");
         self->_clearCardInfo();
-        self->_setMsg("卡片已移开", C_DIM);
+        self->_setMsg("卡片已移开", C_DIM());
     }
 #else
     (void)t;
@@ -1487,7 +1487,7 @@ bool AppRfid::_stInit()
     }
     if (!detected) {
         mclog::tagWarn(TAG, "ST25R3916 not detected");
-        _setMsg("ST25R3916 识别失败", C_ERR);
+        _setMsg("ST25R3916 识别失败", C_ERR());
         return false;
     }
 
@@ -1539,7 +1539,7 @@ bool AppRfid::_stInit()
         }
         if (!osc) {
             mclog::tagWarn(TAG, "oscillator failed");
-            _setMsg("振荡器启动失败", C_ERR);
+            _setMsg("振荡器启动失败", C_ERR());
             return false;
         }
     }

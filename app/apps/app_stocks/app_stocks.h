@@ -1,4 +1,5 @@
 #pragma once
+#include "../utils/theme/theme.h"
 #include <mooncake.h>
 #include <lvgl.h>
 #include <functional>
@@ -47,14 +48,15 @@ private:
     static constexpr int N_ROWS      = 10;
 
     // ── Color palette (must match app_home / app_ha) ──────────────────
-    static constexpr uint32_t C_BG       = 0x081522;
-    static constexpr uint32_t C_HEADER   = 0x0D1F35;
-    static constexpr uint32_t C_TEXT     = 0xEAF3FB;
-    static constexpr uint32_t C_DIM      = 0x8AA0B5;
+    // 配色: 实时读全局主题 (utils/theme/theme.h), 函数形式便于调用点零快照
+    static uint32_t C_BG()       { return 0x000000; }
+    static uint32_t C_HEADER()   { return theme::cur().card[1]; }
+    static uint32_t C_TEXT()     { return theme::cur().text_hi; }
+    static uint32_t C_DIM()      { return theme::cur().text_dim; }
     // 中国 A 股惯例: 涨=红, 跌=绿 (与西方相反). LCD 表格 + LED ticker 共用.
-    static constexpr uint32_t C_UP       = 0xE74C3C;  // 涨 → 红
-    static constexpr uint32_t C_DOWN     = 0x2ECC71;  // 跌 → 绿
-    static constexpr uint32_t C_FLAT     = 0x95A5A6;  // 平 → 灰
+    static uint32_t C_UP()       { return theme::cur().danger; }  // 涨 → 红
+    static uint32_t C_DOWN()     { return theme::cur().ok; }      // 跌 → 绿
+    static uint32_t C_FLAT()     { return theme::cur().text_dim; }  // 平 → 灰
 
     // ── LED ────────────────────────────────────────────────────────────
     static constexpr int LED_W = 40;

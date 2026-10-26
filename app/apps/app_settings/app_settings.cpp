@@ -229,12 +229,6 @@ void AppSettings::_buildToolsPage()
     lv_obj_set_style_pad_all(_tools_page, 0, 0);
     lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* title = lv_label_create(_tools_page);
-    lv_label_set_text(title, "工具");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 28);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_text_font(title, zh_font_30(), 0);
-
     // Tool card — same style as the HA "灯光" device cards: dark-blue rounded
     // card with a soft shadow, icon on the left, name on the right.
     // img==nullptr 走"点阵分支": 用 LV_SYMBOL_BULLET 拼一个 6x6 的 LED 矩阵缩略图
@@ -243,7 +237,7 @@ void AppSettings::_buildToolsPage()
     auto make_tile = [&](int x, const lv_image_dsc_t* img, int img_w,
                          const char* label, lv_event_cb_t cb,
                          int img_scale = 256, int icon_x = 12,
-                         int img_scale_y = -1, int y_pos = 140,
+                         int img_scale_y = -1, int y_pos = 120,
                          int kind = 0) {
         lv_obj_t* tile = lv_obj_create(_tools_page);
         lv_obj_set_size(tile, 380, 140);
@@ -394,9 +388,9 @@ void AppSettings::_buildToolsPage()
     make_tile(865, &unit_icon, 130, "单位换算", _toolUnit_cb);
 
     // 第 2 行: 灯阵 (Unit-Puzzle 8x8 WS2812 矩阵测试 App)
-    //   y=140 (第 1 行) + 140 (tile 高) + 30 (行间距) = 310
+    //   y=120 (第 1 行) + 140 (tile 高) + 30 (行间距) = 290
     //   图标走 make_tile 的 nullptr 分支, 用 LV_SYMBOL_BULLET 拼 6x6 LED 缩略图
-    make_tile(35, nullptr, 130, "灯  阵", _toolPuzzle_cb, 256, 12, -1, 310);
+    make_tile(35, nullptr, 130, "灯  阵", _toolPuzzle_cb, 256, 12, -1, 290);
 
     // 第 2 行第 2 列: LoRa 聊天 (Unit C6L SX1262, PORT.A UART)
     //   图标: 4 根逐渐升高的信号柱
@@ -434,20 +428,20 @@ void AppSettings::_buildToolsPage()
     }
 
     // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表)
-    //   y=310 + 140 + 30 = 480, 走 kind=1 信封分支
-    make_tile(35, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 480, 1);
+    //   y=290 + 140 + 30 = 460, 走 kind=1 信封分支
+    make_tile(35, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 460, 1);
 
     // 第 3 行第 2 列: 自选股 (走 hermes :8766/api/stocks/portfolio, mx-selfselect 后端)
     //   stocks_icon 130×130 native, 1:1, 与 lora/fx 同款图片 tile
-    make_tile(450, &stocks_icon, 130, "自选股", _toolStocks_cb, 256, 12, -1, 480);
+    make_tile(450, &stocks_icon, 130, "自选股", _toolStocks_cb, 256, 12, -1, 460);
 
     // 第 3 行第 3 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
     //   reachy_icon 130×130, 与 stocks_icon 同尺寸
-    make_tile(865, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb, 256, 12, -1, 480);
+    make_tile(865, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb, 256, 12, -1, 460);
 
     // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
     //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
-    make_tile(865, nullptr, 130, "RFID", _toolRfid_cb, 256, 12, -1, 310, 2);
+    make_tile(865, nullptr, 130, "RFID", _toolRfid_cb, 256, 12, -1, 290, 2);
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)

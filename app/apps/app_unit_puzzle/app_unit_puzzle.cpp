@@ -342,14 +342,14 @@ void AppUnitPuzzle::_buildUi()
     // 状态行
     _status_lbl = lv_label_create(_scr);
     lv_label_set_text(_status_lbl, "已开启");
-    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(0xEAF3FB), 0);
+    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(theme::cur().text_hi), 0);
     lv_obj_set_style_text_font(_status_lbl, zh_font_30(), 0);
     lv_obj_align(_status_lbl, LV_ALIGN_TOP_MID, 0, 48);
 
     // 诊断信息 (RMT 状态/帧计数/diag mode)
     _diag_lbl = lv_label_create(_scr);
     lv_label_set_text(_diag_lbl, "...");
-    lv_obj_set_style_text_color(_diag_lbl, lv_color_hex(0xFFB300), 0);
+    lv_obj_set_style_text_color(_diag_lbl, lv_color_hex(theme::cur().warn), 0);
     lv_obj_set_style_text_font(_diag_lbl, zh_font_30(), 0);
     lv_obj_set_style_text_align(_diag_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(_diag_lbl, 1200);
@@ -420,11 +420,11 @@ void AppUnitPuzzle::_buildUi()
         lv_obj_t* b = lv_obj_create(_scr);
         lv_obj_set_size(b, 60, 80);
         lv_obj_set_pos(b, x, 600);
-        lv_obj_set_style_bg_color(b, lv_color_hex(0x3A3A3A), 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(theme::cur().card[2]), 0);
         lv_obj_set_style_bg_opa(b, LV_OPA_80, 0);
         lv_obj_set_style_radius(b, 16, 0);
         lv_obj_set_style_border_width(b, 2, 0);
-        lv_obj_set_style_border_color(b, lv_color_hex(0x6A8FB5), 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(theme::cur().border), 0);
         lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         // 按下变深
@@ -458,7 +458,7 @@ void AppUnitPuzzle::_buildUi()
     lv_obj_set_style_bg_opa(power_btn, LV_OPA_80, 0);
     lv_obj_set_style_radius(power_btn, 16, 0);
     lv_obj_set_style_border_width(power_btn, 2, 0);
-    lv_obj_set_style_border_color(power_btn, lv_color_hex(0xFF4444), 0);
+    lv_obj_set_style_border_color(power_btn, lv_color_hex(theme::cur().danger), 0);
     lv_obj_clear_flag(power_btn, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(power_btn, LV_OBJ_FLAG_CLICKABLE);
 
@@ -477,11 +477,11 @@ void AppUnitPuzzle::_buildUi()
     lv_obj_t* diag_btn = lv_obj_create(_scr);
     lv_obj_set_size(diag_btn, 240, 80);
     lv_obj_set_pos(diag_btn, 1000 - 250, 600);  // 紧贴 power 按钮左边
-    lv_obj_set_style_bg_color(diag_btn, lv_color_hex(0x4A3A00), 0);
+    lv_obj_set_style_bg_color(diag_btn, lv_color_hex(theme::cur().card[0]), 0);
     lv_obj_set_style_bg_opa(diag_btn, LV_OPA_80, 0);
     lv_obj_set_style_radius(diag_btn, 16, 0);
     lv_obj_set_style_border_width(diag_btn, 2, 0);
-    lv_obj_set_style_border_color(diag_btn, lv_color_hex(0xFFB300), 0);
+    lv_obj_set_style_border_color(diag_btn, lv_color_hex(theme::cur().warn), 0);
     lv_obj_clear_flag(diag_btn, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(diag_btn, LV_OBJ_FLAG_CLICKABLE);
 
@@ -765,7 +765,7 @@ void AppUnitPuzzle::_showTextInput()
     lv_obj_t* box = lv_obj_create(overlay);
     lv_obj_set_size(box, 900, 320);
     lv_obj_align(box, LV_ALIGN_TOP_MID, 0, 30);
-    lv_obj_set_style_bg_color(box, lv_color_hex(0x1A2A3A), 0);
+    lv_obj_set_style_bg_color(box, lv_color_hex(theme::cur().card[1]), 0);
     lv_obj_set_style_radius(box, 20, 0);
     lv_obj_set_style_border_color(box, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_border_width(box, 2, 0);

@@ -49,7 +49,7 @@ void AppLoraChat::onOpen()
 
     _scr = lv_obj_create(nullptr);
     lv_obj_set_size(_scr, SCREEN_W, SCREEN_H);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG()), 0);
     lv_obj_set_style_bg_opa(_scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_screen_load(_scr);
@@ -86,7 +86,7 @@ void AppLoraChat::onRunning()
         if (sep != std::string::npos) {
             display = msg.substr(0, sep);
             std::string rssi_str = "RSSI " + msg.substr(sep + 1);
-            _setStatus(rssi_str, C_STATUS_OK);
+            _setStatus(rssi_str, C_STATUS_OK());
         }
         if (!display.empty()) {
             _addBubble(false, display);
@@ -127,7 +127,7 @@ void AppLoraChat::_buildUi()
     lv_obj_t* header = lv_obj_create(_scr);
     lv_obj_set_size(header, SCREEN_W, HEADER_H);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(header, lv_color_hex(C_HEADER), 0);
+    lv_obj_set_style_bg_color(header, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_border_width(header, 0, 0);
     lv_obj_set_style_pad_all(header, 0, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
@@ -141,14 +141,14 @@ void AppLoraChat::_buildUi()
     _status_lbl = lv_label_create(header);
     lv_label_set_text(_status_lbl, "初始化中...");
     lv_obj_set_style_text_font(_status_lbl, _font(), 0);
-    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(C_STATUS_NG), 0);
+    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(C_STATUS_NG()), 0);
     lv_obj_align(_status_lbl, LV_ALIGN_RIGHT_MID, -24, 0);
 
     // Chat scroll area
     _chat_scroll = lv_obj_create(_scr);
     lv_obj_set_size(_chat_scroll, SCREEN_W, chat_h);
     lv_obj_align(_chat_scroll, LV_ALIGN_TOP_MID, 0, HEADER_H);
-    lv_obj_set_style_bg_color(_chat_scroll, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_color(_chat_scroll, lv_color_hex(C_BG()), 0);
     lv_obj_set_style_border_width(_chat_scroll, 0, 0);
     lv_obj_set_style_pad_all(_chat_scroll, 0, 0);
     lv_obj_set_scroll_dir(_chat_scroll, LV_DIR_VER);
@@ -172,7 +172,7 @@ void AppLoraChat::_buildUi()
     _input_row = input_row;
     lv_obj_set_size(input_row, SCREEN_W, INPUT_ROW_H);
     lv_obj_align(input_row, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(input_row, lv_color_hex(C_INPUT_BG), 0);
+    lv_obj_set_style_bg_color(input_row, lv_color_hex(C_INPUT_BG()), 0);
     lv_obj_set_style_border_width(input_row, 0, 0);
     lv_obj_set_style_pad_all(input_row, 8, 0);
     lv_obj_clear_flag(input_row, LV_OBJ_FLAG_SCROLLABLE);
@@ -191,7 +191,7 @@ void AppLoraChat::_buildUi()
     lv_obj_set_style_bg_color(_input, lv_color_hex(theme::cur().card[0]), 0);
     lv_obj_set_style_border_width(_input, 0, 0);
     lv_obj_set_style_radius(_input, 12, 0);
-    lv_obj_set_style_text_color(_input, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(_input, lv_color_hex(C_TEXT()), 0);
     lv_obj_set_style_pad_hor(_input, 16, 0);
     lv_obj_set_flex_grow(_input, 1);
 
@@ -203,7 +203,7 @@ void AppLoraChat::_buildUi()
     // Send button
     _send_btn = lv_button_create(input_row);
     lv_obj_set_size(_send_btn, 140, 90);
-    lv_obj_set_style_bg_color(_send_btn, lv_color_hex(C_SEND), 0);
+    lv_obj_set_style_bg_color(_send_btn, lv_color_hex(C_SEND()), 0);
     lv_obj_set_style_radius(_send_btn, 12, 0);
     lv_obj_set_style_border_width(_send_btn, 0, 0);
     lv_obj_set_style_margin_left(_send_btn, 12, 0);
@@ -212,7 +212,7 @@ void AppLoraChat::_buildUi()
     lv_obj_t* send_lbl = lv_label_create(_send_btn);
     lv_label_set_text(send_lbl, "发送");
     lv_obj_set_style_text_font(send_lbl, _font(), 0);
-    lv_obj_set_style_text_color(send_lbl, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(send_lbl, lv_color_hex(C_TEXT()), 0);
     lv_obj_center(send_lbl);
 
     // 屏幕虚拟键盘 (默认隐藏, 点输入框且无实体键盘时弹出). 绑定到 _input.
@@ -255,7 +255,7 @@ void AppLoraChat::_addBubble(bool is_user, const std::string& text)
     lv_obj_t* bubble = lv_obj_create(row);
     lv_obj_set_width(bubble, BUBBLE_MAX_W);
     lv_obj_set_height(bubble, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(bubble, lv_color_hex(is_user ? C_USER_BUB : C_PEER_BUB), 0);
+    lv_obj_set_style_bg_color(bubble, lv_color_hex(is_user ? C_USER_BUB() : C_PEER_BUB()), 0);
     lv_obj_set_style_radius(bubble, 16, 0);
     lv_obj_set_style_pad_all(bubble, 18, 0);
     lv_obj_set_style_border_width(bubble, 0, 0);
@@ -266,7 +266,7 @@ void AppLoraChat::_addBubble(bool is_user, const std::string& text)
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(lbl, BUBBLE_MAX_W - 36);
     lv_obj_set_style_text_font(lbl, _font(), 0);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(C_TEXT()), 0);
 
     lv_obj_update_layout(_chat_panel);
     lv_obj_scroll_to_y(_chat_scroll, LV_COORD_MAX, LV_ANIM_ON);
@@ -343,14 +343,14 @@ void AppLoraChat::_uartInit()
     err = uart_driver_install((uart_port_t)UART_PORT_NUM, UART_BUF_SIZE * 2, 0, 0, nullptr, 0);
     if (err != ESP_OK) {
         mclog::tagError(TAG, "uart_driver_install failed: %d", err);
-        _setStatus("UART 安装失败", C_STATUS_NG);
+        _setStatus("UART 安装失败", C_STATUS_NG());
         return;
     }
     err = uart_param_config((uart_port_t)UART_PORT_NUM, &cfg);
     if (err != ESP_OK) {
         mclog::tagError(TAG, "uart_param_config failed: %d", err);
         uart_driver_delete((uart_port_t)UART_PORT_NUM);
-        _setStatus("UART 配置失败", C_STATUS_NG);
+        _setStatus("UART 配置失败", C_STATUS_NG());
         return;
     }
     err = uart_set_pin((uart_port_t)UART_PORT_NUM, UART_TX_GPIO, UART_RX_GPIO,
@@ -358,17 +358,17 @@ void AppLoraChat::_uartInit()
     if (err != ESP_OK) {
         mclog::tagError(TAG, "uart_set_pin failed: %d", err);
         uart_driver_delete((uart_port_t)UART_PORT_NUM);
-        _setStatus("UART 引脚失败", C_STATUS_NG);
+        _setStatus("UART 引脚失败", C_STATUS_NG());
         return;
     }
 
     _uart_ok = true;
     _task_running = true;
     xTaskCreate(_uartRxTask, "lora_rx", 3072, this, 5, nullptr);
-    _setStatus("等待 C6L...", C_STATUS_NG);
+    _setStatus("等待 C6L...", C_STATUS_NG());
     mclog::tagInfo(TAG, "uart ready");
 #else
-    _setStatus("模拟模式 (echo)", C_STATUS_OK);
+    _setStatus("模拟模式 (echo)", C_STATUS_OK());
 #endif
 }
 

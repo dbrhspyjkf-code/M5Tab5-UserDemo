@@ -1,4 +1,5 @@
 #pragma once
+#include "../utils/theme/theme.h"
 
 /**
  * AppRfid — RFID Reader 工具 App, 读写 M5Stack Unit NFC U216 (ST25R3916, I2C 0x50).
@@ -44,12 +45,13 @@ private:
     static constexpr int SCREEN_W = 1280;
     static constexpr int SCREEN_H = 720;
     static constexpr int HEADER_H = 72;
-    static constexpr uint32_t C_BG     = 0x081522;
-    static constexpr uint32_t C_HEADER = 0x0D1F35;
-    static constexpr uint32_t C_TEXT   = 0xEAF3FB;
-    static constexpr uint32_t C_DIM    = 0x8AA0B5;
-    static constexpr uint32_t C_OK     = 0x2ECC71;
-    static constexpr uint32_t C_ERR    = 0xE74C3C;
+    // 配色: 实时读全局主题 (utils/theme/theme.h)
+    static uint32_t C_BG()     { return 0x000000; }
+    static uint32_t C_HEADER() { return theme::cur().card[1]; }
+    static uint32_t C_TEXT()   { return theme::cur().text_hi; }
+    static uint32_t C_DIM()    { return theme::cur().text_dim; }
+    static uint32_t C_OK()     { return theme::cur().ok; }
+    static uint32_t C_ERR()    { return theme::cur().danger; }
 
     static constexpr uint8_t NFC_I2C_ADDR = 0x50;  // Unit NFC U216 (ST25R3916)
 
