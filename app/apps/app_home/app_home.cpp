@@ -11,6 +11,10 @@
 #include "../app_voice_input/app_voice_input.h"
 #include "../app_ha/ha_weather.h"
 #include "../app_settings/app_settings.h"
+#include "../utils/datetime/lunar_calendar.h"
+#ifndef PLATFORM_BUILD_DESKTOP
+#include "../utils/assets/assets_partition.h"
+#endif
 
 static const std::string _tag = "app-home";
 
@@ -28,21 +32,41 @@ static const lv_font_t* zh_font_lg()
     static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
     return f;
 }
+// 20px 小字（OPi 详情卡的模块文字）— 放在 res 分区 (pack_assets.py)
+static const lv_font_t* zh_font_sm()
+{
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_20");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+    }();
+    return f;
+}
+// 24px 中间号（仪表卡正文, 介于 20 与 30 之间）— 同在 res 分区
+static const lv_font_t* zh_font_md()
+{
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_24");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+    }();
+    return f;
+}
 #else
 extern "C" const lv_font_t font_puhui_20_4;
 static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
+static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
+static const lv_font_t* zh_font_md() { return &font_puhui_20_4; }
 #endif
-
-// 28px Chinese font (same visual size as lv_font_montserrat_28) for the status bar.
-extern lv_font_t font_zh_28;
 
 // Bold Chinese font (STHeiti Medium, 40px) for the home buttons — defined in
 // app/apps/app_home/font_zh_bold.c (glyphs: 智能家居小设置 + ASCII).
 extern lv_font_t font_zh_bold;
 
-// Home background image (1280x720 RGB565) defined in app/assets/images/home_bg.c
-// (LVGL image descriptors use a plain top-level symbol — same name in C and C++.)
+// Home background image (1280x720 RGB565) — desktop-sim only! On device the
+// bitmap lives in the "assets" flash partition (see onOpen); this C array is
+// unreferenced there and dropped by the linker.
+#ifdef PLATFORM_BUILD_DESKTOP
 extern const lv_image_dsc_t home_bg;
+#endif
 
 AppHome::AppHome()
 {
@@ -77,8 +101,34 @@ void AppHome::onOpen()
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     // Full-screen background image (created first → stays at the bottom layer).
+    // On device the 1280x720 RGB565 bitmap lives in the "assets" flash partition
+    // (mmap'd in place, packed by pack_assets.py); the linked C array is only
+    // the desktop-sim fallback, so it must not be referenced on device or the
+    // linker would keep the 1.8MB rodata copy.
     lv_obj_t* bg = lv_image_create(_scr);
+#ifdef PLATFORM_BUILD_DESKTOP
     lv_image_set_src(bg, &home_bg);
+#else
+    {
+        size_t bg_size = 0;
+        const uint8_t* bg_data = assets_part::find("home_bg", &bg_size);
+        if (bg_data && bg_size >= 1280 * 720 * 2) {
+            static lv_image_dsc_t dsc;  // outlives the widget; data is stable mmap
+            dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+            dsc.header.cf    = LV_COLOR_FORMAT_RGB565;
+            dsc.header.w     = 1280;
+            dsc.header.h     = 720;
+            dsc.header.stride = 1280 * 2;
+            dsc.data_size    = 1280 * 720 * 2;
+            dsc.data         = bg_data;
+            lv_image_set_src(bg, &dsc);
+        } else {
+            // assets.img not flashed — dark fallback keeps the screen usable
+            lv_obj_set_style_bg_color(bg, lv_color_hex(0x0D1B2A), 0);
+            lv_obj_set_size(bg, 0, 0);
+        }
+    }
+#endif
     lv_obj_set_pos(bg, 0, 0);
     lv_obj_remove_flag(bg, LV_OBJ_FLAG_CLICKABLE);
 
@@ -136,6 +186,123 @@ void AppHome::onOpen()
         lv_obj_add_event_cb(btn, _btn_event_cb, LV_EVENT_CLICKED, &bd);
     }
 
+    // ── Dashboard info cards, floating over the artwork ──────────────────
+    // Left column: GLM/DeepSeek card above, Apple 提醒/日程 card below (hermes
+    // /agenda, bridged from the Mac). Right edge: OrangePi 详情竖卡
+    // (/system/status, 参考 Mac 的 orange-pi.widget: 负载/CPU/内存/交换/磁盘/
+    // 温度 + 阈值变色条). Opaque enough to keep text clear of the artwork
+    // behind (80% + dark navy + soft glow edge).
+    auto dash_card = [&](int x, int y, int w, int h) {
+        lv_obj_t* card = lv_obj_create(_scr);
+        lv_obj_set_pos(card, x, y);
+        lv_obj_set_size(card, w, h);
+        lv_obj_set_style_bg_color(card, lv_color_hex(0x07111E), 0);
+        lv_obj_set_style_bg_opa(card, LV_OPA_70, 0);
+        lv_obj_set_style_border_width(card, 2, 0);
+        lv_obj_set_style_border_color(card, lv_color_hex(0x5BD5FF), 0);
+        lv_obj_set_style_border_opa(card, LV_OPA_70, 0);
+        lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_shadow_width(card, 22, 0);
+        lv_obj_set_style_shadow_opa(card, LV_OPA_50, 0);
+        lv_obj_set_style_radius(card, 18, 0);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_clear_flag(card, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+        return card;
+    };
+    auto dash_line = [&](lv_obj_t* card, int y) {
+        lv_obj_t* l = lv_label_create(card);
+        lv_obj_set_style_text_font(l, zh_font_md(), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(0xEAF3FB), 0);
+        lv_label_set_text(l, "--");
+        lv_obj_set_pos(l, 20, y);
+        return l;
+    };
+    {   // 左列: GLM / DeepSeek（上）+ 提醒/日程（下）
+        lv_obj_t* card = dash_card(56, 312, 400, 124);
+        _dash_glm = dash_line(card, 18);
+        _dash_ds  = dash_line(card, 62);
+        card = dash_card(56, 452, 400, 124);
+        _dash_ag1 = dash_line(card, 18);
+        _dash_ag2 = dash_line(card, 62);
+    }
+    {   // 右缘: OrangePi 详情竖卡（全卡 24px + 变色进度条）
+        lv_obj_t* card = dash_card(944, 176, 280, 400);
+
+        _opi_dot = lv_obj_create(card);
+        lv_obj_set_size(_opi_dot, 12, 12);
+        lv_obj_set_pos(_opi_dot, 20, 24);
+        lv_obj_set_style_radius(_opi_dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(0x34D399), 0);
+        lv_obj_set_style_bg_opa(_opi_dot, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(_opi_dot, 0, 0);
+        lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(0x34D399), 0);
+        lv_obj_set_style_shadow_width(_opi_dot, 8, 0);
+        lv_obj_clear_flag(_opi_dot, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+
+        lv_obj_t* title = lv_label_create(card);
+        lv_obj_set_style_text_font(title, zh_font_md(), 0);
+        lv_obj_set_style_text_color(title, lv_color_hex(0xF0F0F5), 0);
+        lv_label_set_text(title, "OPi");
+        lv_obj_set_pos(title, 40, 15);
+
+        _opi_uptime = lv_label_create(card);
+        lv_obj_set_style_text_font(_opi_uptime, zh_font_md(), 0);
+        lv_obj_set_style_text_color(_opi_uptime, lv_color_hex(0x8FA8C4), 0);
+        lv_label_set_text(_opi_uptime, "--");
+        lv_obj_align(_opi_uptime, LV_ALIGN_TOP_RIGHT, -18, 15);
+
+        _opi_ip = lv_label_create(card);
+        lv_obj_set_style_text_font(_opi_ip, zh_font_md(), 0);
+        lv_obj_set_style_text_color(_opi_ip, lv_color_hex(0x8FA8C4), 0);
+        lv_label_set_text(_opi_ip, "--");
+        lv_obj_set_pos(_opi_ip, 20, 56);
+
+        // 模块行: [label 24px 淡色] ....... [value 24px 亮色右对齐] + 进度条
+        static const char* const MOD_LABELS[5] = {"负载", "CPU", "内存", "交换", "磁盘"};
+        auto mod_at = [&](int i, int y) -> OpiModule& {
+            OpiModule& m = _opi_mod[i];
+            lv_obj_t* lbl = lv_label_create(card);
+            lv_obj_set_style_text_font(lbl, zh_font_md(), 0);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(0x8FA8C4), 0);
+            lv_label_set_text(lbl, MOD_LABELS[i]);
+            lv_obj_set_pos(lbl, 20, y + 2);
+            m.val = lv_label_create(card);
+            lv_obj_set_style_text_font(m.val, zh_font_md(), 0);
+            lv_obj_set_style_text_color(m.val, lv_color_hex(0xEAF3FB), 0);
+            lv_label_set_text(m.val, "--");
+            lv_obj_align(m.val, LV_ALIGN_TOP_RIGHT, -18, y + 2);
+            m.bar = lv_bar_create(card);
+            lv_obj_set_size(m.bar, 240, 8);
+            lv_obj_set_pos(m.bar, 20, y + 36);
+            lv_bar_set_range(m.bar, 0, 100);
+            lv_obj_set_style_bg_color(m.bar, lv_color_hex(0x122B47), 0);
+            lv_obj_set_style_bg_opa(m.bar, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(m.bar, 4, 0);
+            lv_obj_set_style_radius(m.bar, 4, LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(m.bar, lv_color_hex(0x34D399), LV_PART_INDICATOR);
+            lv_obj_set_style_bg_opa(m.bar, LV_OPA_COVER, LV_PART_INDICATOR);
+            return m;
+        };
+        mod_at(0, 92);    // 负载
+        mod_at(1, 144);   // CPU
+        mod_at(2, 196);   // 内存
+        mod_at(3, 248);   // 交换
+        mod_at(4, 300);   // 磁盘
+
+        // 温度行（无进度条, 数值按阈值变色）
+        lv_obj_t* tl = lv_label_create(card);
+        lv_obj_set_style_text_font(tl, zh_font_md(), 0);
+        lv_obj_set_style_text_color(tl, lv_color_hex(0x8FA8C4), 0);
+        lv_label_set_text(tl, "温度");
+        lv_obj_set_pos(tl, 20, 354 + 2);
+        _opi_temp = lv_label_create(card);
+        lv_obj_set_style_text_font(_opi_temp, zh_font_md(), 0);
+        lv_obj_set_style_text_color(_opi_temp, lv_color_hex(0x34D399), 0);
+        lv_label_set_text(_opi_temp, "--℃");
+        lv_obj_align(_opi_temp, LV_ALIGN_TOP_RIGHT, -18, 354);
+    }
+    _last_dash_ms = 0;  // force first fetch on next onRunning tick
+
     // ── Top system status bar (clock / WiFi / battery) ──
     lv_obj_t* sbar = lv_obj_create(_scr);
     lv_obj_set_pos(sbar, 0, 0);
@@ -148,14 +315,15 @@ void AppHome::onOpen()
     lv_obj_clear_flag(sbar, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
     _status_time = lv_label_create(sbar);
-    lv_obj_set_style_text_font(_status_time, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_font(_status_time, &lv_font_montserrat_30, 0);
     lv_obj_set_style_text_color(_status_time, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(_status_time, "--:--");
     lv_obj_align(_status_time, LV_ALIGN_LEFT_MID, 28, 0);
 
-    // Date — to the right of the clock, same size as time (28px Chinese font).
+    // Date — to the right of the clock. Full GB2312 font (30px, slightly taller
+    // than the 28px montserrat clock) so lunar glyphs never need a subset regen.
     _status_date = lv_label_create(sbar);
-    lv_obj_set_style_text_font(_status_date, &font_zh_28, 0);
+    lv_obj_set_style_text_font(_status_date, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_status_date, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(_status_date, "");
     lv_obj_align(_status_date, LV_ALIGN_LEFT_MID, 138, 0);
@@ -173,12 +341,12 @@ void AppHome::onOpen()
     lv_obj_align(wbox, LV_ALIGN_CENTER, 0, 0);
 
     _status_wtemp = lv_label_create(wbox);
-    lv_obj_set_style_text_font(_status_wtemp, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_font(_status_wtemp, &lv_font_montserrat_30, 0);
     lv_obj_set_style_text_color(_status_wtemp, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(_status_wtemp, "");
 
     _status_wcond = lv_label_create(wbox);
-    lv_obj_set_style_text_font(_status_wcond, &font_zh_28, 0);
+    lv_obj_set_style_text_font(_status_wcond, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_status_wcond, lv_color_hex(0x4FA3FF), 0);
     lv_label_set_text(_status_wcond, "");
 
@@ -253,10 +421,13 @@ void AppHome::onRunning()
     snprintf(buf, sizeof(buf), "%02d:%02d", lt.tm_hour, lt.tm_min);
     lv_label_set_text(_status_time, buf);
 
-    // Date (Chinese)
+    // Date (Chinese) + lunar date, e.g. "10月25日 周日 农历九月十六".
     static const char* const wd[] = {"日", "一", "二", "三", "四", "五", "六"};
-    char dbuf[40];
-    snprintf(dbuf, sizeof(dbuf), "%d月%d日 周%s", lt.tm_mon + 1, lt.tm_mday, wd[lt.tm_wday]);
+    char dbuf[64];
+    int n = snprintf(dbuf, sizeof(dbuf), "%d月%d日 周%s", lt.tm_mon + 1, lt.tm_mday, wd[lt.tm_wday]);
+    char lbuf[24];
+    if (n > 0 && lunar::format_lunar_date(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lbuf, sizeof(lbuf)))
+        snprintf(dbuf + n, sizeof(dbuf) - n, " 农历%s", lbuf);
     lv_label_set_text(_status_date, dbuf);
 
     // WiFi
@@ -334,6 +505,22 @@ void AppHome::onRunning()
             lv_obj_set_style_text_color(_status_email, lv_color_hex(c), 0);
         }
     }
+
+    // Dashboard cards — poll hermes every 60s. All four endpoints are
+    // server-side caches (ms-fast), the worker does the HTTP off the UI loop.
+    if (_last_dash_ms == 0 || now - _last_dash_ms > 60 * 1000) {
+        _last_dash_ms = now;
+        _fetch_dashboard();
+    }
+    {
+        std::lock_guard<std::mutex> lk(_dash_mutex);
+        if (_dash_glm) lv_label_set_text(_dash_glm, _dash_glm_txt.c_str());
+        if (_dash_ds)  lv_label_set_text(_dash_ds,  _dash_ds_txt.c_str());
+        if (_dash_ag1) lv_label_set_text(_dash_ag1, _dash_ag1_txt.c_str());
+        if (_dash_ag2) lv_label_set_text(_dash_ag2, _dash_ag2_txt.c_str());
+
+        if (_opi_mod[0].val) _updateOpiWidgets();
+    }
 }
 
 void AppHome::_fetch_weather()
@@ -365,6 +552,143 @@ void AppHome::_fetch_weather()
             _weather_cond = ha_weather::condZh(st);
         } catch (...) {}
     });
+}
+
+void AppHome::_fetch_dashboard()
+{
+    // Four cached endpoints on the OrangePi hermes service (port 8766, the
+    // same machine as email-status-server via svc_host):
+    //   /glm/quota            → {ok, remaining_pct, level, reset_ms}
+    //   /api/deepseek/balance → {ok, total_balance, currency}
+    //   /agenda               → {ok, next:{text}, second:{text}|null}  (Apple
+    //                          提醒/日程, Mac 桥接: CalDAV + remindctl)
+    //   /system/status        → {host, load, memory, disk[], thermal} (OPi 详情卡)
+    // Worker only writes strings/_opi; any failure leaves that card at "--".
+    std::string base = "http://" + GetHAL()->getConfig("svc_host", "192.168.1.200") + ":8766";
+    GetHAL()->tryRunDetached([this, base]() {
+        // → parsed json on {"ok": true, ...}, null json on any failure
+        auto pick = [](const std::string& body) -> nlohmann::json {
+            try {
+                auto j = nlohmann::json::parse(body);
+                if (j.value("ok", false)) return j;
+            } catch (...) {}
+            return nlohmann::json();
+        };
+        auto sub = [](const nlohmann::json& j, const char* key) -> nlohmann::json {
+            return j.is_object() && j.contains(key) && j[key].is_object() ? j[key] : nlohmann::json::object();
+        };
+
+        std::string glm_txt = "GLM --", ds_txt = "DeepSeek --";
+        std::string ag1, ag2;
+
+        if (auto j = pick(GetHAL()->httpGet(base + "/glm/quota").body); !j.is_null()) {
+            std::string lvl = j.value("level", std::string());
+            if (!lvl.empty() && lvl[0] >= 'a' && lvl[0] <= 'z') lvl[0] -= 32;
+            glm_txt = "GLM " + lvl + " 剩" + std::to_string(j.value("remaining_pct", 0)) + "%";
+        }
+        if (auto j = pick(GetHAL()->httpGet(base + "/api/deepseek/balance").body); !j.is_null()) {
+            ds_txt = "DeepSeek " + j.value("total_balance", std::string("?")) + "元";
+        }
+        OpiData od;
+        if (auto j = pick(GetHAL()->httpGet(base + "/system/status").body); !j.is_null()) {
+            od.ok     = true;
+            od.ip     = sub(j, "host").value("ip", std::string());
+            od.uptime = sub(j, "host").value("uptime_human", std::string());
+            auto ld = sub(j, "load");
+            od.load1  = ld.value("load1", 0.0);
+            od.load5  = ld.value("load5", 0.0);
+            od.load15 = ld.value("load15", 0.0);
+            od.cpu    = ld.value("cpu_percent", 0.0);
+            auto mm = sub(j, "memory");
+            od.mem_pct   = mm.value("percent", 0.0);
+            od.swap_pct  = mm.value("swap_percent", 0.0);
+            od.mem_used_a = (int)(mm.value("used_mb", 0.0) / 102.4 + 0.5);  // GB×10
+            od.mem_tot_a  = (int)(mm.value("total_mb", 0.0) / 102.4 + 0.5);
+            nlohmann::json dk = nlohmann::json::object();
+            if (j.contains("disk") && j["disk"].is_array() && !j["disk"].empty()
+                && j["disk"][0].is_object())
+                dk = j["disk"][0];
+            od.disk_pct  = dk.value("percent", 0.0);
+            od.disk_used = (int)(dk.value("used_gb", 0.0) + 0.5);
+            od.disk_tot  = (int)(dk.value("total_gb", 0.0) + 0.5);
+            auto th = sub(j, "thermal");
+            od.temp = th.value("cpu_temp_c", 0.0);
+            if (th.contains("fan_rpm") && th["fan_rpm"].is_number())
+                od.fan_rpm = th["fan_rpm"].get<int>();
+        }
+        if (auto j = pick(GetHAL()->httpGet(base + "/agenda").body); !j.is_null()) {
+            if (j.contains("next") && j["next"].is_object())  ag1 = j["next"].value("text", std::string());
+            if (j.contains("second") && j["second"].is_object())
+                ag2 = j["second"].value("text", std::string());
+        }
+
+        std::lock_guard<std::mutex> lk(_dash_mutex);
+        _dash_glm_txt = glm_txt;
+        _dash_ds_txt  = ds_txt;
+        _dash_ag1_txt = ag1.empty() ? "今日无提醒/行程" : ag1;
+        _dash_ag2_txt = ag2;
+        _opi          = od;
+    });
+}
+
+void AppHome::_updateOpiWidgets()
+{
+    char v[48];
+    auto tier = [](double pct, double warn, double danger) -> uint32_t {
+        if (pct >= danger) return 0xEF4444;   // red
+        if (pct >= warn)   return 0xFBBF24;   // amber
+        return 0x34D399;                      // green
+    };
+    auto set_bar = [&](lv_obj_t* bar, double pct, double warn, double danger) {
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        lv_bar_set_value(bar, (int)(pct + 0.5), LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(bar, lv_color_hex(tier(pct, warn, danger)), LV_PART_INDICATOR);
+    };
+
+    if (!_opi.ok) {
+        for (auto& m : _opi_mod) {
+            lv_label_set_text(m.val, "--");
+            lv_bar_set_value(m.bar, 0, LV_ANIM_OFF);
+        }
+        lv_label_set_text(_opi_uptime, "--");
+        lv_label_set_text(_opi_ip, "--");
+        lv_label_set_text(_opi_temp, "--");
+        lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(0xEF4444), 0);
+        lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(0xEF4444), 0);
+        return;
+    }
+    lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(0x34D399), 0);
+    lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(0x34D399), 0);
+    lv_label_set_text(_opi_uptime, _opi.uptime.c_str());
+    lv_label_set_text(_opi_ip, _opi.ip.c_str());
+
+    // 负载（条取 load1/4 核 ≈ 100%，与 Mac widget 一致）
+    snprintf(v, sizeof(v), "%.2f %.2f %.2f", _opi.load1, _opi.load5, _opi.load15);
+    lv_label_set_text(_opi_mod[0].val, v);
+    set_bar(_opi_mod[0].bar, _opi.load1 / 4.0 * 100.0, 60, 80);
+
+    snprintf(v, sizeof(v), "%.1f%%", _opi.cpu);
+    lv_label_set_text(_opi_mod[1].val, v);
+    set_bar(_opi_mod[1].bar, _opi.cpu, 60, 80);
+
+    snprintf(v, sizeof(v), "%d.%d/%dG %.0f%%", _opi.mem_used_a / 10, _opi.mem_used_a % 10,
+             (_opi.mem_tot_a + 5) / 10, _opi.mem_pct);
+    lv_label_set_text(_opi_mod[2].val, v);
+    set_bar(_opi_mod[2].bar, _opi.mem_pct, 70, 85);
+
+    snprintf(v, sizeof(v), "%.0f%%", _opi.swap_pct);
+    lv_label_set_text(_opi_mod[3].val, v);
+    set_bar(_opi_mod[3].bar, _opi.swap_pct, 70, 85);
+
+    snprintf(v, sizeof(v), "%d/%dG %.0f%%", _opi.disk_used, _opi.disk_tot, _opi.disk_pct);
+    lv_label_set_text(_opi_mod[4].val, v);
+    set_bar(_opi_mod[4].bar, _opi.disk_pct, 70, 85);
+
+    if (_opi.fan_rpm >= 0) snprintf(v, sizeof(v), "%.0f℃ %d", _opi.temp, _opi.fan_rpm);
+    else                   snprintf(v, sizeof(v), "%.0f℃ 被动", _opi.temp);
+    lv_label_set_text(_opi_temp, v);
+    lv_obj_set_style_text_color(_opi_temp, lv_color_hex(tier(_opi.temp, 60, 75)), 0);
 }
 
 void AppHome::onClose()

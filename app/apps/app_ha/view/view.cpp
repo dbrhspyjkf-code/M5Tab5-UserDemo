@@ -16,14 +16,14 @@ using namespace ha_view;
 // subset fonts (~135 chars) that boxed any char outside the subset.
 //   zh_font_lg() — 30px, replaces the old 36px font_zh_36
 //   zh_font_sm() — 20px, replaces the old 18px font_zh_18
-// On device these are cbin blobs used in-place from flash (no big RAM copy);
-// on the desktop sim we fall back to the linked 20px C-array font.
+// On device 30px is an embedded cbin blob used in-place from flash; the 20px
+// blob lives in the "assets" partition (mmap'd in-place, packed by
+// pack_assets.py). On the desktop sim we fall back to the linked 20px C-array.
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
+#include "../../utils/assets/assets_partition.h"
 extern const uint8_t font_puhui_common_30_4_bin_start[]
     asm("_binary_font_puhui_common_30_4_bin_start");
-extern const uint8_t font_puhui_common_20_4_bin_start[]
-    asm("_binary_font_puhui_common_20_4_bin_start");
 static const lv_font_t* zh_font_lg()
 {
     static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
@@ -31,7 +31,10 @@ static const lv_font_t* zh_font_lg()
 }
 static const lv_font_t* zh_font_sm()
 {
-    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_20_4_bin_start);
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_20");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+    }();
     return f;
 }
 #else

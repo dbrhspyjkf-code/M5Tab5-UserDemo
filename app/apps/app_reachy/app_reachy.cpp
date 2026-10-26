@@ -17,16 +17,19 @@ static const std::string _tag = "reachy";
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
 #include <esp_heap_caps.h>
+#include "../utils/assets/assets_partition.h"
 extern const uint8_t font_puhui_common_30_4_bin_start[]
     asm("_binary_font_puhui_common_30_4_bin_start");
-extern const uint8_t font_puhui_common_20_4_bin_start[]
-    asm("_binary_font_puhui_common_20_4_bin_start");
 static const lv_font_t* zh_font_lg() {
     static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
     return f;
 }
 static const lv_font_t* zh_font_sm() {
-    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_20_4_bin_start);
+    // 20px 全字库放 assets 分区 (pack_assets.py), mmap 原址使用
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_20");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+    }();
     return f;
 }
 static void ensure_reachy_lvgl_pool() {

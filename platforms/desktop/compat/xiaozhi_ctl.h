@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 // Desktop simulator stub of the tab5 xiaozhi_core control API.
 // The real implementation lives in
 // platforms/tab5/components/xiaozhi_core/xiaozhi_ctl.{h,cc} and drives the
@@ -20,6 +21,7 @@ void xiaozhi_suspend(void);
 void xiaozhi_resume(void);
 void xiaozhi_set_battery_percent(int percent);
 int  xiaozhi_get_battery_percent(void);
+bool xiaozhi_codec_write(const int16_t* data, int samples);  // 桌面 stub: 无音频
 void xiaozhi_set_speaker_volume(int volume);
 int  xiaozhi_get_speaker_volume(void);
 bool xiaozhi_is_active(void);

@@ -1,8 +1,10 @@
-# Name,   Type, SubType, Offset,  Size, Flags
-# Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap,,,,
+# Name,   Type, SubType, Offset,   Size,   Flags
+# 2026-10-25 重分区: 删除闲置的 human_face_det(400K); factory 11M->9M (app 瘦身后
+# ~6.6M, 余量 26%); res 4M (放 home_bg + 20px 字体, pack_assets.py 打包, 标签避开 xiaozhi 的 assets 分区,
+# 镜像 ~2.94M); 尾部 0xD90000..0x1000000 约 2.4M 预留 (未来扩 factory 或加 OTA).
+# nvs/phy 偏移未动 — 重刷分区表不会丢 NVS 里的配置 (仍建议先备份).
 nvs,data,nvs,0x9000,0x6000,
 phy_init,data,phy,0xf000,0x1000,
-factory,app,factory,0x10000,11M,
-human_face_det,data,spiffs,,400K,
-assets,data,spiffs,,2M,
-model,data,spiffs,,512K,
+factory,app,factory,0x10000,9M,
+res,data,spiffs,0x910000,0x580000,
+model,data,spiffs,0xe90000,512K,

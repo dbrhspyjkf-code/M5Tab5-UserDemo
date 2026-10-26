@@ -51,6 +51,10 @@ void xiaozhi_set_battery_percent(int percent);
 /** Read the last value set by xiaozhi_set_battery_percent(). */
 int  xiaozhi_get_battery_percent(void);
 
+/** 原始 PCM 直写扬声器(24kHz mono s16le, 阻塞式)。内部幂等 EnableOutput。
+ *  收音机等外部 PCM 流用; 与 xiaozhi TTS 共用同一输出通道。 */
+bool xiaozhi_codec_write(const int16_t* data, int samples);
+
 /** Set speaker output volume (0-100) via the Application audio codec. */
 void xiaozhi_set_speaker_volume(int volume);
 

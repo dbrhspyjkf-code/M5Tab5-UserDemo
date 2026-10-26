@@ -1,6 +1,7 @@
 #include "app_idle_screen.h"
 #include "../app_home/app_home.h"
 #include "../app_voice_input/app_voice_input.h"
+#include "../utils/datetime/lunar_calendar.h"
 #include <hal/hal.h>
 #include <cstdio>
 #include <ctime>
@@ -61,6 +62,12 @@ void AppIdleScreen::onPause()
 
 void AppIdleScreen::onRunning()
 {
+    // 独占模式抑制(收音机等): 已显示则收起, 不再弹出
+    if (_suppressed) {
+        if (_overlay) _hide();
+        return;
+    }
+
     // Don't cover an in-progress voice-input session (recording / result overlay).
     if (AppVoiceInput::isMicActive()) {
         if (_overlay) _hide();
@@ -83,6 +90,12 @@ void AppIdleScreen::onRunning()
         return;
     }
     _updateClock();
+}
+
+void AppIdleScreen::setSuppressed(bool s)
+{
+    _suppressed = s;
+    if (s && _overlay) _hide();
 }
 
 void AppIdleScreen::_show()
@@ -172,8 +185,11 @@ void AppIdleScreen::_updateClock()
     lv_label_set_text(_time_lbl, tbuf);
 
     static const char* const wd[] = {"日", "一", "二", "三", "四", "五", "六"};
-    char dbuf[40];
-    snprintf(dbuf, sizeof(dbuf), "%d月%d日 周%s", lt.tm_mon + 1, lt.tm_mday, wd[lt.tm_wday]);
+    char dbuf[64];
+    int n = snprintf(dbuf, sizeof(dbuf), "%d月%d日 周%s", lt.tm_mon + 1, lt.tm_mday, wd[lt.tm_wday]);
+    char lbuf[24];
+    if (n > 0 && lunar::format_lunar_date(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lbuf, sizeof(lbuf)))
+        snprintf(dbuf + n, sizeof(dbuf) - n, " 农历%s", lbuf);
     lv_label_set_text(_date_lbl, dbuf);
 
     std::string temp, cond;

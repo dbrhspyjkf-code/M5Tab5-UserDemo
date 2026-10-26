@@ -24,13 +24,12 @@ static const char* TAG = "rfid";
 #include "../utils/audio/audio.h"                 // audio::play_tone (嘀卡提示音)
 #endif
 
-// ── 中文字体 (与 app_stocks 同一套: 真机 flash cbin blob, 桌面回退 20px C 数组) ──
+// ── 中文字体 (与 app_stocks 同一套: 30px 内嵌 cbin, 20px assets 分区, 桌面回退 C 数组) ──
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
+#include "../utils/assets/assets_partition.h"
 extern const uint8_t font_puhui_common_30_4_bin_start[]
     asm("_binary_font_puhui_common_30_4_bin_start");
-extern const uint8_t font_puhui_common_20_4_bin_start[]
-    asm("_binary_font_puhui_common_20_4_bin_start");
 static const lv_font_t* zh_font_lg()
 {
     static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
@@ -38,7 +37,11 @@ static const lv_font_t* zh_font_lg()
 }
 static const lv_font_t* zh_font_sm()
 {
-    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_20_4_bin_start);
+    // 20px 全字库放 assets 分区 (pack_assets.py), mmap 原址使用
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_20");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+    }();
     return f;
 }
 #else

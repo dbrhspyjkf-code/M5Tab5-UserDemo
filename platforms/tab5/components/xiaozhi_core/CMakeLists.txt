@@ -90,9 +90,9 @@ file(GLOB COMMON_SOUNDS "${XZ}/assets/common/*.ogg")
 # Full-coverage Chinese chat font (GB2312 common ~3500 glyphs). The builtin
 # font_puhui_basic only has a small subset, so LLM replies render as boxes.
 # cbin font data is used in-place from flash (no big RAM copy).
+# (The 20px small-label variant moved to the "assets" partition — packed by
+# platforms/tab5/tools/pack_assets.py, loaded via app/apps/utils/assets/.)
 set(CHAT_FONT_BIN "${CMAKE_CURRENT_SOURCE_DIR}/../../managed_components/78__xiaozhi-fonts/cbin/font_puhui_common_30_4.bin")
-# Smaller 20px variant for HA app small labels (replaces subset font_zh_18).
-set(CHAT_FONT_BIN_20 "${CMAKE_CURRENT_SOURCE_DIR}/../../managed_components/78__xiaozhi-fonts/cbin/font_puhui_common_20_4.bin")
 
 # ── Include directories ───────────────────────────────────────────────────
 set(BSP_PRIV "${CMAKE_CURRENT_SOURCE_DIR}/../m5stack_tab5/priv_include")
@@ -113,7 +113,7 @@ set(INCLUDE_DIRS
 
 idf_component_register(
     SRCS            ${SOURCES}
-    EMBED_FILES     ${LANG_SOUNDS} ${COMMON_SOUNDS} ${CHAT_FONT_BIN} ${CHAT_FONT_BIN_20}
+    EMBED_FILES     ${LANG_SOUNDS} ${COMMON_SOUNDS} ${CHAT_FONT_BIN}
     INCLUDE_DIRS    ${INCLUDE_DIRS}
     WHOLE_ARCHIVE
     PRIV_REQUIRES

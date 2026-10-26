@@ -21,6 +21,7 @@
 #include "app_email_led/app_email_led.h"
 #include "app_stocks/app_stocks.h"
 #include "app_rfid/app_rfid.h"
+#include "app_radio/app_radio.h"
 #include "app_idle_screen/app_idle_screen.h"
 #include "xiaozhi_ctl.h"
 /* Header files locator (Don't remove) */
@@ -80,6 +81,9 @@ inline void on_install_apps()
     auto rf_uptr = std::make_unique<AppRfid>();
     AppRfid* rfid = rf_uptr.get();
 
+    auto ra_uptr = std::make_unique<AppRadio>();
+    AppRadio* radio = ra_uptr.get();
+
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
 
@@ -93,6 +97,7 @@ inline void on_install_apps()
     int st_id = mooncake::GetMooncake().installApp(std::move(st_uptr));
     int re_id = mooncake::GetMooncake().installApp(std::move(re_uptr));
     int rf_id = mooncake::GetMooncake().installApp(std::move(rf_uptr));
+    int ra_id = mooncake::GetMooncake().installApp(std::move(ra_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
@@ -119,6 +124,10 @@ inline void on_install_apps()
     rfid->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+    // 收音机是主页入口(非工具页), 关闭直接回主屏
+    radio->setCloseCallback([home]() { home->restoreScreen(); });
+    // 独占模式: 收音机打开期间抑制屏保(流媒体 app, 不被时钟遮盖/省轮询)
+    radio->setSuppressor([idle](bool s) { idle->setSuppressed(s); });
 
     // 灯阵入口放到「工具」页第 2 行 (由 AppSettings 持有), 不再占 home 一格.
     settings->setPuzzleAppId(up_id);
@@ -159,6 +168,7 @@ inline void on_install_apps()
     home->addApp("智能家居", ha_id);
     home->addApp("小  智", xz_id);
     home->addApp("工  具", set_id);
+    home->addApp("收音机", ra_id);
     /* Install app locator (Don't remove) */
 
     // ── Voice input WorkerAbility (always-on, not a user-launchable app) ──

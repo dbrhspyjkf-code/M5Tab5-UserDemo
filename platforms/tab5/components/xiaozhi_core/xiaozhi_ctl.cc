@@ -119,6 +119,19 @@ extern "C" void xiaozhi_set_speaker_volume(int volume)
     if (codec) codec->SetOutputVolume(volume);
 }
 
+extern "C" bool xiaozhi_codec_write(const int16_t* data, int samples)
+{
+    if (!s_initialized) return false;
+    auto* codec = Board::GetInstance().GetAudioCodec();
+    if (!codec || data == nullptr || samples <= 0) return false;
+    codec->EnableOutput(true);
+    // OutputData 吃 vector: 复用一块静态缓冲, 避免每块堆分配(单写入线程)
+    static std::vector<int16_t> buf;
+    buf.assign(data, data + samples);
+    codec->OutputData(buf);
+    return true;
+}
+
 extern "C" int xiaozhi_get_speaker_volume(void)
 {
     if (!s_initialized) return 70;

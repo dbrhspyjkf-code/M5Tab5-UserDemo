@@ -20,13 +20,13 @@ static const char* TAG = "stocks";
 // ── 全覆盖中文字体 (与 app_ha/view, app_settings 一致) ────────────────────────
 //   stock_row_font() 36px (标题/表头/数据行), zh_font_sm() 20px (状态/按钮).
 //   股票字体只包含表格常用字符，未知股票名自动回退到 30px 全字库。
-//   设备上是 flash 里的 cbin blob 原地用; 桌面回退到链接进来的 20px C 数组字体.
+//   30px 是固件内嵌 cbin blob; 20px 从 assets 分区 mmap 原址加载
+//   (pack_assets.py 打包); 桌面回退到链接进来的 20px C 数组字体.
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
+#include "../utils/assets/assets_partition.h"
 extern const uint8_t font_puhui_common_30_4_bin_start[]
     asm("_binary_font_puhui_common_30_4_bin_start");
-extern const uint8_t font_puhui_common_20_4_bin_start[]
-    asm("_binary_font_puhui_common_20_4_bin_start");
 static const lv_font_t* zh_font_lg()
 {
     static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
@@ -34,7 +34,10 @@ static const lv_font_t* zh_font_lg()
 }
 static const lv_font_t* zh_font_sm()
 {
-    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_20_4_bin_start);
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_20");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+    }();
     return f;
 }
 #else

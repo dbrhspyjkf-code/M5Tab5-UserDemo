@@ -17,6 +17,11 @@ public:
     // that instead of running a second HTTP poller.
     void setHomeApp(AppHome* home) { _home = home; }
     void dismiss();
+    // 独占模式: 收音机等流媒体 app 打开期间抑制屏保(不弹时钟遮盖 + 省其轮询)
+    void setSuppressed(bool s);
+private:
+    bool _suppressed = false;
+public:
 
     void onCreate()  override;
     void onResume()  override;

@@ -77,6 +77,39 @@ private:
     std::mutex  _weather_mutex;
     void _fetch_weather();
 
+    // Home dashboard cards, all fed by the hermes service on svc_host:8766.
+    // Left column (above the app buttons): top card GLM/DeepSeek, bottom card
+    // Apple 提醒/日程 (/agenda). Right edge: OrangePi 详情竖卡 (/system/status,
+    // 参考 Mac 的 orange-pi.widget). Same pattern as the weather: a detached
+    // worker writes strings/struct, onRunning copies them to widgets.
+    lv_obj_t*  _dash_glm = nullptr;
+    lv_obj_t*  _dash_ds  = nullptr;
+    lv_obj_t*  _dash_ag1 = nullptr;
+    lv_obj_t*  _dash_ag2 = nullptr;
+    uint32_t   _last_dash_ms = 0;
+    std::string _dash_glm_txt, _dash_ds_txt, _dash_ag1_txt, _dash_ag2_txt;
+
+    struct OpiModule { lv_obj_t* val = nullptr; lv_obj_t* bar = nullptr; };
+    OpiModule  _opi_mod[5] = {};    // 负载 / CPU / 内存 / 交换 / 磁盘
+    lv_obj_t*  _opi_uptime = nullptr;
+    lv_obj_t*  _opi_ip     = nullptr;
+    lv_obj_t*  _opi_temp   = nullptr;  // "48℃ 被动"
+    lv_obj_t*  _opi_dot    = nullptr;  // header 状态点
+
+    struct OpiData {
+        bool ok = false;
+        std::string ip, uptime;
+        double load1 = 0, load5 = 0, load15 = 0, cpu = 0;
+        double mem_pct = 0, swap_pct = 0, disk_pct = 0, temp = 0;
+        int mem_used_a = 0, mem_tot_a = 0;  // GB×10, 保留 1 位小数
+        int disk_used = 0, disk_tot = 0;    // GB 整数
+        int fan_rpm = -1;                   // -1 = 无风扇数据(被动)
+    };
+    OpiData    _opi;                  // guarded by _dash_mutex
+    std::mutex  _dash_mutex;
+    void _fetch_dashboard();
+    void _updateOpiWidgets();  // 把 _opi 刷进右缘 OPi 卡; 调用方需已持有 _dash_mutex
+
     // Weather detail popup (tap the status-bar weather). A worker fetches the
     // full HA weather entity + daily forecast into _wx_text; onRunning copies it
     // into the _wx_body label once _wx_ready flips.

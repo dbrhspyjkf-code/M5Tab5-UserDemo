@@ -16,6 +16,7 @@ void xiaozhi_suspend(void) {}
 void xiaozhi_resume(void) {}
 void xiaozhi_set_battery_percent(int percent) { s_batt_pct = percent; }
 int  xiaozhi_get_battery_percent(void) { return s_batt_pct; }
+bool xiaozhi_codec_write(const int16_t*, int) { return false; }  // 桌面无音频输出
 void xiaozhi_set_speaker_volume(int volume) { s_volume = volume; }
 int  xiaozhi_get_speaker_volume(void) { return s_volume; }
 bool xiaozhi_is_active(void) { return false; }

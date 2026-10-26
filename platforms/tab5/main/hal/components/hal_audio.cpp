@@ -264,15 +264,15 @@ hal::HalBase::MicTestState_t HalEsp32::getHeadphoneMicRecordTestState()
 /* -------------------------------------------------------------------------- */
 /*                               Music play test                              */
 /* -------------------------------------------------------------------------- */
-extern const uint8_t canon_in_d_mp3_start[] asm("_binary_canon_in_d_mp3_start");
-extern const uint8_t canon_in_d_mp3_end[] asm("_binary_canon_in_d_mp3_end");
+extern const uint8_t speaker_test_mp3_start[] asm("_binary_speaker_test_mp3_start");
+extern const uint8_t speaker_test_mp3_end[] asm("_binary_speaker_test_mp3_end");
 extern const uint8_t startup_sfx_mp3_start[] asm("_binary_startup_sfx_mp3_start");
 extern const uint8_t startup_sfx_mp3_end[] asm("_binary_startup_sfx_mp3_end");
 extern const uint8_t shutdown_sfx_mp3_start[] asm("_binary_shutdown_sfx_mp3_start");
 extern const uint8_t shutdown_sfx_mp3_end[] asm("_binary_shutdown_sfx_mp3_end");
 
 enum Mp3PlayTarget_t {
-    MP3_PLAY_TARGET_CANON_IN_D,
+    MP3_PLAY_TARGET_SPEAKER_TEST,
     MP3_PLAY_TARGET_STARTUP_SFX,
     MP3_PLAY_TARGET_SHUTDOWN_SFX,
 };
@@ -281,7 +281,7 @@ struct MusicTestData_t {
     std::mutex mutex;
     bool killSignal                      = false;
     hal::HalBase::MusicPlayState_t state = hal::HalBase::MUSIC_PLAY_IDLE;
-    Mp3PlayTarget_t target               = MP3_PLAY_TARGET_CANON_IN_D;
+    Mp3PlayTarget_t target               = MP3_PLAY_TARGET_SPEAKER_TEST;
 };
 static MusicTestData_t _music_test_data;
 
@@ -325,9 +325,9 @@ static void _music_play_task(void* param)
     size_t mp3_size = 0;
     FILE* fp        = nullptr;
     switch (_music_test_data.target) {
-        case MP3_PLAY_TARGET_CANON_IN_D:
-            mp3_size = (canon_in_d_mp3_end - canon_in_d_mp3_start) - 1;
-            fp       = fmemopen((void*)canon_in_d_mp3_start, mp3_size, "rb");
+        case MP3_PLAY_TARGET_SPEAKER_TEST:
+            mp3_size = (speaker_test_mp3_end - speaker_test_mp3_start) - 1;
+            fp       = fmemopen((void*)speaker_test_mp3_start, mp3_size, "rb");
             break;
         case MP3_PLAY_TARGET_STARTUP_SFX:
             mp3_size = (startup_sfx_mp3_end - startup_sfx_mp3_start) - 1;
@@ -383,7 +383,7 @@ void try_create_music_play_task(Mp3PlayTarget_t target)
 void HalEsp32::startPlayMusicTest()
 {
     std::lock_guard<std::mutex> lock(_music_test_data.mutex);
-    try_create_music_play_task(MP3_PLAY_TARGET_CANON_IN_D);
+    try_create_music_play_task(MP3_PLAY_TARGET_SPEAKER_TEST);
 }
 
 hal::HalBase::MusicPlayState_t HalEsp32::getMusicPlayTestState()
