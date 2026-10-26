@@ -730,6 +730,7 @@ void AppPlayer::_artFetchTask(AppPlayer* self)
         heap_caps_free(buf);
         self->_art_fetching.store(false);
         self->_art_retry_ms = GetHAL()->millis() + 10000;   // 10s 后重试
+        self->_art_key.clear();   // 关键: 清键让下轮轮询重新触发(否则 pic==key 永不重试)
         return;
     }
     // 发布:换下旧缓冲,置就绪标志(LVGL 线程在 _pollEntity 消费)
