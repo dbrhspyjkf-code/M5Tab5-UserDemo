@@ -96,10 +96,10 @@ void AppHome::onOpen()
 
     // Buttons laid out in a single row along the bottom of the screen.
     const int n = (int)_apps.size();
-    static constexpr int BTN_H      = 96;
+    static constexpr int BTN_H      = 76;
     static constexpr int BTN_GAP    = 30;
     static constexpr int SIDE_PAD   = 60;   // left/right margin
-    static constexpr int BOTTOM_PAD = 36;   // gap from the bottom edge
+    static constexpr int BOTTOM_PAD = 28;   // gap from the bottom edge
 
     int avail_w = 1280 - 2 * SIDE_PAD - (n - 1) * BTN_GAP;
     int btn_w   = n > 0 ? avail_w / n : avail_w;
@@ -312,7 +312,7 @@ void AppHome::onOpen()
     }
     {   // 04 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
-        lv_obj_t* card = row_card(364, 204, theme::cur().card[3], theme::cur().border);
+        lv_obj_t* card = row_card(364, 240, theme::cur().card[3], theme::cur().border);
 
         _opi_dot = lv_obj_create(card);
         lv_obj_set_size(_opi_dot, 12, 12);
@@ -334,7 +334,7 @@ void AppHome::onOpen()
         static const int CELL_W    = 220;
         auto mod_at = [&](int i) -> OpiModule& {
             OpiModule& m = _opi_mod[i];
-            int x = CELL_X[i % 3], y = (i / 3) == 0 ? 66 : 138;
+            int x = CELL_X[i % 3], y = (i / 3) == 0 ? 70 : 148;
             lv_obj_t* lbl = lv_label_create(card);
             lv_obj_set_style_text_font(lbl, zh_font_md(), 0);
             lv_obj_set_style_text_color(lbl, lv_color_hex(theme::cur().text_dim), 0);
@@ -349,7 +349,7 @@ void AppHome::onOpen()
             lv_obj_set_style_text_align(m.val, LV_TEXT_ALIGN_RIGHT, 0);
             m.bar = lv_bar_create(card);
             lv_obj_set_size(m.bar, CELL_W, 10);
-            lv_obj_set_pos(m.bar, x, y + 40);
+            lv_obj_set_pos(m.bar, x, y + 44);
             lv_bar_set_range(m.bar, 0, 100);
             lv_obj_set_style_bg_color(m.bar, lv_color_hex(theme::cur().track), 0);
             lv_obj_set_style_bg_opa(m.bar, LV_OPA_COVER, 0);
@@ -366,19 +366,19 @@ void AppHome::onOpen()
         lv_obj_set_style_text_font(tl, zh_font_md(), 0);
         lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_dim), 0);
         lv_label_set_text(tl, "温度");
-        lv_obj_set_pos(tl, CELL_X[2], 138 + 2);
+        lv_obj_set_pos(tl, CELL_X[2], 148 + 2);
         _opi_temp = lv_label_create(card);
         lv_obj_set_style_text_font(_opi_temp, zh_font_md(), 0);
         lv_obj_set_style_text_color(_opi_temp, lv_color_hex(theme::cur().ok), 0);
         lv_label_set_text(_opi_temp, "--℃");
-        lv_obj_set_pos(_opi_temp, CELL_X[2], 138 + 2);
+        lv_obj_set_pos(_opi_temp, CELL_X[2], 148 + 2);
         lv_obj_set_width(_opi_temp, CELL_W);
         lv_obj_set_style_text_align(_opi_temp, LV_TEXT_ALIGN_RIGHT, 0);
         _opi_fan = lv_label_create(card);
         lv_obj_set_style_text_font(_opi_fan, zh_font_sm(), 0);
         lv_obj_set_style_text_color(_opi_fan, lv_color_hex(theme::cur().text_dim), 0);
         lv_label_set_text(_opi_fan, "");
-        lv_obj_set_pos(_opi_fan, CELL_X[2], 138 + 40);
+        lv_obj_set_pos(_opi_fan, CELL_X[2], 148 + 44);
     }
     _last_dash_ms = 0;  // force first fetch on next onRunning tick
     _last_status_ms = 0;
