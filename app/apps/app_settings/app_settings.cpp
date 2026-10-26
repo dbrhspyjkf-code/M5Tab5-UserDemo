@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cctype>
+#include <cstring>
 #include <atomic>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -262,6 +263,11 @@ void AppSettings::_buildToolsPage()
         lv_label_set_text(name, label);
         lv_obj_set_style_text_font(name, zh_font_30(), 0);
         lv_obj_set_style_text_color(name, lv_color_hex(C_TEXT), 0);
+        // 内容成组水平居中: 文字宽 + 图标宽 + 间距, 整组 (TW-总宽)/2 起
+        const char* name_txt = lv_label_get_text(name);
+        const int name_w = (int)lv_txt_get_width(name_txt, (uint32_t)strlen(name_txt),
+                                                 zh_font_30(), 0);
+        constexpr int ICON_GAP = 20;
 
         if (img) {
             lv_obj_t* icon = lv_image_create(tile);
@@ -273,15 +279,16 @@ void AppSettings::_buildToolsPage()
             } else if (img_scale != 256) {
                 lv_image_set_scale(icon, img_scale);
             }
-            lv_obj_align(icon, LV_ALIGN_LEFT_MID, icon_x, 0);
-            lv_obj_align(name, LV_ALIGN_LEFT_MID, icon_x + img_w + 16, 0);
+            const int start = (TW - img_w - ICON_GAP - name_w) / 2;
+            lv_obj_align(icon, LV_ALIGN_LEFT_MID, start, 0);
+            lv_obj_align(name, LV_ALIGN_LEFT_MID, start + img_w + ICON_GAP, 0);
         } else {
             // kind 分支: 0=点阵 (灯阵) / 1=信封 (邮件)
             if (kind == 1) {
                 // 信封 (邮件 tile) — 白色矩形 + 顶上一条横线表示封口.
                 // 跟点阵分支一样完全脱离字体, 用纯 lv_obj 矩形拼.
                 const int EW = 84, EH = 56;
-                const int ex = icon_x + 12;
+                const int ex = (TW - EW - ICON_GAP - name_w) / 2;
                 const int ey = (TH - EH) / 2;
                 lv_obj_t* env_body = lv_obj_create(tile);
                 lv_obj_set_size(env_body, EW, EH);
@@ -310,12 +317,11 @@ void AppSettings::_buildToolsPage()
                 lv_obj_clear_flag(flap, LV_OBJ_FLAG_CLICKABLE);
                 // 关键: flap 不吞 click 事件, 冒泡到父 tile
                 lv_obj_add_flag(flap, LV_OBJ_FLAG_EVENT_BUBBLE);
-                // label 对齐到 160px, 与图片 tile 保持一致
-                lv_obj_align(name, LV_ALIGN_LEFT_MID, ex + EW + 52, 0);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, ex + EW + ICON_GAP, 0);
             } else if (kind == 2) {
                 // NFC 感应图标 (RFID tile) — 3 个同心圆环 + 中心芯片方块.
                 // 与信封/点阵分支一样用纯 lv_obj 拼, 不依赖字体符号.
-                const int ccx = icon_x + 62;   // 圆心 x
+                const int ccx = (TW - 96 - ICON_GAP - name_w) / 2 + 48;  // 圆心 x (整组居中)
                 const int ccy = TH / 2;        // 圆心 y (tile 垂直居中)
                 const int sizes[3] = {96, 68, 40};
                 for (int i = 0; i < 3; i++) {
@@ -346,15 +352,14 @@ void AppSettings::_buildToolsPage()
                 lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
                 lv_obj_clear_flag(chip, LV_OBJ_FLAG_CLICKABLE);
                 lv_obj_add_flag(chip, LV_OBJ_FLAG_EVENT_BUBBLE);
-                // label 对齐到 160px, 与图片 tile (icon_x+130+16=158) 保持一致
-                lv_obj_align(name, LV_ALIGN_LEFT_MID, icon_x + 130 + 18, 0);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, ccx + 48 + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
                 // 直接画 9 个圆角矩形, 完全脱离字体. 9 个圆点既省资源也清晰.
                 const int CELL = 24, GAP = 6, COLS = 3, ROWS = 3;
                 const int GRID_W = COLS * CELL + (COLS - 1) * GAP;
-                const int start_x = icon_x + 8;
+                const int start_x = (TW - GRID_W - ICON_GAP - name_w) / 2;
                 const int start_y = (TH - ROWS * CELL - (ROWS - 1) * GAP) / 2;
                 for (int r = 0; r < ROWS; r++) {
                     for (int c = 0; c < COLS; c++) {
@@ -376,8 +381,7 @@ void AppSettings::_buildToolsPage()
                         lv_obj_add_flag(dot, LV_OBJ_FLAG_EVENT_BUBBLE);
                     }
                 }
-                // label 对齐到 160px, 与图片 tile (icon_x+130+16=158) 保持一致
-                lv_obj_align(name, LV_ALIGN_LEFT_MID, start_x + GRID_W + 56, 0);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start_x + GRID_W + ICON_GAP, 0);
             }
         }
     };
@@ -414,11 +418,15 @@ void AppSettings::_buildToolsPage()
         lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(tile, _toolLoraChat_cb, LV_EVENT_CLICKED, this);
 
-        // LoRa 官方 logo 图标
+        // LoRa 官方 logo 图标 —— 内容成组水平居中
         lv_obj_t* icon = lv_image_create(tile);
         lv_image_set_src(icon, &lora_logo);
         lv_image_set_scale(icon, 256);  // 130×130 native, 1:1
-        lv_obj_align(icon, LV_ALIGN_LEFT_MID, 12, 0);
+        const char* lora_txt = "LoRa Chat";
+        const int lora_name_w = (int)lv_txt_get_width(lora_txt, (uint32_t)strlen(lora_txt),
+                                                      zh_font_30(), 0);
+        const int lora_start = (TW - 130 - 20 - lora_name_w) / 2;
+        lv_obj_align(icon, LV_ALIGN_LEFT_MID, lora_start, 0);
         lv_obj_add_flag(icon, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE);
 
@@ -426,7 +434,7 @@ void AppSettings::_buildToolsPage()
         lv_label_set_text(name, "LoRa Chat");
         lv_obj_set_style_text_font(name, zh_font_30(), 0);
         lv_obj_set_style_text_color(name, lv_color_hex(C_TEXT), 0);
-        lv_obj_align(name, LV_ALIGN_LEFT_MID, 12 + 130 + 16, 0);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, lora_start + 130 + 20, 0);
     }
 
     // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表), kind=1 信封分支

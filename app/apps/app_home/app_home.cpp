@@ -143,7 +143,7 @@ void AppHome::onOpen()
     // This card is the single accent block of the whole home screen.
     lv_obj_t* hero = lv_obj_create(_scr);
     lv_obj_set_pos(hero, 56, 40);
-    lv_obj_set_size(hero, 400, 520);
+    lv_obj_set_size(hero, 400, 564);  // 底边 604 = OPi 卡底, 对齐
     lv_obj_set_style_bg_color(hero, lv_color_hex(theme::cur().hero), 0);
     lv_obj_set_style_bg_opa(hero, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(hero, 26, 0);
@@ -162,19 +162,19 @@ void AppHome::onOpen()
     lv_obj_set_style_text_font(_status_time, &lv_font_montserrat_44, 0);
     lv_obj_set_style_text_color(_status_time, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_time, "--:--");
-    lv_obj_align(_status_time, LV_ALIGN_TOP_MID, 0, 84);
+    lv_obj_align(_status_time, LV_ALIGN_TOP_MID, 0, 104);
 
     _status_date = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_date, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_status_date, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_date, "");
-    lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 152);
+    lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 180);
 
     _status_lunar = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_lunar, zh_font_md(), 0);
     lv_obj_set_style_text_color(_status_lunar, lv_color_hex(theme::cur().text_soft), 0);
     lv_label_set_text(_status_lunar, "");
-    lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 198);
+    lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 230);
 
     // Weather row (tap → detailed weather dialog): temperature (latin font,
     // has °) + condition (zh font), centered in dark ink.
@@ -187,7 +187,7 @@ void AppHome::onOpen()
     lv_obj_set_flex_flow(wbox, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(wbox, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(wbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 252);
+    lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 286);
 
     _status_wtemp = lv_label_create(wbox);
     lv_obj_set_style_text_font(_status_wtemp, &lv_font_montserrat_30, 0);
@@ -213,7 +213,7 @@ void AppHome::onOpen()
 
     // Thin divider + icon row along the card bottom (light ink on deep green).
     lv_obj_t* div = lv_obj_create(hero);
-    lv_obj_set_pos(div, 32, 424);
+    lv_obj_set_pos(div, 32, 468);
     lv_obj_set_size(div, 336, 2);
     lv_obj_set_style_bg_color(div, lv_color_hex(theme::cur().press), 0);
     lv_obj_set_style_bg_opa(div, LV_OPA_60, 0);
@@ -222,7 +222,7 @@ void AppHome::onOpen()
     lv_obj_clear_flag(div, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
     lv_obj_t* irow = lv_obj_create(hero);
-    lv_obj_set_pos(irow, 24, 448);
+    lv_obj_set_pos(irow, 24, 492);
     lv_obj_set_size(irow, 352, 44);
     lv_obj_set_style_bg_opa(irow, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(irow, 0, 0);
@@ -267,8 +267,8 @@ void AppHome::onOpen()
     // card is a 3x2 module grid with threshold-colored bars.
     auto row_card = [&](int y, int h, uint32_t bg, uint32_t border) {
         lv_obj_t* card = lv_obj_create(_scr);
-        lv_obj_set_pos(card, 488, y);
-        lv_obj_set_size(card, 736, h);
+        lv_obj_set_pos(card, 468, y);
+        lv_obj_set_size(card, 756, h);
         lv_obj_set_style_bg_color(card, lv_color_hex(bg), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(card, 1, 0);
