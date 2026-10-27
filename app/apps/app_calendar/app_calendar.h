@@ -30,6 +30,7 @@ private:
     void _showDayDetail(int day);
     void _clearGrid();
 
+    void _closeDropdown();  // 关下拉 + 删拦截层 (选择/点外部/退出共用)
     static void _prevClick_cb(lv_event_t* e);
     static void _nextClick_cb(lv_event_t* e);
     static void _prevYearClick_cb(lv_event_t* e);
@@ -58,6 +59,7 @@ private:
     lv_obj_t* _month_lbl  = nullptr;   // "10 月" (点击弹月份下拉)
     lv_obj_t* _year_dd    = nullptr;   // 下拉 (共用 _scr 顶层, 用完删)
     lv_obj_t* _month_dd   = nullptr;
+    lv_obj_t* _dd_shield  = nullptr;   // 下拉的全屏拦截层 (点外部关闭; 泄漏会吞全部点击!)
     lv_obj_t* _grid       = nullptr;   // 日期网格容器
     lv_obj_t* _detail_lbl = nullptr;   // 底部当日农历详情
     int _year  = 2026;
