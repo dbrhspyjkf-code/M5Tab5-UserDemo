@@ -110,6 +110,16 @@ void AppStocks::onRunning()
     if (_chart_ready.exchange(false)) {
         _applyCharts();
     }
+    if (_index_ready.exchange(false)) {
+        _applyIndices();
+    }
+    // 指数页在前台时 60s 刷新
+    if (_page == 1 && _scr && lv_screen_active() == _scr) {
+        if (_last_index_ms == 0 || mono_ms() - _last_index_ms >= 60000) {
+            _last_index_ms = mono_ms();
+            _fetchIndicesAsync();
+        }
+    }
     // mooncake 给每个已装 app 每轮都调 onRunning, 且 openApp(其他) 不会把本 app
     // 切到 GoClose → onClose 永不触发. 所以这里自己判断是否还在前台 (LVGL 活动屏
     // 是不是本 app 的 _scr). 一旦被切到后台 (上拨返回 / 唤醒词 / 屏保 等任何方式),
@@ -196,12 +206,21 @@ void AppStocks::_buildUi()
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG()), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
+    // 两页容器: 0=自选股 1=指数看板 (左右拨切换, _setPage)
+    _stocks_page = lv_obj_create(_scr);
+    lv_obj_set_size(_stocks_page, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_stocks_page, 0, 0);
+    lv_obj_set_style_bg_opa(_stocks_page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_stocks_page, 0, 0);
+    lv_obj_set_style_pad_all(_stocks_page, 0, 0);
+    lv_obj_clear_flag(_stocks_page, LV_OBJ_FLAG_SCROLLABLE);
+
     // ── 卡片网格 4×3 (2026-10-27 用户指定, 参考工具页卡片) ──────────────
     // 每只股票一张卡: 名称 / 股价 / 涨跌幅; 涨=红底 跌=绿底;
     // 排布顺序 = 涨跌幅降序 (在 _refreshUiFromItems 里排序绑定).
     for (int i = 0; i < N_CARDS; i++) {
         const int col = i % GRID_COLS, row = i / GRID_COLS;
-        lv_obj_t* card = lv_obj_create(_scr);
+        lv_obj_t* card = lv_obj_create(_stocks_page);
         lv_obj_set_size(card, CARD_W, CARD_H);
         lv_obj_set_pos(card, GRID_X0 + col * (CARD_W + GRID_GAP),
                        GRID_Y0 + row * (CARD_H + GRID_GAP));
@@ -252,8 +271,166 @@ void AppStocks::_buildUi()
         _card_amt[i]   = amt;
     }
 
+    _buildIndexPage();
+    _setPage(0);
+
     lv_screen_load(_scr);
     _installSwipeGesture();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  指数看板 (2026-10-27): 9 指数 3×3 卡片, qt.gtimg.cn 实时接口一次拉全
+// ════════════════════════════════════════════════════════════════════════════
+void AppStocks::_buildIndexPage()
+{
+    _index_page = lv_obj_create(_scr);
+    lv_obj_set_size(_index_page, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_index_page, SCREEN_W, 0);   // 右侧待命 (左拨滑入)
+    lv_obj_set_style_bg_opa(_index_page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_index_page, 0, 0);
+    lv_obj_set_style_pad_all(_index_page, 0, 0);
+    lv_obj_clear_flag(_index_page, LV_OBJ_FLAG_SCROLLABLE);
+
+    constexpr int IC_W = 392, IC_H = 214, IG_X = 20, IG_Y = 18, IG_M = 32;
+    for (int i = 0; i < 9; i++) {
+        const int col = i % 3, row = i / 3;
+        lv_obj_t* card = lv_obj_create(_index_page);
+        lv_obj_set_size(card, IC_W, IC_H);
+        lv_obj_set_pos(card, IG_M + col * (IC_W + IG_X), 20 + row * (IC_H + IG_Y));
+        lv_obj_set_style_bg_color(card, lv_color_hex(C_HEADER()), 0);
+        lv_obj_set_style_radius(card, 18, 0);
+        lv_obj_set_style_border_width(card, 0, 0);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_set_style_shadow_width(card, 0, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t* name = lv_label_create(card);
+        lv_label_set_text(name, kIndices[i].name);
+        lv_obj_set_style_text_font(name, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(name, lv_color_hex(theme::cur().text_soft), 0);
+        lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 22);
+
+        lv_obj_t* price = lv_label_create(card);
+        lv_label_set_text(price, "--");
+        lv_obj_set_style_text_font(price, &lv_font_montserrat_38, 0);
+        lv_obj_set_style_text_color(price, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 82);
+
+        lv_obj_t* amt = lv_label_create(card);
+        lv_label_set_text(amt, "");
+        lv_obj_set_style_text_font(amt, &lv_font_montserrat_30, 0);
+        lv_obj_set_style_text_color(amt, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(amt, LV_ALIGN_TOP_MID, 0, 142);
+
+        lv_obj_t* pct = lv_label_create(card);
+        lv_label_set_text(pct, "");
+        lv_obj_set_style_text_font(pct, &lv_font_montserrat_30, 0);
+        lv_obj_set_style_text_color(pct, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(pct, LV_ALIGN_TOP_MID, 0, 168);
+
+        _index_cards[i] = card;
+        _index_name[i]  = name;
+        _index_price[i] = price;
+        _index_amt[i]   = amt;
+        _index_pct[i]   = pct;
+    }
+}
+
+void AppStocks::_setPage(int page)
+{
+    _page = page;
+    if (!_scr || !_stocks_page || !_index_page) return;
+    lv_obj_set_pos(_stocks_page, page == 0 ? 0 : -SCREEN_W, 0);
+    lv_obj_set_pos(_index_page, page == 1 ? 0 : SCREEN_W, 0);
+    // 指数页第一次进入时拉一次
+    if (page == 1 && _last_index_ms == 0) _fetchIndicesAsync();
+}
+
+// GBK → UTF-8 这里不需要: qt.gtimg 返回的字段只取数字, 名字用本地 kIndices 表
+void AppStocks::_indexFetchWorker()
+{
+    auto resp = GetHAL()->httpGet(
+        "https://qt.gtimg.cn/q=sh000001,sz399001,sz399006,sh000688,sh000300,"
+        "r_hkHSI,usDJI,usIXIC,usINX");
+    IndexQuote quotes[9];
+    bool any = false;
+    if (resp.ok) {
+        // 返回体: v_sh000001="..."; v_sz399001="..."; …  GBK 编码但只解析 ASCII 字段
+        size_t pos = 0;
+        int idx = 0;
+        while (idx < 9) {
+            const std::string key = "v_" + std::string(kIndices[idx].tencent) + "=\"";
+            const size_t p = resp.body.find(key, pos);
+            if (p == std::string::npos) { idx++; continue; }
+            const size_t v0 = p + key.size();
+            const size_t v1 = resp.body.find('"', v0);
+            if (v1 == std::string::npos) break;
+            // 字段: [3]=现价 [4]=昨收 [31]=涨跌额 [32]=涨跌幅
+            auto field = [&](int n) -> std::string {
+                size_t f = v0;
+                for (int k = 0; k < n; k++) {
+                    f = resp.body.find('~', f);
+                    if (f == std::string::npos || f >= v1) return "";
+                    f++;
+                }
+                size_t e = resp.body.find('~', f);
+                if (e == std::string::npos || e > v1) e = v1;
+                return resp.body.substr(f, e - f);
+            };
+            try {
+                quotes[idx].price   = std::stof(field(3));
+                const float prev    = std::stof(field(4));
+                quotes[idx].chg_amt = std::stof(field(31));
+                quotes[idx].chg_pct = std::stof(field(32));
+                quotes[idx].ok      = quotes[idx].price > 0 && prev > 0;
+                any = any || quotes[idx].ok;
+            } catch (...) {}
+            pos = v1;
+            idx++;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lk(_index_mu);
+        for (int i = 0; i < 9; i++) _index_quotes[i] = quotes[i];
+    }
+    _index_ready.store(any);
+}
+
+void AppStocks::_applyIndices()
+{
+    LvglLockGuard lock;
+    IndexQuote q[9];
+    {
+        std::lock_guard<std::mutex> lk(_index_mu);
+        for (int i = 0; i < 9; i++) q[i] = _index_quotes[i];
+    }
+    for (int i = 0; i < 9; i++) {
+        if (!_index_cards[i]) continue;
+        if (!q[i].ok) {
+            lv_obj_set_style_text_color(_index_price[i], lv_color_hex(C_DIM()), 0);
+            lv_label_set_text(_index_price[i], "--");
+            continue;
+        }
+        const bool up = q[i].chg_pct > 0.005f, down = q[i].chg_pct < -0.005f;
+        // A 股惯例: 涨红跌绿 (与 _chgColor 一致)
+        const uint32_t col = up ? C_UP() : down ? C_DOWN() : C_TEXT();
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f", q[i].price);
+        lv_label_set_text(_index_price[i], buf);
+        lv_obj_set_style_text_color(_index_price[i], lv_color_hex(C_TEXT()), 0);
+        snprintf(buf, sizeof(buf), "%s %.2f", up ? "↑" : down ? "↓" : "—", q[i].chg_amt);
+        lv_label_set_text(_index_amt[i], buf);
+        snprintf(buf, sizeof(buf), "%s %.2f%%", up ? "↑" : down ? "↓" : "—", q[i].chg_pct);
+        lv_label_set_text(_index_pct[i], buf);
+        lv_obj_set_style_text_color(_index_amt[i], lv_color_hex(col), 0);
+        lv_obj_set_style_text_color(_index_pct[i],  lv_color_hex(col), 0);
+    }
+}
+
+void AppStocks::_fetchIndicesAsync()
+{
+    GetHAL()->tryRunDetached([this]() { _indexFetchWorker(); });
 }
 
 void AppStocks::_destroyUi()
@@ -269,6 +446,12 @@ void AppStocks::_destroyUi()
     for (int i = 0; i < N_CARDS; i++)
         _cards[i] = _card_name[i] = _card_price[i] = _card_chg[i] =
         _card_amt[i] = nullptr;
+    for (int i = 0; i < 9; i++)
+        _index_cards[i] = _index_name[i] = _index_price[i] =
+        _index_amt[i] = _index_pct[i] = nullptr;
+    _stocks_page = _index_page = nullptr;
+    _page = 0;
+    _last_index_ms = 0;
     if (_poll_timer) { lv_timer_delete(_poll_timer); _poll_timer = nullptr; }
     _alive = std::make_shared<bool>(true);  // fresh flag for the next _buildUi/_installSwipeGesture
 }
@@ -285,6 +468,7 @@ namespace {
 struct SwipeCtx {
     AppStocks* app;
     std::weak_ptr<bool> alive;
+    int press_x = -1, press_y = -1;   // 横向切页位移判定起点
 };
 }  // namespace
 
@@ -295,18 +479,58 @@ void AppStocks::_installSwipeGesture()
     while (indev) {
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
             _gesture_ctx = new SwipeCtx{this, _alive};
+            // 横向切页: LVGL 的 GESTURE 依赖速度阈值, 合成/慢速滑动常常不触发.
+            // 这里用 PRESSING 记录起点 + RELEASE 判定位移, 与 GESTURE 双轨并行.
+            lv_indev_add_event_cb(indev, [](lv_event_t* e) {
+                lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+                auto* ctx = static_cast<SwipeCtx*>(lv_event_get_user_data(e));
+                auto alive = ctx->alive.lock();
+                if (!alive || !*alive) return;
+                if (lv_event_get_code(e) == LV_EVENT_PRESSING) {
+                    lv_point_t p;
+                    lv_indev_get_point(dev, &p);
+                    ctx->press_x = p.x; ctx->press_y = p.y;
+                    return;
+                }
+                if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
+                    lv_point_t p;
+                    lv_indev_get_point(dev, &p);
+                    const int dx = p.x - ctx->press_x, dy = p.y - ctx->press_y;
+                    // 横向位移 > 90px 且明显大于纵向 → 切页
+                    if (abs(dx) > 90 && abs(dx) > abs(dy) * 2) {
+                        auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
+                        lv_async_call([](void* u) {
+                            auto* c = static_cast<SwipeCtx*>(u);
+                            auto a = c->alive.lock();
+                            if (a && *a) c->app->_setPage(c->app->_page == 0 ? 1 : 0);
+                            delete c;
+                        }, app_ctx);
+                    }
+                    return;
+                }
+            }, LV_EVENT_ALL, _gesture_ctx);
             lv_indev_add_event_cb(indev, [](lv_event_t* e) {
                 auto* ctx = static_cast<SwipeCtx*>(lv_event_get_user_data(e));
                 auto alive = ctx->alive.lock();
                 if (!alive || !*alive) return;
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
-                if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
+                const lv_dir_t dir = lv_indev_get_gesture_dir(dev);
+                if (dir == LV_DIR_TOP) {
                     // Defer: don't tear down _scr synchronously from inside indev dispatch.
                     auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
                     lv_async_call([](void* u) {
                         auto* c = static_cast<SwipeCtx*>(u);
                         auto a = c->alive.lock();
                         if (a && *a) c->app->_requestClose();
+                        delete c;
+                    }, app_ctx);
+                } else if (dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT) {
+                    // 左拨 → 指数看板, 右拨 → 自选股 (两页横向切换)
+                    auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
+                    lv_async_call([](void* u) {
+                        auto* c = static_cast<SwipeCtx*>(u);
+                        auto a = c->alive.lock();
+                        if (a && *a) c->app->_setPage(c->app->_page == 0 ? 1 : 0);
                         delete c;
                     }, app_ctx);
                 }

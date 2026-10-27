@@ -42,6 +42,35 @@ private:
     // ── Layout ─────────────────────────────────────────────────────────
     static constexpr int SCREEN_W    = 1280;
     static constexpr int SCREEN_H    = 720;
+    // ── 指数看板页 (2026-10-27, 与自选股同风格, 左右拨切换) ──
+    struct IndexDef { const char* name; const char* tencent; };  // tencent = qt.gtimg 代码
+    static constexpr IndexDef kIndices[9] = {
+        {"上证指数", "sh000001"}, {"深证成指", "sz399001"}, {"创业板指", "sz399006"},
+        {"科创综指", "sh000688"}, {"沪深300",  "sh000300"}, {"恒生指数", "r_hkHSI"},
+        {"道琼斯",   "usDJI"},    {"纳斯达克", "usIXIC"},   {"标普500",  "usINX"},
+    };
+    struct IndexQuote {
+        bool ok = false;
+        float price{0}, chg_amt{0}, chg_pct{0};
+    };
+    IndexQuote _index_quotes[9] = {};      // guarded by _dash…复用 _chart_mu? 用独立 _index_mu
+    std::mutex _index_mu;
+    std::atomic<bool> _index_ready{false};
+    lv_obj_t* _index_cards[9]   {nullptr};
+    lv_obj_t* _index_name[9]    {nullptr};
+    lv_obj_t* _index_price[9]   {nullptr};
+    lv_obj_t* _index_amt[9]     {nullptr};
+    lv_obj_t* _index_pct[9]     {nullptr};
+    lv_obj_t* _index_page       {nullptr};  // 指数页容器
+    lv_obj_t* _stocks_page      {nullptr};  // 自选股页容器
+    int        _page            = 0;        // 0=自选股 1=指数
+    uint32_t   _last_index_ms   = 0;
+    void _buildIndexPage();
+    void _fetchIndicesAsync();
+    void _applyIndices();
+    void _indexFetchWorker();
+    void _setPage(int page);
+
     // 卡片网格 4×3 (2026-10-27 用户指定, 参考工具页卡片风格)
     static constexpr int GRID_COLS   = 4;
     static constexpr int N_CARDS     = 12;
