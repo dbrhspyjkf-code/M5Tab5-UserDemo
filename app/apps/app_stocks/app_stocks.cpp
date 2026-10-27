@@ -341,13 +341,13 @@ void AppStocks::_buildIndexPage()
         lv_label_set_text(amt, "");
         lv_obj_set_style_text_font(amt, &lv_font_montserrat_30, 0);
         lv_obj_set_style_text_color(amt, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(amt, LV_ALIGN_TOP_MID, 0, 142);
+        lv_obj_align(amt, LV_ALIGN_TOP_MID, 0, 136);
 
         lv_obj_t* pct = lv_label_create(card);
         lv_label_set_text(pct, "");
         lv_obj_set_style_text_font(pct, &lv_font_montserrat_30, 0);
         lv_obj_set_style_text_color(pct, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(pct, LV_ALIGN_TOP_MID, 0, 168);
+        lv_obj_align(pct, LV_ALIGN_TOP_MID, 0, 180);
 
         _index_cards[i] = card;
         _index_name[i]  = name;
