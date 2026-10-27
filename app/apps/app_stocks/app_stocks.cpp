@@ -96,7 +96,7 @@ static int64_t mono_ms()
 // ════════════════════════════════════════════════════════════════════════════
 AppStocks::AppStocks()
 {
-    setAppInfo().name = "自选股";
+    setAppInfo().name = "金融";
 }
 
 void AppStocks::onCreate()
@@ -1136,10 +1136,8 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
         const float pad = (hi - lo) * 0.08f; hi += pad; lo -= pad;
 
         const int L = 6, R = W - 6, T = 8, B = H - 8;   // 铺满: 仅留 6~8px 呼吸边
-        // 网格: 中轴 + 上下边
+        // 网格: 仅中轴 (2026-10-27 用户要求去掉上下两条横线)
         px_rect(pix, W, H, L, (T + B) / 2, R, (T + B) / 2, COL_GRID);
-        px_rect(pix, W, H, L, T, R, T, COL_GRID);
-        px_rect(pix, W, H, L, B, R, B, COL_GRID);
         // 价格→y
         auto y_of = [&](float v) {
             return (int)((B - T) * (hi - v) / (hi - lo)) + T;
@@ -1171,9 +1169,7 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
         const int VT = VB - VH;                  // 副图顶
         const int PB = VT - 12;                  // 价格区底
         auto y_of = [&](float v) { return (int)((PB - T) * (hi - v) / (hi - lo)) + T; };
-        px_rect(pix, W, H, L, T, R, T, COL_GRID);
-        px_rect(pix, W, H, L, PB, R, PB, COL_GRID);      // 价格区/副图分界
-        px_rect(pix, W, H, L, VB, R, VB, COL_GRID);
+        px_rect(pix, W, H, L, PB, R, PB, COL_GRID);      // 价格区/副图分界 (上下横线已去掉)
         float vmax = 0;
         for (int i = 0; i < n; i++)
             vmax = c.day_volume[i] > vmax ? c.day_volume[i] : vmax;

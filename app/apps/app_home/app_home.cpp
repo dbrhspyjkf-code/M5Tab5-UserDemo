@@ -304,7 +304,9 @@ void AppHome::onOpen()
         lv_obj_t* c = row_card(40, 96, theme::cur().card[0], theme::cur().border);
         mk_lbl(c, &lv_font_montserrat_28, IDX,  "01", LV_ALIGN_LEFT_MID,  26, 0);
         mk_lbl(c, zh_font_md(),          NAME, "GLM 用量",   LV_ALIGN_LEFT_MID,  84, 0);
-        _dash_glm = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_RIGHT_MID, -28, 0);
+        // 两行: 上=Pro 5H/7D 剩余%, 下=重置时间 (2026-10-27 用户要求)
+        _dash_glm  = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 14);
+        _dash_glm2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
 
         c = row_card(148, 96, theme::cur().card[1], theme::cur().border);
         mk_lbl(c, &lv_font_montserrat_28, IDX,  "02", LV_ALIGN_LEFT_MID,  26, 0);
@@ -510,6 +512,7 @@ void AppHome::onRunning()
     {
         std::lock_guard<std::mutex> lk(_dash_mutex);
         if (_dash_glm) lv_label_set_text(_dash_glm, _dash_glm_txt.c_str());
+        if (_dash_glm2) lv_label_set_text(_dash_glm2, _dash_glm2_txt.c_str());
         if (_dash_ds)  lv_label_set_text(_dash_ds,  _dash_ds_txt.c_str());
         if (_dash_ag1) lv_label_set_text(_dash_ag1, _dash_ag1_txt.c_str());
         if (_dash_ag2) lv_label_set_text(_dash_ag2, _dash_ag2_txt.c_str());
@@ -575,13 +578,37 @@ void AppHome::_fetch_dashboard()
 
         // Row values — the row name ("GLM 用量"…) lives on the left of the
         // card, so these carry data only.
-        std::string glm_txt = "--", ds_txt = "--";
+        std::string glm_txt = "--", glm_sub = "", ds_txt = "--";
         std::string ag1, ag2;
 
         if (auto j = pick(GetHAL()->httpGet(base + "/glm/quota").body); !j.is_null()) {
             std::string lvl = j.value("level", std::string());
             if (!lvl.empty() && lvl[0] >= 'a' && lvl[0] <= 'z') lvl[0] -= 32;
-            glm_txt = lvl + "级 剩" + std::to_string(j.value("remaining_pct", 0)) + "%";
+            // 新版服务端: 5H/7D 双窗口剩余百分比 + 各自重置时间
+            if (j.contains("pct_5h") || j.contains("pct_7d")) {
+                glm_txt = lvl + "  5H " + std::to_string(j.value("pct_5h", 0)) + "%"
+                        + "  7D " + std::to_string(j.value("pct_7d", 0)) + "%";
+                // 重置时间: 5H 窗口只显时分, 7D 窗口带日期
+                auto fmt_reset = [](int64_t ms, bool with_date) -> std::string {
+                    if (ms <= 0) return "--";
+                    time_t t = (time_t)(ms / 1000);
+                    struct tm tv;
+                    localtime_r(&t, &tv);
+                    char b[24];
+                    if (with_date)
+                        std::snprintf(b, sizeof b, "%02d-%02d %02d:%02d",
+                                      tv.tm_mon + 1, tv.tm_mday, tv.tm_hour, tv.tm_min);
+                    else
+                        std::snprintf(b, sizeof b, "%02d:%02d", tv.tm_hour, tv.tm_min);
+                    return b;
+                };
+                glm_sub = "重置 " +
+                    fmt_reset(j.value("reset_5h_ms", (int64_t)0), false) + "  /  " +
+                    fmt_reset(j.value("reset_7d_ms", (int64_t)0), true);
+            } else {
+                // 旧版服务端兜底 (只有 5h 窗口的 remaining_pct)
+                glm_txt = lvl + "级 剩" + std::to_string(j.value("remaining_pct", 0)) + "%";
+            }
         }
         if (auto j = pick(GetHAL()->httpGet(base + "/api/deepseek/balance").body); !j.is_null()) {
             ds_txt = j.value("total_balance", std::string("?")) + " 元";
@@ -621,6 +648,7 @@ void AppHome::_fetch_dashboard()
 
         std::lock_guard<std::mutex> lk(_dash_mutex);
         _dash_glm_txt = glm_txt;
+        _dash_glm2_txt = glm_sub;
         _dash_ds_txt  = ds_txt;
         _dash_ag1_txt = ag1.empty() ? "今日无提醒/行程" : ag1;
         _dash_ag2_txt = ag2;

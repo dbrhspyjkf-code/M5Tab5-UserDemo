@@ -555,9 +555,10 @@ void AppSettings::_buildToolsPage()
     // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表), kind=1 信封分支
     make_tile(2, 1, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 1);
 
-    // 第 3 行第 2 列: 自选股 (走 hermes :8766/api/stocks/portfolio, mx-selfselect 后端)
+    // 第 3 行第 2 列: 金融 (原「自选股」, 2026-10-27 用户改名; 含自选股+指数看板)
+    //   走 hermes :8766/api/stocks/portfolio, mx-selfselect 后端
     //   kind=3 走势分支, 线条随主题强调色 (原 stocks8_icon 静态图已弃用)
-    make_tile(3, 1, nullptr, 130, "自选股", _toolStocks_cb, 256, 12, -1, 3);
+    make_tile(3, 1, nullptr, 130, "金融", _toolStocks_cb, 256, 12, -1, 3);
 
     // 第 3 行第 1 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
     //   kind=9 机器人分支; 2026-10-27 用户要求由「YRobot 控制台」改名「Reachy」,
