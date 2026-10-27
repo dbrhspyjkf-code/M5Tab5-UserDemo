@@ -32,6 +32,11 @@ private:
 
     static void _prevClick_cb(lv_event_t* e);
     static void _nextClick_cb(lv_event_t* e);
+    static void _prevYearClick_cb(lv_event_t* e);
+    static void _nextYearClick_cb(lv_event_t* e);
+    static void _yearDd_cb(lv_event_t* e);
+    static void _monthDd_cb(lv_event_t* e);
+    void _shiftYear(int delta);
     static void _dayClick_cb(lv_event_t* e);
 
     // ── 手势 (上拨退出, app_stocks 同款) ──
@@ -48,7 +53,11 @@ private:
 
     std::function<void()> _close_cb;
     lv_obj_t* _scr        = nullptr;
-    lv_obj_t* _title      = nullptr;   // "2026年10月"
+    lv_obj_t* _title      = nullptr;   // 旧整标题 (仅占位兼容, 不再显示)
+    lv_obj_t* _year_lbl   = nullptr;   // "2026 年" (点击弹年份下拉)
+    lv_obj_t* _month_lbl  = nullptr;   // "10 月" (点击弹月份下拉)
+    lv_obj_t* _year_dd    = nullptr;   // 下拉 (共用 _scr 顶层, 用完删)
+    lv_obj_t* _month_dd   = nullptr;
     lv_obj_t* _grid       = nullptr;   // 日期网格容器
     lv_obj_t* _detail_lbl = nullptr;   // 底部当日农历详情
     int _year  = 2026;

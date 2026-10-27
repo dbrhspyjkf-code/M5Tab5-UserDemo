@@ -142,7 +142,15 @@ void AppSettings::onOpen()
     _installSwipeGesture();
 #ifdef PLATFORM_BUILD_DESKTOP
     if (const char* e = getenv("TAB5_OPEN_CALENDAR")) {
-        if (e[0] == '1') openCalendar();   // 桌面调试: 直落万年历
+        if (e[0] == '1') {
+            // 桌面调试: 直落万年历. onOpen 内直接 openApp 会撞 mooncake
+            // 状态机 (本 app 还在 Opening), 延迟到下一拍再开.
+            lv_timer_create([](lv_timer_t* tm) {
+                auto* self = static_cast<AppSettings*>(lv_timer_get_user_data(tm));
+                if (self) self->openCalendar();
+                lv_timer_del(tm);
+            }, 800, this);
+        }
     }
 #endif
 }
