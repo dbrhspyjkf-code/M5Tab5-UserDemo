@@ -1,10 +1,7 @@
 #include "app_stocks.h"
 #include "../utils/theme/theme.h"
-#ifdef PLATFORM_BUILD_DESKTOP
-#include <cstdlib>              // malloc/free (桌面)
-#else
-#include <esp_heap_caps.h>      // PSRAM 优先分配 (设备)
-#endif
+#include <cstdlib>              // malloc/free (两平台统一; 设备
+                                // SPIRAM_USE_MALLOC=y, >16KB 自动落 PSRAM)
 #include "stock_market_hours.h"
 #include <mooncake_log.h>
 #include <hal/hal.h>
@@ -670,14 +667,15 @@ void AppStocks::_showDetail(int row_idx)
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 4, 2);
 
     // canvas: 944x420 ARGB8888 (堆缓冲, worker 绘制在 UI 线程做)
-    #ifdef PLATFORM_BUILD_DESKTOP
+        // 1.5MB 大块: 设备端 SPIRAM_USE_MALLOC=y, malloc 自动落 PSRAM;
+    // 勿用 heap_caps_malloc(MALLOC_CAP_SPIRAM) —— SPIRAM_USE_CAPS_ALLOC
+    // 未开时该 cap 分配必返回 NULL (2026-10-27 实锤: 分时图不显示根因).
     _chart_pixels = malloc(944 * 420 * 4);
-#else
-    // 先试 PSRAM (大缓冲), 失败退内部 RAM
-    _chart_pixels = heap_caps_malloc(944 * 420 * 4, MALLOC_CAP_SPIRAM);
-    if (!_chart_pixels) _chart_pixels = heap_caps_malloc(944 * 420 * 4, MALLOC_CAP_8BIT);
-#endif
-    if (_chart_pixels) memset(_chart_pixels, 0, 944 * 420 * 4);
+    if (_chart_pixels) {
+        memset(_chart_pixels, 0, 944 * 420 * 4);
+    } else {
+        mclog::tagWarn(TAG, "chart canvas alloc failed (1.5MB)");
+    }
     _chart_canvas = lv_canvas_create(_detail_modal);
     lv_canvas_set_buffer(_chart_canvas, _chart_pixels, 944, 420, LV_COLOR_FORMAT_ARGB8888);
     lv_obj_align(_chart_canvas, LV_ALIGN_TOP_LEFT, 0, 56);
@@ -731,11 +729,7 @@ void AppStocks::_closeDetail()
     }
     _chart_canvas = _chart_status = nullptr;
     if (_chart_pixels) {           // canvas 缓冲是堆分配, 弹窗关了就还
-#ifdef PLATFORM_BUILD_DESKTOP
         free(_chart_pixels);
-#else
-        heap_caps_free(_chart_pixels);
-#endif
         _chart_pixels = nullptr;
     }
     _chart_ready.store(false);
@@ -804,6 +798,8 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
     }
 
     local.ok = !local.minute_prices.empty() || !local.day_close.empty();
+    mclog::tagInfo(TAG, "chart fetched: minute={} kline={} ok={}",
+                   local.minute_prices.size(), local.day_close.size(), local.ok);
     {
         std::lock_guard<std::mutex> lk(_chart_mu);
         _chart = std::move(local);
