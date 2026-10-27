@@ -426,9 +426,9 @@ void AppStocks::_applyIndices()
         snprintf(buf, sizeof(buf), "%.2f", q[i].price);
         lv_label_set_text(_index_price[i], buf);
         lv_obj_set_style_text_color(_index_price[i], lv_color_hex(C_TEXT()), 0);
-        snprintf(buf, sizeof(buf), "%s %.2f", up ? "+" : down ? "-" : "", q[i].chg_amt);
+        snprintf(buf, sizeof(buf), "%s%.2f", up ? "+" : "", q[i].chg_amt);
         lv_label_set_text(_index_amt[i], buf);
-        snprintf(buf, sizeof(buf), "%s %.2f%%", up ? "+" : down ? "-" : "", q[i].chg_pct);
+        snprintf(buf, sizeof(buf), "%s%.2f%%", up ? "+" : "", q[i].chg_pct);
         lv_label_set_text(_index_pct[i], buf);
         lv_obj_set_style_text_color(_index_amt[i], lv_color_hex(col), 0);
         lv_obj_set_style_text_color(_index_pct[i],  lv_color_hex(col), 0);
