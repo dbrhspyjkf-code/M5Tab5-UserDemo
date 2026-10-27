@@ -814,20 +814,20 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
         if (i == _chart_mode) lv_obj_add_state(btn, LV_STATE_CHECKED);
     }
 
-    // 均线图例 (颜色与 _drawChartCanvas 的 ma_col 对应, 仅日K 视图显示)
+    // 均线图例 (颜色与 _drawChartCanvas 的 ma_col 对应, 仅日K 视图显示),
+    // 位置在图表右下角 (用户指定)
     {
         const uint32_t leg_col[3] = {0xF1C40F, 0xE91E63, 0x3498DB};  // 黄/品红/蓝
         const char* leg_txt[3] = {"MA5", "MA10", "MA20"};
-        int lx = 16;
+        const int leg_dx[3] = {-132, -60, -12};   // 右→左: MA20 最靠右
         for (int k = 0; k < 3; k++) {
             lv_obj_t* leg = lv_label_create(_detail_modal);
             lv_label_set_text(leg, leg_txt[k]);
             lv_obj_set_style_text_font(leg, zh_font_sm(), 0);
             lv_obj_set_style_text_color(leg, lv_color_hex(leg_col[k]), 0);
-            lv_obj_align(leg, LV_ALIGN_TOP_LEFT, lx, 68);
+            lv_obj_align(leg, LV_ALIGN_BOTTOM_RIGHT, leg_dx[k], -8);
             lv_obj_add_flag(leg, LV_OBJ_FLAG_HIDDEN);   // 默认分时视图
             _chart_ma_leg[k] = leg;
-            lx += 64;
         }
     }
 
@@ -1091,7 +1091,7 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
         if (hi - lo < 0.01f) { hi = base + 0.05f; lo = base - 0.05f; }
         const float pad = (hi - lo) * 0.08f; hi += pad; lo -= pad;
 
-        const int L = 46, R = W - 14, T = 16, B = H - 30;
+        const int L = 6, R = W - 6, T = 8, B = H - 8;   // 铺满: 仅留 6~8px 呼吸边
         // 网格: 中轴 + 上下边
         px_rect(pix, W, H, L, (T + B) / 2, R, (T + B) / 2, COL_GRID);
         px_rect(pix, W, H, L, T, R, T, COL_GRID);
@@ -1124,7 +1124,7 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
             lo = c.day_low[i]  < lo ? c.day_low[i]  : lo;
         }
         const float pad = (hi - lo) * 0.06f; hi += pad; lo -= pad;
-        const int L = 20, R = W - 20, T = 16, B = H - 30;
+        const int L = 8, R = W - 8, T = 8, B = H - 8;   // 铺满: 仅留 8px 呼吸边
         auto y_of = [&](float v) { return (int)((B - T) * (hi - v) / (hi - lo)) + T; };
         px_rect(pix, W, H, L, T, R, T, COL_GRID);
         px_rect(pix, W, H, L, B, R, B, COL_GRID);
