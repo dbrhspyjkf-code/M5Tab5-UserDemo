@@ -575,7 +575,11 @@ void AppCalendar::_installSwipeGesture()
     lv_indev_t* indev = lv_indev_get_next(nullptr);
     while (indev) {
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
-            _gesture_ctx = new SwipeCtx{this, _alive};
+            // 必须分配 CalSwipeCtx (32B, 含 press_x/y): 头文件里的 SwipeCtx
+            // 只有 24B, 回调按 CalSwipeCtx 解引用写坐标 = 堆越界 8 字节,
+            // 砸坏相邻堆块 → 之后任意 free/重绘随机崩 (2026-10-27 间歇性
+            // 重启真凶; 此前双删/孤儿 shield 是并存的真 bug 但非全部)
+            _gesture_ctx = new CalSwipeCtx{this, _alive};
             lv_indev_add_event_cb(indev, [](lv_event_t* e) {
                 auto* ctx = static_cast<CalSwipeCtx*>(lv_event_get_user_data(e));
                 auto alive = ctx->alive.lock();
