@@ -70,8 +70,6 @@ static int64_t mono_ms()
 }
 
 // 7 列的水平像素布局 (1280 宽屏). 代码/名称/现价/涨跌幅/涨跌额/换手率/量比.
-static const char* COLS[]  = {"代码", "名称", "现价", "涨跌幅", "涨跌额", "换手率", "量比"};
-static const int   COL_X[] = {24, 170, 390, 540, 710, 880, 1050};
 
 // ════════════════════════════════════════════════════════════════════════════
 //  生命周期
@@ -190,112 +188,53 @@ void AppStocks::_buildUi()
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG()), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── Header ────────────────────────────────────────────────────────
-    _header = lv_obj_create(_scr);
-    lv_obj_set_size(_header, SCREEN_W, HEADER_H);
-    lv_obj_align(_header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(_header, lv_color_hex(C_HEADER()), 0);
-    lv_obj_set_style_border_width(_header, 0, 0);
-    lv_obj_set_style_radius(_header, 0, 0);
-    lv_obj_set_style_pad_all(_header, 0, 0);
-    lv_obj_clear_flag(_header, LV_OBJ_FLAG_SCROLLABLE);
-
-    // 退出改用上拨手势 (见 _installSwipeGesture), 不再放返回按钮 —— 返回按钮点击时
-    // 若详情弹窗还开着, _requestClose 删 _scr 早于 _close_cb 切回主屏, LVGL
-    // active-screen 指针悬空, 之后任意一次布局计算就崩 (Guru Meditation,
-    // lv_obj_update_layout). 手势统一走同一个已修复顺序的 _requestClose。
-    lv_obj_t* title = lv_label_create(_header);
-    lv_label_set_text(title, "自选股");
-    lv_obj_set_style_text_font(title, stock_row_font(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 24, 0);
-
-    _status_text = lv_label_create(_header);
-    lv_label_set_text(_status_text, "● 加载中...");
-    lv_obj_set_style_text_font(_status_text, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(_status_text, lv_color_hex(C_DIM()), 0);
-    lv_obj_align(_status_text, LV_ALIGN_RIGHT_MID, -24, 0);
-
-    // ── Column header ─────────────────────────────────────────────────
-    _col_header = lv_obj_create(_scr);
-    lv_obj_set_size(_col_header, SCREEN_W, 40);
-    lv_obj_align(_col_header, LV_ALIGN_TOP_MID, 0, HEADER_H + 4);
-    lv_obj_set_style_bg_color(_col_header, lv_color_hex(C_HEADER()), 0);
-    lv_obj_set_style_bg_opa(_col_header, LV_OPA_60, 0);
-    lv_obj_set_style_border_width(_col_header, 0, 0);
-    lv_obj_set_style_radius(_col_header, 0, 0);
-    lv_obj_set_style_pad_all(_col_header, 0, 0);
-    lv_obj_clear_flag(_col_header, LV_OBJ_FLAG_SCROLLABLE);
-    for (int i = 0; i < 7; i++) {
-        lv_obj_t* lbl = lv_label_create(_col_header);
-        lv_label_set_text(lbl, COLS[i]);
-        lv_obj_set_style_text_font(lbl, stock_row_font(), 0);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(C_DIM()), 0);
-        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, COL_X[i], 0);
-    }
-
-    // ── Data rows ─────────────────────────────────────────────────────
-    const int rows_top = HEADER_H + 4 + 40;
-    for (int i = 0; i < N_ROWS; i++) {
-        _rows[i] = lv_obj_create(_scr);
-        lv_obj_set_size(_rows[i], SCREEN_W, ROW_H);
-        lv_obj_align(_rows[i], LV_ALIGN_TOP_MID, 0, rows_top + i * ROW_H);
-        lv_obj_set_style_bg_color(_rows[i], lv_color_hex(C_HEADER()), 0);
-        lv_obj_set_style_bg_opa(_rows[i], i % 2 ? LV_OPA_30 : LV_OPA_10, 0);
-        lv_obj_set_style_bg_color(_rows[i], lv_color_hex(theme::cur().accent), LV_STATE_PRESSED);
-        lv_obj_set_style_bg_opa(_rows[i], LV_OPA_40, LV_STATE_PRESSED);
-        lv_obj_set_style_border_width(_rows[i], 0, 0);
-        lv_obj_set_style_radius(_rows[i], 0, 0);
-        lv_obj_set_style_pad_all(_rows[i], 0, 0);
-        lv_obj_clear_flag(_rows[i], LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_flag(_rows[i], LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_user_data(_rows[i], (void*)(intptr_t)i);
-        lv_obj_add_event_cb(_rows[i], [](lv_event_t* e) {
+    // ── 卡片网格 4×3 (2026-10-27 用户指定, 参考工具页卡片) ──────────────
+    // 每只股票一张卡: 名称 / 股价 / 涨跌幅; 涨=红底 跌=绿底;
+    // 排布顺序 = 涨跌幅降序 (在 _refreshUiFromItems 里排序绑定).
+    for (int i = 0; i < N_CARDS; i++) {
+        const int col = i % GRID_COLS, row = i / GRID_COLS;
+        lv_obj_t* card = lv_obj_create(_scr);
+        lv_obj_set_size(card, CARD_W, CARD_H);
+        lv_obj_set_pos(card, GRID_X0 + col * (CARD_W + GRID_GAP),
+                       GRID_Y0 + row * (CARD_H + GRID_GAP));
+        lv_obj_set_style_bg_color(card, lv_color_hex(C_HEADER()), 0);
+        lv_obj_set_style_radius(card, 18, 0);
+        lv_obj_set_style_border_width(card, 0, 0);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_set_style_shadow_width(card, 0, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(card, (void*)(intptr_t)-1);   // 尚未绑定数据
+        lv_obj_add_event_cb(card, [](lv_event_t* e) {
             auto* self = static_cast<AppStocks*>(lv_event_get_user_data(e));
             int idx = (int)(intptr_t)lv_obj_get_user_data(
                           lv_event_get_current_target_obj(e));
             self->_showDetail(idx);
         }, LV_EVENT_CLICKED, this);
 
-        for (int c = 0; c < 7; c++) {
-            lv_obj_t* cell = lv_label_create(_rows[i]);
-            lv_label_set_text(cell, "--");
-            lv_obj_set_style_text_font(cell, stock_row_font(), 0);
-            lv_obj_set_style_text_color(cell, lv_color_hex(C_DIM()), 0);
-            lv_obj_align(cell, LV_ALIGN_LEFT_MID, COL_X[c], 0);
-            lv_obj_add_flag(cell, LV_OBJ_FLAG_EVENT_BUBBLE);  // 点击冒泡到 row
-        }
+        lv_obj_t* name = lv_label_create(card);
+        lv_label_set_text(name, "--");
+        lv_obj_set_style_text_font(name, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(name, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 26);
+
+        lv_obj_t* price = lv_label_create(card);
+        lv_label_set_text(price, "--");
+        lv_obj_set_style_text_font(price, &lv_font_montserrat_38, 0);
+        lv_obj_set_style_text_color(price, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 82);
+
+        lv_obj_t* chg = lv_label_create(card);
+        lv_label_set_text(chg, "");
+        lv_obj_set_style_text_font(chg, &lv_font_montserrat_30, 0);
+        lv_obj_set_style_text_color(chg, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(chg, LV_ALIGN_TOP_MID, 0, 148);
+
+        _cards[i]      = card;
+        _card_name[i]  = name;
+        _card_price[i] = price;
+        _card_chg[i]   = chg;
     }
-
-    // ── Status bar ─────────────────────────────────────────────────────
-    _status_bar = lv_obj_create(_scr);
-    lv_obj_set_size(_status_bar, SCREEN_W, STATUS_H);
-    lv_obj_align(_status_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(_status_bar, lv_color_hex(C_HEADER()), 0);
-    lv_obj_set_style_border_width(_status_bar, 0, 0);
-    lv_obj_set_style_radius(_status_bar, 0, 0);
-    lv_obj_set_style_pad_all(_status_bar, 0, 0);
-    lv_obj_clear_flag(_status_bar, LV_OBJ_FLAG_SCROLLABLE);
-
-    _status_dot = lv_label_create(_status_bar);
-    lv_label_set_text(_status_dot, "LED 滚动播报中");
-    lv_obj_set_style_text_font(_status_dot, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(_status_dot, lv_color_hex(C_DIM()), 0);
-    lv_obj_align(_status_dot, LV_ALIGN_LEFT_MID, 24, 0);
-
-    _refresh_btn = lv_button_create(_status_bar);
-    lv_obj_set_size(_refresh_btn, 140, 40);
-    lv_obj_align(_refresh_btn, LV_ALIGN_RIGHT_MID, -24, 0);
-    lv_obj_set_style_bg_color(_refresh_btn, lv_color_hex(theme::cur().accent), 0);
-    lv_obj_set_style_radius(_refresh_btn, 10, 0);
-    lv_obj_t* rlbl = lv_label_create(_refresh_btn);
-    lv_label_set_text(rlbl, "刷新");
-    lv_obj_set_style_text_font(rlbl, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(rlbl, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_center(rlbl);
-    lv_obj_add_event_cb(_refresh_btn, [](lv_event_t* e) {
-        static_cast<AppStocks*>(lv_event_get_user_data(e))->_fetchStocksAsync();
-    }, LV_EVENT_CLICKED, this);
 
     lv_screen_load(_scr);
     _installSwipeGesture();
@@ -311,9 +250,8 @@ void AppStocks::_destroyUi()
         lv_obj_delete(_scr);
         _scr = nullptr;
     }
-    for (auto& r : _rows) r = nullptr;
-    _header = _status_bar = _status_dot = _status_text = nullptr;
-    _refresh_btn = _col_header = nullptr;
+    for (int i = 0; i < N_CARDS; i++)
+        _cards[i] = _card_name[i] = _card_price[i] = _card_chg[i] = nullptr;
     if (_poll_timer) { lv_timer_delete(_poll_timer); _poll_timer = nullptr; }
     _alive = std::make_shared<bool>(true);  // fresh flag for the next _buildUi/_installSwipeGesture
 }
@@ -372,26 +310,6 @@ void AppStocks::_removeSwipeGesture()
     // _gesture_ctx intentionally not freed — see its allocation site.
 }
 
-void AppStocks::_setCellText(lv_obj_t* row, int col, const char* text, uint32_t color)
-{
-    if (!row) return;
-    uint32_t child_cnt = lv_obj_get_child_cnt(row);
-    if ((uint32_t)col >= child_cnt) return;
-    lv_obj_t* cell = lv_obj_get_child(row, col);
-    if (!cell) return;
-    lv_label_set_text(cell, text);
-    lv_obj_set_style_text_color(cell, lv_color_hex(color), 0);
-}
-
-void AppStocks::_setStatus(bool online, const char* text)
-{
-    if (!_status_text) return;
-    std::string s = online ? "● 在线" : "● 离线";
-    if (text) { s += "  "; s += text; }
-    lv_label_set_text(_status_text, s.c_str());
-    lv_obj_set_style_text_color(_status_text,
-        lv_color_hex(online ? C_UP() : C_DOWN()), 0);
-}
 
 void AppStocks::_showDetail(int row_idx)
 {
@@ -480,35 +398,59 @@ void AppStocks::_refreshUiFromItems()
     LvglLockGuard lock;
     if (!_scr) return;
     std::vector<StockItem> snapshot;
-    bool err;
     {
         std::lock_guard<std::mutex> lk(_items_mu);
         snapshot = _items;
-        err = _fetch_error;
     }
-    for (int i = 0; i < N_ROWS; i++) {
-        if (i < (int)snapshot.size()) {
-            const auto& s = snapshot[i];
-            char buf[32];
-            _setCellText(_rows[i], 0, s.code.c_str(), C_TEXT());
-            _setCellText(_rows[i], 1, s.name.c_str(), C_TEXT());
-            snprintf(buf, sizeof(buf), "%.2f", s.price);
-            _setCellText(_rows[i], 2, buf, C_TEXT());
-            snprintf(buf, sizeof(buf), "%+.2f%%", s.chg);
-            _setCellText(_rows[i], 3, buf, _chgColor(s.chg));
-            snprintf(buf, sizeof(buf), "%+.2f", s.pchg);
-            _setCellText(_rows[i], 4, buf, _chgColor(s.chg));
-            snprintf(buf, sizeof(buf), "%.2f%%", s.turnover);
-            _setCellText(_rows[i], 5, buf, C_DIM());
-            snprintf(buf, sizeof(buf), "%.2f", s.liangbi);
-            _setCellText(_rows[i], 6, buf, C_DIM());
-        } else {
-            for (int c = 0; c < 7; c++) _setCellText(_rows[i], c, "--", C_DIM());
+
+    // 按涨跌幅降序; 卡片从左到右、从上到下依次绑定
+    std::vector<int> order(snapshot.size());
+    for (int i = 0; i < (int)order.size(); i++) order[i] = i;
+    std::stable_sort(order.begin(), order.end(),
+                     [&](int a, int b) { return snapshot[a].chg > snapshot[b].chg; });
+
+    for (int i = 0; i < N_CARDS; i++) {
+        lv_obj_t* card = _cards[i];
+        if (i >= (int)order.size()) {
+            if (!snapshot.empty()) {          // 数据比卡位少 → 多余的卡藏掉
+                lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
+                continue;
+            }
+            // 完全无数据 (首拉失败等): 显示中性 "--" 卡
+            lv_obj_clear_flag(card, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_user_data(card, (void*)(intptr_t)-1);
+            lv_obj_set_style_bg_color(card, lv_color_hex(C_HEADER()), 0);
+            lv_obj_set_style_text_color(_card_name[i],  lv_color_hex(C_DIM()), 0);
+            lv_obj_set_style_text_color(_card_price[i], lv_color_hex(C_DIM()), 0);
+            lv_obj_set_style_text_color(_card_chg[i],   lv_color_hex(C_DIM()), 0);
+            lv_label_set_text(_card_name[i],  "--");
+            lv_label_set_text(_card_price[i], "--");
+            lv_label_set_text(_card_chg[i],   "");
+            continue;
         }
+
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_HIDDEN);
+        const auto& st = snapshot[order[i]];
+        lv_obj_set_user_data(card, (void*)(intptr_t)order[i]);  // 点击 → 原始下标
+
+        // 中国 A 股惯例: 涨=红 跌=绿. 彩底上白字.
+        const bool up   = st.chg > 0.01f;
+        const bool down = st.chg < -0.01f;
+        const uint32_t bg  = up ? C_UP() : down ? C_DOWN() : C_HEADER();
+        const uint32_t fg  = (up || down) ? 0xFFFFFF : C_TEXT();
+        const uint32_t fg2 = (up || down) ? 0xFFFFFF : C_DIM();
+        lv_obj_set_style_bg_color(card, lv_color_hex(bg), 0);
+        lv_obj_set_style_text_color(_card_name[i],  lv_color_hex(fg), 0);
+        lv_obj_set_style_text_color(_card_price[i], lv_color_hex(fg), 0);
+        lv_obj_set_style_text_color(_card_chg[i],   lv_color_hex(fg2), 0);
+
+        lv_label_set_text(_card_name[i], st.name.c_str());
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%.2f", st.price);
+        lv_label_set_text(_card_price[i], buf);
+        snprintf(buf, sizeof(buf), "%+.2f%%", st.chg);
+        lv_label_set_text(_card_chg[i], buf);
     }
-    char count_buf[32];
-    snprintf(count_buf, sizeof(count_buf), "%u 只", (unsigned)snapshot.size());
-    _setStatus(!err, count_buf);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

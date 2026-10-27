@@ -14,7 +14,7 @@
 // https://github.com/lvgl/lv_port_pc_vscode/blob/master/main/src/main.c
 
 static const std::string _tag = "lvgl";
-static std::mutex _lvgl_mutex;
+static std::recursive_mutex _lvgl_mutex;  // 递归: mooncake update 持锁调 onOpen, app 内 _buildUi 再拿锁
 
 void HalDesktop::lvgl_init()
 {

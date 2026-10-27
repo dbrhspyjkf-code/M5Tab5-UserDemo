@@ -42,10 +42,14 @@ private:
     // ── Layout ─────────────────────────────────────────────────────────
     static constexpr int SCREEN_W    = 1280;
     static constexpr int SCREEN_H    = 720;
-    static constexpr int HEADER_H    = 72;
-    static constexpr int STATUS_H    = 60;
-    static constexpr int ROW_H       = 54;
-    static constexpr int N_ROWS      = 10;
+    // 卡片网格 4×3 (2026-10-27 用户指定, 参考工具页卡片风格)
+    static constexpr int GRID_COLS   = 4;
+    static constexpr int N_CARDS     = 12;
+    static constexpr int CARD_W      = 294;
+    static constexpr int CARD_H      = 213;
+    static constexpr int GRID_X0     = 28;   // (1280-4*294-3*16)/2
+    static constexpr int GRID_Y0     = 24;
+    static constexpr int GRID_GAP    = 16;
 
     // ── Color palette (must match app_home / app_ha) ──────────────────
     // 配色: 实时读全局主题 (utils/theme/theme.h), 函数形式便于调用点零快照
@@ -90,13 +94,10 @@ private:
 
     // ── LVGL handles ───────────────────────────────────────────────────
     lv_obj_t* _scr         {nullptr};
-    lv_obj_t* _header      {nullptr};
-    lv_obj_t* _status_bar  {nullptr};
-    lv_obj_t* _status_dot  {nullptr};
-    lv_obj_t* _status_text {nullptr};
-    lv_obj_t* _refresh_btn {nullptr};
-    lv_obj_t* _col_header  {nullptr};
-    lv_obj_t* _rows[N_ROWS] {nullptr};
+    lv_obj_t* _cards[N_CARDS]      {nullptr};
+    lv_obj_t* _card_name[N_CARDS]  {nullptr};
+    lv_obj_t* _card_price[N_CARDS] {nullptr};
+    lv_obj_t* _card_chg[N_CARDS]   {nullptr};
     lv_obj_t* _detail_modal{nullptr};
     lv_timer_t* _poll_timer{nullptr};
 
@@ -134,8 +135,6 @@ private:
     void _destroyUi();
     void _installSwipeGesture();
     void _removeSwipeGesture();
-    void _setCellText(lv_obj_t* row, int col, const char* text, uint32_t color);
-    void _setStatus(bool online, const char* text);
     void _showDetail(int row);
     void _closeDetail();
     void _fetchStocksAsync();
