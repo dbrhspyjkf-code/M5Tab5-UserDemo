@@ -272,9 +272,20 @@ void AppHome::onOpen()
     // _fetch_dashboard). Rows are flat cards with a dim index number; the
     // four card backgrounds step darker from top to bottom (渐变), the OPi
     // card is a 3x2 module grid with threshold-colored bars.
+    // 右列滚动容器 (2026-10-27 用户要求: 5 张卡可上下拉动, OPi 沉底靠滚动查看)
+    _dash_scroll = lv_obj_create(_scr);
+    lv_obj_set_pos(_dash_scroll, 468, 40);
+    lv_obj_set_size(_dash_scroll, 756, 720 - 40);
+    lv_obj_set_style_bg_opa(_dash_scroll, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_dash_scroll, 0, 0);
+    lv_obj_set_style_pad_all(_dash_scroll, 0, 0);
+    lv_obj_set_style_pad_row(_dash_scroll, 0, 0);
+    lv_obj_set_style_pad_column(_dash_scroll, 0, 0);
+    lv_obj_set_scroll_dir(_dash_scroll, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(_dash_scroll, LV_SCROLLBAR_MODE_AUTO);
     auto row_card = [&](int y, int h, uint32_t bg, uint32_t border) {
-        lv_obj_t* card = lv_obj_create(_scr);
-        lv_obj_set_pos(card, 468, y);
+        lv_obj_t* card = lv_obj_create(_dash_scroll);
+        lv_obj_set_pos(card, 0, y);
         lv_obj_set_size(card, 756, h);
         lv_obj_set_style_bg_color(card, lv_color_hex(bg), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
@@ -301,27 +312,47 @@ void AppHome::onOpen()
         const uint32_t IDX  = theme::cur().text_dim;   // dim green index
         const uint32_t NAME = theme::cur().text_soft;   // soft text
         const uint32_t VAL  = theme::cur().text_hi;   // bright value
-        lv_obj_t* c = row_card(40, 96, theme::cur().card[0], theme::cur().border);
+        lv_obj_t* c = row_card(0, 96, theme::cur().card[0], theme::cur().border);
         mk_lbl(c, &lv_font_montserrat_28, IDX,  "01", LV_ALIGN_LEFT_MID,  26, 0);
         mk_lbl(c, zh_font_md(),          NAME, "GLM 用量",   LV_ALIGN_LEFT_MID,  84, 0);
         // 两行: 上=Pro 5H/7D 剩余%, 下=重置时间 (2026-10-27 用户要求)
         _dash_glm  = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 14);
         _dash_glm2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
 
-        c = row_card(148, 96, theme::cur().card[1], theme::cur().border);
+        c = row_card(108, 96, theme::cur().card[1], theme::cur().border);
         mk_lbl(c, &lv_font_montserrat_28, IDX,  "02", LV_ALIGN_LEFT_MID,  26, 0);
         mk_lbl(c, zh_font_md(),          NAME, "DeepSeek 余额", LV_ALIGN_LEFT_MID, 84, 0);
         _dash_ds = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_RIGHT_MID, -28, 0);
 
-        c = row_card(256, 96, theme::cur().card[2], theme::cur().border);
+        c = row_card(216, 96, theme::cur().card[2], theme::cur().border);
         mk_lbl(c, &lv_font_montserrat_28, IDX,  "03", LV_ALIGN_LEFT_MID,  26, 0);
         mk_lbl(c, zh_font_md(),          NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 84, 0);
         _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 16);
         _dash_ag2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
     }
-    {   // 04 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
+    {   // 04 每日一句英文宽卡 (hermes /daily/sentence, 按日期轮换; 2026-10-27 加)
+        lv_obj_t* card = row_card(324, 240, theme::cur().card[3], theme::cur().border);
+        mk_lbl(card, zh_font_md(), theme::cur().text_dim, "每日一句",
+               LV_ALIGN_TOP_LEFT, 24, 16);
+        _dash_sent_en = lv_label_create(card);
+        lv_label_set_text(_dash_sent_en, "--");
+        lv_obj_set_style_text_font(_dash_sent_en, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(_dash_sent_en, lv_color_hex(theme::cur().text_hi), 0);
+        lv_label_set_long_mode(_dash_sent_en, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(_dash_sent_en, 756 - 48);
+        lv_obj_align(_dash_sent_en, LV_ALIGN_TOP_LEFT, 24, 52);
+        _dash_sent_cn = lv_label_create(card);
+        lv_label_set_text(_dash_sent_cn, "");
+        lv_obj_set_style_text_font(_dash_sent_cn, zh_font_md(), 0);
+        lv_obj_set_style_text_color(_dash_sent_cn, lv_color_hex(theme::cur().text_dim), 0);
+        lv_label_set_long_mode(_dash_sent_cn, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(_dash_sent_cn, 756 - 48);
+        lv_obj_align(_dash_sent_cn, LV_ALIGN_TOP_LEFT, 24, 176);
+    }
+    {   // 05 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
-        lv_obj_t* card = row_card(364, 240, theme::cur().card[3], theme::cur().border);
+        // (2026-10-27 沉底: 右列改 5 卡滚动后放最下, 上拉查看)
+        lv_obj_t* card = row_card(576, 240, theme::cur().card[3], theme::cur().border);
 
         _opi_dot = lv_obj_create(card);
         lv_obj_set_size(_opi_dot, 12, 12);
@@ -513,6 +544,10 @@ void AppHome::onRunning()
         std::lock_guard<std::mutex> lk(_dash_mutex);
         if (_dash_glm) lv_label_set_text(_dash_glm, _dash_glm_txt.c_str());
         if (_dash_glm2) lv_label_set_text(_dash_glm2, _dash_glm2_txt.c_str());
+        if (_dash_sent_en && _dash_sent_en_txt.compare(lv_label_get_text(_dash_sent_en)) != 0)
+            lv_label_set_text(_dash_sent_en, _dash_sent_en_txt.c_str());
+        if (_dash_sent_cn && _dash_sent_cn_txt.compare(lv_label_get_text(_dash_sent_cn)) != 0)
+            lv_label_set_text(_dash_sent_cn, _dash_sent_cn_txt.c_str());
         if (_dash_ds)  lv_label_set_text(_dash_ds,  _dash_ds_txt.c_str());
         if (_dash_ag1) lv_label_set_text(_dash_ag1, _dash_ag1_txt.c_str());
         if (_dash_ag2) lv_label_set_text(_dash_ag2, _dash_ag2_txt.c_str());
@@ -579,6 +614,7 @@ void AppHome::_fetch_dashboard()
         // Row values — the row name ("GLM 用量"…) lives on the left of the
         // card, so these carry data only.
         std::string glm_txt = "--", glm_sub = "", ds_txt = "--";
+        std::string sent_en, sent_cn;
         std::string ag1, ag2;
 
         if (auto j = pick(GetHAL()->httpGet(base + "/glm/quota").body); !j.is_null()) {
@@ -612,6 +648,12 @@ void AppHome::_fetch_dashboard()
         }
         if (auto j = pick(GetHAL()->httpGet(base + "/api/deepseek/balance").body); !j.is_null()) {
             ds_txt = j.value("total_balance", std::string("?")) + " 元";
+        }
+        if (auto j = pick(GetHAL()->httpGet(base + "/daily/sentence").body); !j.is_null()) {
+            // 每日一句 (按日期轮换, 服务端缓存; 失败保持上次内容)
+            std::string en = j.value("en", std::string());
+            std::string cn = j.value("cn", std::string());
+            if (!en.empty()) { sent_en = en; sent_cn = cn; }
         }
         OpiData od;
         if (auto j = pick(GetHAL()->httpGet(base + "/system/status").body); !j.is_null()) {
@@ -649,6 +691,7 @@ void AppHome::_fetch_dashboard()
         std::lock_guard<std::mutex> lk(_dash_mutex);
         _dash_glm_txt = glm_txt;
         _dash_glm2_txt = glm_sub;
+        if (!sent_en.empty()) { _dash_sent_en_txt = sent_en; _dash_sent_cn_txt = sent_cn; }
         _dash_ds_txt  = ds_txt;
         _dash_ag1_txt = ag1.empty() ? "今日无提醒/行程" : ag1;
         _dash_ag2_txt = ag2;

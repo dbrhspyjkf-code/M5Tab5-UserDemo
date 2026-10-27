@@ -88,6 +88,9 @@ private:
     // 3x2 module grid with threshold-colored bars, 参考 Mac 的
     // orange-pi.widget). Same pattern as the weather: a detached worker
     // writes strings/struct, onRunning copies them to widgets.
+    lv_obj_t*  _dash_scroll = nullptr;  // 右列滚动容器 (5 卡)
+    lv_obj_t*  _dash_sent_en = nullptr;  // 每日一句英文
+    lv_obj_t*  _dash_sent_cn = nullptr;  // 每日一句中文
     lv_obj_t*  _dash_glm = nullptr;
     lv_obj_t*  _dash_glm2 = nullptr;   // GLM 第二行: 重置时间 (5H/7D)
     lv_obj_t*  _dash_ds  = nullptr;
@@ -95,6 +98,7 @@ private:
     lv_obj_t*  _dash_ag2 = nullptr;
     uint32_t   _last_dash_ms = 0;
     std::string _dash_glm_txt, _dash_glm2_txt, _dash_ds_txt, _dash_ag1_txt, _dash_ag2_txt;
+    std::string _dash_sent_en_txt, _dash_sent_cn_txt;
 
     struct OpiModule { lv_obj_t* val = nullptr; lv_obj_t* bar = nullptr; };
     OpiModule  _opi_mod[5] = {};    // 负载 / CPU / 内存 / 交换 / 磁盘
