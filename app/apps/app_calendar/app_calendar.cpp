@@ -428,7 +428,10 @@ void finalize_dropdown(AppCalendar* self, lv_obj_t* scr, lv_obj_t* dd)
         // 排入删除, 再 delete_async 一次 = 双重释放 → 堆损坏 → 随后任何
         // 重绘/free 崩溃 (2026-10-27 实锤: Guru Load access + heap_caps_free
         // assert 两种死法, "点万年历任何位置都重启").
-        lv_dropdown_close(c->dd);
+        // 仅当 dd 仍是现役下拉才 close (指针比较不解引用): 万一有孤儿 shield
+        // 残留, 其 dd 已被释放, 绝不能对它调 close (UAF).
+        if (c->app->isDropdownActive(c->dd))
+            lv_dropdown_close(c->dd);
     }, LV_EVENT_CLICKED, ctx);
     // ctx 的释放也单一所有者: 跟着 shield 的 DELETE 走 (无论哪条路径删它)
     lv_obj_add_event_cb(shield, [](lv_event_t* ev) {
@@ -452,7 +455,11 @@ void AppCalendar::_yearDd_cb(lv_event_t* e)
 {
     auto* self = static_cast<AppCalendar*>(lv_event_get_user_data(e));
     LvglLockGuard lock;
-    if (!self->_scr || self->_year_dd) return;
+    if (!self->_scr) return;
+    // 另一个下拉 (月) 可能还开着: 不关就开会造出第二个 shield, _dd_shield
+    // 被覆盖 → 旧 shield 成孤儿, 其 dd 被 _closeDropdown 删除后再点它 =
+    // use-after-free (2026-10-27 间歇性重启根因). 开新下拉前必先关旧.
+    if (self->_year_dd || self->_month_dd) self->_closeDropdown();
 
     self->_year_dd = lv_dropdown_create(self->_scr);
     // 注意: 必须用 set_options (内部复制) —— set_options_static 只存指针,
@@ -507,7 +514,9 @@ void AppCalendar::_monthDd_cb(lv_event_t* e)
 {
     auto* self = static_cast<AppCalendar*>(lv_event_get_user_data(e));
     LvglLockGuard lock;
-    if (!self->_scr || self->_month_dd) return;
+    if (!self->_scr) return;
+    // 同 _yearDd_cb: 年下拉可能还开着, 先关再开 (防孤儿 shield UAF)
+    if (self->_year_dd || self->_month_dd) self->_closeDropdown();
 
     self->_month_dd = lv_dropdown_create(self->_scr);
     lv_dropdown_set_options(self->_month_dd, "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12");

@@ -18,6 +18,10 @@ public:
 
     void setCloseCallback(std::function<void()> cb) { _close_cb = std::move(cb); }
 
+    // 下拉拦截层用: 该 dd 是否仍是现役下拉 (仅指针比较, 不解引用 —
+    // 孤儿 shield 的 dd 可能已被释放, 绝不能对它调 lv_dropdown_close)
+    bool isDropdownActive(lv_obj_t* dd) const { return _year_dd == dd || _month_dd == dd; }
+
     void onCreate()  override {}
     void onOpen()    override;
     void onRunning() override;   // 失焦检测 → 删屏收尾 (stocks 模式)
