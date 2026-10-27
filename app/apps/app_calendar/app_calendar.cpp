@@ -79,12 +79,20 @@ void AppCalendar::onClose()
 {
     mclog::tagInfo(TAG, "on close");
     _removeSwipeGesture();
-    // 屏不删! lv_screen_load 是异步生效, 同步删"刚才的活动屏"会在渲染
-    // timer 下一拍踩空 (lv_obj_update_layout → Load access fault, 2026-10-27
-    // 上拨退出重启实锤, addr2line 定位 lv_refr.c:382)。屏对象随 app 常驻,
-    // 下次 onOpen 复用 (lv_screen_load 回来即可), 内容由 _refreshMonth 刷新。
-    // 下拉/拦截层等子对象随屏保留, 状态无害。
-    _scr = nullptr;
+    // 删屏必须延迟一拍: onClose 时万年历屏仍是活动屏 (工具页 onOpen 在
+    // 下一拍才 load), 同步删 → 渲染 timer 踩空 (addr2line 实锤
+    // lv_refr.c:382)。async 回调执行时工具页已加载, 删除安全。
+    if (_scr) {
+        lv_obj_t* scr = _scr;
+        _scr = nullptr;
+        lv_async_call([](void* p) {
+            lv_obj_t* scr = static_cast<lv_obj_t*>(p);
+            lv_obj_t* tmp = lv_obj_create(NULL);
+            lv_screen_load(tmp);        // 保险: 若此时它仍是活动屏先切走
+            lv_obj_delete(scr);         // 此刻非活动, 同步删安全
+            lv_obj_delete_async(tmp);
+        }, scr);
+    }
     _title = _grid = _detail_lbl = nullptr;
     _year_lbl = _month_lbl = _year_dd = _month_dd = nullptr;
     _dd_shield = nullptr;
