@@ -39,10 +39,10 @@ static const std::string TAG = "calendar";
 
 static constexpr int COLS = 7;                  // 周日~周六
 static constexpr int ROWS = 6;                  // 最多 6 行
-static constexpr int CELL_W = 152;              // 1064/7
-static constexpr int CELL_H = 96;               // 6 行 × 96 + 表头
+static constexpr int CELL_W = 176;              // (1280-2*24)/7, 铺满 (2026-10-27)
+static constexpr int CELL_H = 84;               // 6 行, 底部留详情行
 static constexpr int GRID_W = COLS * CELL_W;
-static constexpr int GRID_X = (1280 - GRID_W) / 2;
+static constexpr int GRID_X = (1280 - GRID_W) / 2;   // = 24
 
 // 星期头
 static const char* const kWd[] = {"日", "一", "二", "三", "四", "五", "六"};
@@ -355,6 +355,38 @@ void AppCalendar::_nextYearClick_cb(lv_event_t* e)
     static_cast<AppCalendar*>(lv_event_get_user_data(e))->_shiftYear(1);
 }
 
+namespace {
+// 下拉打开后的收尾: 列表字体放大 + 全屏拦截层 (点外部=关闭下拉).
+// LVGL dropdown 默认点外部不关闭; 拦截层是最可控的方案.
+struct DdShieldCtx {
+    AppCalendar* app;
+    lv_obj_t*    dd;
+};
+void finalize_dropdown(AppCalendar* self, lv_obj_t* scr, lv_obj_t* dd)
+{
+    lv_obj_t* list = lv_dropdown_get_list(dd);
+    if (list) {
+        lv_obj_set_style_text_font(list, zh30(), 0);   // 列表数字放大到 30px
+        lv_obj_set_style_pad_ver(list, 8, 0);
+    }
+    lv_obj_t* shield = lv_obj_create(scr);
+    lv_obj_set_size(shield, 1280, 720);
+    lv_obj_set_pos(shield, 0, 0);
+    lv_obj_set_style_bg_opa(shield, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(shield, 0, 0);
+    lv_obj_clear_flag(shield, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(shield, LV_OBJ_FLAG_CLICKABLE);
+    auto* ctx = new DdShieldCtx{self, dd};
+    lv_obj_add_event_cb(shield, [](lv_event_t* ev) {
+        auto* c = static_cast<DdShieldCtx*>(lv_event_get_user_data(ev));
+        lv_dropdown_close(c->dd);                       // 触发 CANCEL → 既有清理
+        lv_obj_delete_async(lv_event_get_current_target_obj(ev));
+        delete c;
+    }, LV_EVENT_CLICKED, ctx);
+    lv_obj_move_to_index(shield, 0);   // 垫底 (dropdown list 挂更新层, 在其上)
+}
+}  // namespace
+
 // 点击"年"标签: 弹全屏年份下拉 (1900-2100, 201 行). 选中即跳转.
 void AppCalendar::_yearDd_cb(lv_event_t* e)
 {
@@ -380,6 +412,7 @@ void AppCalendar::_yearDd_cb(lv_event_t* e)
     lv_dropdown_set_symbol(self->_year_dd, nullptr);   // 默认 FA 箭头 U+F078, zh 字体无字形
     // 打开列表
     lv_dropdown_open(self->_year_dd);
+    finalize_dropdown(self, self->_scr, self->_year_dd);
     lv_obj_add_event_cb(self->_year_dd, [](lv_event_t* ev) {
         auto* s2 = static_cast<AppCalendar*>(lv_event_get_user_data(ev));
         lv_obj_t* dd = lv_event_get_current_target_obj(ev);
@@ -429,6 +462,7 @@ void AppCalendar::_monthDd_cb(lv_event_t* e)
     lv_obj_set_style_bg_color(self->_month_dd, lv_color_hex(cHeader()), 0);
     lv_dropdown_set_symbol(self->_month_dd, nullptr);
     lv_dropdown_open(self->_month_dd);
+    finalize_dropdown(self, self->_scr, self->_month_dd);
     lv_obj_add_event_cb(self->_month_dd, [](lv_event_t* ev) {
         auto* s2 = static_cast<AppCalendar*>(lv_event_get_user_data(ev));
         lv_obj_t* dd = lv_event_get_current_target_obj(ev);
