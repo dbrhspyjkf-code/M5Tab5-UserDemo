@@ -185,6 +185,17 @@ void AppStocks::_requestClose()
     if (_close_cb) _close_cb();
 }
 
+// 上拨退出去重: GESTURE (拨动中途) 与 RELEASED 位移 (抬起) 双轨都会对同一次
+// 上拨命中, 500ms 内只认第一次 —— 连续两次 _requestClose 会在关闭过程中再调
+// close()/openApp, 把 mooncake 状态机搞乱 (2026-10-27 实锤: 上拨退出失效).
+void AppStocks::_requestExitOnce()
+{
+    const int64_t now = mono_ms();
+    if (now - _last_exit_ms < 500) return;
+    _last_exit_ms = now;
+    _requestClose();
+}
+
 void AppStocks::_teardownHardware()
 {
     _app_open.store(false);  // 先关门: 在途 worker 完成后不会再 _startTicker
@@ -381,7 +392,17 @@ void AppStocks::_buildIndexPage()
 
 void AppStocks::_setPage(int page)
 {
-    _page = page;
+    // 横向拨动由 GESTURE (快速甩动, 拨动中途触发) 与 RELEASED 位移 (慢速拨动,
+    // 抬起触发) 双轨判据承载: 同一次快速拨动两轨都会命中, 500ms 内只认第一次,
+    // 否则翻过去又翻回来 (2026-10-27 实锤: 看得到对页、松手弹回).
+    // 否则翻过去又翻回来 (2026-10-27 实锤: 看得到对页、松手弹回).
+    // 去重只拦「翻页」; 摆位始终执行 (构建首调 _page 未变也要把两页摆到位).
+    if (page != _page) {
+        const int64_t now = mono_ms();
+        if (now - _last_flip_ms < 500) return;
+        _last_flip_ms = now;
+        _page = page;
+    }
     if (!_scr || !_stocks_page || !_index_page) return;
     lv_obj_set_pos(_stocks_page, page == 0 ? 0 : -SCREEN_W, 0);
     lv_obj_set_pos(_index_page, page == 1 ? 0 : SCREEN_W, 0);
@@ -578,14 +599,17 @@ void AppStocks::_installSwipeGesture()
                     }
                     // 上拨退出兜底 (滚动容器会吞 GESTURE): 在滚动顶部,
                     // 纵向快速上甩 (>120px, 纵向为主, 时序短) → 退出.
-                    const bool at_top = !ctx->app->_stocks_scroll ||
+                    // at_top 按当前页判: 指数页无滚动列表, 不被自选股列表的
+                    // 滚动位误拦 (2026-10-27 实锤: 列表滚过之后指数页上拨失效).
+                    const bool at_top = ctx->app->_page == 1 ||
+                        !ctx->app->_stocks_scroll ||
                         lv_obj_get_scroll_y(ctx->app->_stocks_scroll) <= 2;
                     if (at_top && dy < -120 && abs(dy) > abs(dx) * 2) {
                         auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
                         lv_async_call([](void* u) {
                             auto* c = static_cast<SwipeCtx*>(u);
                             auto a = c->alive.lock();
-                            if (a && *a) c->app->_requestClose();
+                            if (a && *a) c->app->_requestExitOnce();
                             delete c;
                         }, app_ctx);
                     }
@@ -601,7 +625,8 @@ void AppStocks::_installSwipeGesture()
                 if (dir == LV_DIR_TOP) {
                     // 滚动容器在顶部时上拨才退出; 已向下滚过 (y>0) 则本次
                     // 上拨归滚动 (把页面拨回顶部), 不误退.
-                    if (ctx->app->_stocks_scroll &&
+                    // 只在自选股页 (page 0) 看列表滚动位; 指数页无可滚列表.
+                    if (ctx->app->_page == 0 && ctx->app->_stocks_scroll &&
                         lv_obj_get_scroll_y(ctx->app->_stocks_scroll) > 2) {
                         return;   // 让 LVGL 继续把本手势交给滚动
                     }
@@ -610,7 +635,7 @@ void AppStocks::_installSwipeGesture()
                     lv_async_call([](void* u) {
                         auto* c = static_cast<SwipeCtx*>(u);
                         auto a = c->alive.lock();
-                        if (a && *a) c->app->_requestClose();
+                        if (a && *a) c->app->_requestExitOnce();
                         delete c;
                     }, app_ctx);
                 } else if (dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT) {

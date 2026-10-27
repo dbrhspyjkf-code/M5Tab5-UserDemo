@@ -65,6 +65,8 @@ private:
     lv_obj_t* _stocks_page      {nullptr};  // 自选股页容器
     int        _page            = 0;        // 0=自选股 1=指数
     uint32_t   _last_index_ms   = 0;
+    int64_t    _last_flip_ms    = 0;    // 上次切页时刻: 双轨判据去重 (GESTURE+RELEASED)
+    int64_t    _last_exit_ms    = 0;    // 上次退出请求时刻: 同上 (上拨双轨去重)
     void _buildIndexPage();
     void _fetchIndicesAsync();
     void _applyIndices();
@@ -182,6 +184,7 @@ private:
     // 不一定触发. 因此停 ticker / 释放 LED / 把 PORT A 交还邮件通知器的收尾
     // 必须在这里做, 否则 setPortAOwnedByApp(false) 永不复位, 邮件 LED 永久失灵.
     void _requestClose();
+    void _requestExitOnce();   // 上拨退出去重 (GESTURE/RELEASED 双轨 500ms 窗口)
     void _teardownHardware();  // 停 ticker + 释放 strip + 交还 PORT A (幂等)
     void _buildUi();
     void _destroyUi();
