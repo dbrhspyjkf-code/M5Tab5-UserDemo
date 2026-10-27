@@ -165,8 +165,7 @@ private:
     std::shared_ptr<bool> _alive = std::make_shared<bool>(true);
     lv_indev_t* _gesture_indev{nullptr};
     void*       _gesture_ctx{nullptr};  // opaque SwipeCtx*, defined in app_stocks.cpp
-    lv_point_t  _touch_start{0, 0};     // PRESSED 起点, 区分翻页手势与卡片点击
-    int32_t     _scroll_y_at_press = 0; // PRESSED 时列表滚动位 (上拨退出的"在顶部"判定)
+    lv_point_t  _touch_start{0, 0};     // PRESSED 起点, 区分翻页/点击/上拨退出
 
     // ── LED handles (ESP only) ─────────────────────────────────────────
 #ifndef PLATFORM_BUILD_DESKTOP

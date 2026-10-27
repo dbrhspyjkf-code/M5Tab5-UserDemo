@@ -655,12 +655,7 @@ void AppStocks::_installSwipeGesture()
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
                     ctx->press_x = p.x; ctx->press_y = p.y;
-                    ctx->app->_touch_start = p;   // 供 _showDetail 区分翻页与点击
-                    // 列表滚动位同样取按下瞬间的: 上拨本身会把列表滚离顶部,
-                    // 抬起时再读就永远"不在顶部"了 (2026-10-27 实锤: >12 卡
-                    // 列表可滚后上拨退出失效).
-                    ctx->app->_scroll_y_at_press = ctx->app->_stocks_scroll
-                        ? lv_obj_get_scroll_y(ctx->app->_stocks_scroll) : 0;
+                    ctx->app->_touch_start = p;   // 供 _showDetail/上拨退出判定用
                     return;
                 }
                 if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
@@ -681,14 +676,12 @@ void AppStocks::_installSwipeGesture()
                         }, app_ctx);
                         return;
                     }
-                    // 上拨退出兜底 (滚动容器会吞 GESTURE): 在滚动顶部,
-                    // 纵向快速上甩 (>120px, 纵向为主, 时序短) → 退出.
-                    // at_top 按当前页 + 按下瞬间的滚动位判: 上拨本身会把列表
-                    // 滚离顶部, 抬起时再读永远不在顶部 (>12 卡实锤).
-                    const bool at_top = ctx->app->_page == 1 ||
-                        !ctx->app->_stocks_scroll ||
-                        ctx->app->_scroll_y_at_press <= 2;
-                    if (at_top && dy < -120 && abs(dy) > abs(dx) * 2) {
+                    // 上拨退出: 只认「从屏幕底部往上拨」—— 起点在屏幕下缘
+                    // 1/4 (y>540) 且纵向为主、位移>120px. 其余位置的纵向拖动
+                    // 一律归列表滚动, 不退出 (2026-10-27 用户反馈: 任意上下
+                    // 拖动都误退, 滚动位判定修不住, 改按起点位置判定).
+                    const bool from_bottom = ctx->press_y > 540;
+                    if (from_bottom && dy < -120 && abs(dy) > abs(dx) * 2) {
                         auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
                         lv_async_call([](void* u) {
                             auto* c = static_cast<SwipeCtx*>(u);
@@ -708,13 +701,9 @@ void AppStocks::_installSwipeGesture()
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 const lv_dir_t dir = lv_indev_get_gesture_dir(dev);
                 if (dir == LV_DIR_TOP) {
-                    // 滚动容器在顶部时上拨才退出; 已向下滚过则本次上拨归滚动
-                    // (把页面拨回顶部), 不误退. 滚动位取按下瞬间的 (理由同上).
-                    // 只在自选股页 (page 0) 看列表滚动位; 指数页无可滚列表.
-                    if (ctx->app->_page == 0 && ctx->app->_stocks_scroll &&
-                        ctx->app->_scroll_y_at_press > 2) {
-                        return;   // 让 LVGL 继续把本手势交给滚动
-                    }
+                    // 只认「从屏幕底部往上拨」(起点在屏幕下缘 1/4); 其余位置
+                    // 的上拨全部归列表滚动, 不退出 (与 RELEASED 路径同判据).
+                    if (ctx->app->_touch_start.y <= 540) return;
                     // Defer: don't tear down _scr synchronously from inside indev dispatch.
                     auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
                     lv_async_call([](void* u) {
