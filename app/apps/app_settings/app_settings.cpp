@@ -41,7 +41,8 @@ extern const lv_image_dsc_t fx_icon;     // 100x100
 extern const lv_image_dsc_t unit_icon;   // 200x200
 extern const lv_image_dsc_t lora_logo;   // 130x130
 extern const lv_image_dsc_t stocks_icon; // 130x130
-extern const lv_image_dsc_t calendar_icon; // 130x130 (icons8-日历 重着色)
+extern const lv_image_dsc_t calendar_icon; // 100x100 (icons8-日历, 原色)
+extern const lv_image_dsc_t stocks8_icon;  // 100x100 (icons8-股市, 原色)
 extern const lv_image_dsc_t reachy_icon; // 130x130 (app_reachy/reachy_icon.c)
 
 // Calculator fonts (Arial Unicode subsets) defined in this app's font_calc_*.c.
@@ -464,11 +465,11 @@ void AppSettings::_buildToolsPage()
     make_tile(2, 1, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 1);
 
     // 第 3 行第 2 列: 自选股 (走 hermes :8766/api/stocks/portfolio, mx-selfselect 后端)
-    make_tile(3, 1, &stocks_icon, 130, "自选股", _toolStocks_cb);
+    make_tile(3, 1, &stocks8_icon, 100, "自选股", _toolStocks_cb);
 
     // 第 3 行第 3 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
         make_tile(0, 2, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb);
-    make_tile(1, 2, &calendar_icon, 130, "万年历", _toolCalendar_cb);
+    make_tile(1, 2, &calendar_icon, 100, "万年历", _toolCalendar_cb);
 
     // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
     //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
