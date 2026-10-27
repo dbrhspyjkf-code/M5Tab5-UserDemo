@@ -76,8 +76,13 @@ void AppCalendar::onClose()
     mclog::tagInfo(TAG, "on close");
     _removeSwipeGesture();
     if (_scr) {
+        // 活动屏不可同步删 (LVGL9 崩溃, home rebuild/radio 同款坑):
+        // 先切临时屏 → 删旧屏 → 临时屏异步回收
+        lv_obj_t* tmp = lv_obj_create(NULL);
+        lv_screen_load(tmp);
         lv_obj_delete(_scr);
         _scr = nullptr;
+        lv_obj_delete_async(tmp);
     }
     _title = _grid = _detail_lbl = nullptr;
     _year_lbl = _month_lbl = _year_dd = _month_dd = nullptr;
@@ -294,9 +299,9 @@ void AppCalendar::_showDayDetail(int day)
 {
     if (!_detail_lbl) {
         _detail_lbl = lv_label_create(_scr);
-        lv_obj_set_style_text_font(_detail_lbl, zh20() ? zh20() : zh30(), 0);
+        lv_obj_set_style_text_font(_detail_lbl, zh30(), 0);   // 详情放大到 30px
         lv_obj_set_style_text_color(_detail_lbl, lv_color_hex(cDim()), 0);
-        lv_obj_align(_detail_lbl, LV_ALIGN_BOTTOM_MID, 0, -10);
+        lv_obj_align(_detail_lbl, LV_ALIGN_BOTTOM_MID, 0, -8);
     }
     static const char* kWdFull[] = {"星期日", "星期一", "星期二", "星期三",
                                     "星期四", "星期五", "星期六"};
@@ -306,12 +311,23 @@ void AppCalendar::_showDayDetail(int day)
     t.tm_mday = day;
     std::mktime(&t);
 
-    char lunar_buf[32];
+    // 农历 + 生肖 (生肖按农历年: (year-4)%12 → 鼠牛虎兔龙蛇马羊猴鸡狗猪)
+    lunar::LunarDate ld{};
     std::string lunar_txt = "农历 --";
-    if (lunar::format_lunar_date(_year, _month, day, lunar_buf, sizeof(lunar_buf))) {
-        lunar_txt = std::string("农历 ") + lunar_buf;
+    if (lunar::solar_to_lunar(_year, _month, day, &ld)) {
+        static const char* kD[] = {
+            "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
+            "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+            "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"};
+        static const char* kM[] = {"正月", "二月", "三月", "四月", "五月", "六月",
+                                   "七月", "八月", "九月", "十月", "冬月", "腊月"};
+        static const char* kZodiac[] = {"鼠", "牛", "虎", "兔", "龙", "蛇",
+                                        "马", "羊", "猴", "鸡", "狗", "猪"};
+        const char* leap = ld.is_leap_month ? "闰" : "";
+        lunar_txt = std::string("农历") + leap + kM[ld.month - 1] + kD[ld.day - 1]
+                  + " " + kZodiac[((ld.year - 4) % 12 + 12) % 12] + "年";  // C++ 负取模防护
     }
-    char buf[96];
+    char buf[128];
     snprintf(buf, sizeof(buf), "%d年%d月%d日  %s  %s",
              _year, _month, day, kWdFull[t.tm_wday], lunar_txt.c_str());
     lv_label_set_text(_detail_lbl, buf);
@@ -367,6 +383,7 @@ void finalize_dropdown(AppCalendar* self, lv_obj_t* scr, lv_obj_t* dd)
     lv_obj_t* list = lv_dropdown_get_list(dd);
     if (list) {
         lv_obj_set_style_text_font(list, zh30(), 0);   // 列表数字放大到 30px
+        lv_obj_set_style_text_align(list, LV_TEXT_ALIGN_CENTER, 0);  // 选项居中
         lv_obj_set_style_pad_ver(list, 8, 0);
     }
     lv_obj_t* shield = lv_obj_create(scr);
