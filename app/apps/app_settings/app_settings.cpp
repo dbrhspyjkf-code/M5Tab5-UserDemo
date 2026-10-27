@@ -41,6 +41,7 @@ extern const lv_image_dsc_t fx_icon;     // 100x100
 extern const lv_image_dsc_t unit_icon;   // 200x200
 extern const lv_image_dsc_t lora_logo;   // 130x130
 extern const lv_image_dsc_t stocks_icon; // 130x130
+extern const lv_image_dsc_t calendar_icon; // 130x130 (icons8-日历 重着色)
 extern const lv_image_dsc_t reachy_icon; // 130x130 (app_reachy/reachy_icon.c)
 
 // Calculator fonts (Arial Unicode subsets) defined in this app's font_calc_*.c.
@@ -343,71 +344,6 @@ void AppSettings::_buildToolsPage()
                 // 关键: flap 不吞 click 事件, 冒泡到父 tile
                 lv_obj_add_flag(flap, LV_OBJ_FLAG_EVENT_BUBBLE);
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, ex + EW + ICON_GAP, 0);
-            } else if (kind == 3) {
-                // 万年历图标 — 参考 icons8-日历: 实心圆角卡 + 顶部深色横条
-                // + 挂环×2 + 内部日期格块 (小月历缩略图, 饱满实心)
-                const int CW = 96, CH = 88;
-                const int cx = (TW - CW - ICON_GAP - name_w) / 2;
-                const int cy = (TH - CH - 14) / 2;
-                // 实心卡
-                lv_obj_t* card = lv_obj_create(tile);
-                lv_obj_set_size(card, CW, CH);
-                lv_obj_set_pos(card, cx, cy + 10);
-                lv_obj_set_style_bg_color(card, lv_color_hex(C_ACCENT), 0);
-                lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-                lv_obj_set_style_border_width(card, 0, 0);
-                lv_obj_set_style_radius(card, 12, 0);
-                lv_obj_set_style_shadow_width(card, 0, 0);
-                lv_obj_set_style_pad_all(card, 0, 0);
-                lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-                lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE);
-                lv_obj_add_flag(card, LV_OBJ_FLAG_EVENT_BUBBLE);
-                // 顶部深色横条 (卡头, 用 tile 底色反衬)
-                lv_obj_t* head = lv_obj_create(card);
-                lv_obj_set_size(head, CW - 12, 20);
-                lv_obj_set_pos(head, 6, 5);
-                lv_obj_set_style_bg_color(head, lv_color_hex(0x14201A), 0);
-                lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
-                lv_obj_set_style_radius(head, 6, 0);
-                lv_obj_set_style_border_width(head, 0, 0);
-                lv_obj_set_style_shadow_width(head, 0, 0);
-                lv_obj_set_style_pad_all(head, 0, 0);
-                lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
-                lv_obj_clear_flag(head, LV_OBJ_FLAG_CLICKABLE);
-                lv_obj_add_flag(head, LV_OBJ_FLAG_EVENT_BUBBLE);
-                // 挂环×2 (accent 环, 突出卡顶)
-                for (int r = 0; r < 2; r++) {
-                    lv_obj_t* ring = lv_obj_create(tile);
-                    lv_obj_set_size(ring, 18, 18);
-                    lv_obj_set_pos(ring, cx + (r ? CW - 32 : 14), cy + 2);
-                    lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
-                    lv_obj_set_style_radius(ring, 9, 0);
-                    lv_obj_set_style_border_width(ring, 5, 0);
-                    lv_obj_set_style_border_color(ring, lv_color_hex(C_ACCENT), 0);
-                    lv_obj_set_style_shadow_width(ring, 0, 0);
-                    lv_obj_set_style_pad_all(ring, 0, 0);
-                    lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
-                    lv_obj_add_flag(ring, LV_OBJ_FLAG_EVENT_BUBBLE);
-                }
-                // 内部日期格块 4×2 (tile 底色小方块 = 月历数字意象)
-                for (int r = 0; r < 2; r++) {
-                    for (int c = 0; c < 4; c++) {
-                        lv_obj_t* dot = lv_obj_create(card);
-                        lv_obj_set_size(dot, 16, 12);
-                        lv_obj_set_pos(dot, 8 + c * 20, 32 + r * 20);
-                        lv_obj_set_style_bg_color(dot, lv_color_hex(0x14201A), 0);
-                        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-                        lv_obj_set_style_radius(dot, 3, 0);
-                        lv_obj_set_style_border_width(dot, 0, 0);
-                        lv_obj_set_style_shadow_width(dot, 0, 0);
-                        lv_obj_set_style_pad_all(dot, 0, 0);
-                        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
-                        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
-                        lv_obj_add_flag(dot, LV_OBJ_FLAG_EVENT_BUBBLE);
-                    }
-                }
-                lv_obj_align(name, LV_ALIGN_LEFT_MID, cx + CW + ICON_GAP, 0);
             } else if (kind == 2) {
                 // NFC 感应图标 (RFID tile) — 3 个同心圆环 + 中心芯片方块.
                 // 与信封/点阵分支一样用纯 lv_obj 拼, 不依赖字体符号.
@@ -532,7 +468,7 @@ void AppSettings::_buildToolsPage()
 
     // 第 3 行第 3 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
         make_tile(0, 2, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb);
-    make_tile(1, 2, nullptr, 130, "万年历", _toolCalendar_cb, 256, 12, -1, 3);
+    make_tile(1, 2, &calendar_icon, 130, "万年历", _toolCalendar_cb);
 
     // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
     //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
