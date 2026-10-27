@@ -390,7 +390,7 @@ void finalize_dropdown(AppCalendar* self, lv_obj_t* scr, lv_obj_t* dd)
         lv_obj_set_style_pad_left(list, 0, 0);
         lv_obj_set_style_pad_right(list, 0, 0);
         lv_obj_set_style_pad_ver(list, 8, 0);
-        lv_obj_set_size(list, 240, 560);               // 显示更多选项
+        lv_obj_set_size(list, 180, 560);               // 显示更多选项
     }
     lv_obj_t* shield = lv_obj_create(scr);
     lv_obj_set_size(shield, 1280, 720);
@@ -433,7 +433,10 @@ void AppCalendar::_yearDd_cb(lv_event_t* e)
     lv_obj_set_style_text_color(self->_year_dd, lv_color_hex(cText()), 0);
     lv_obj_set_style_bg_color(self->_year_dd, lv_color_hex(cHeader()), 0);
     lv_dropdown_set_symbol(self->_year_dd, nullptr);   // 默认 FA 箭头 U+F078, zh 字体无字形
-    lv_obj_set_style_text_align(self->_year_dd, LV_TEXT_ALIGN_CENTER, 0);
+    // 居中: dropdown 收起态文字在其内部 label 子对象上, align 必须打在 label
+    if (lv_obj_get_child_cnt(self->_year_dd) > 0)
+        lv_obj_set_style_text_align(lv_obj_get_child(self->_year_dd, 0),
+                                    LV_TEXT_ALIGN_CENTER, 0);
     // 打开列表
     lv_dropdown_open(self->_year_dd);
     finalize_dropdown(self, self->_scr, self->_year_dd);
@@ -485,7 +488,9 @@ void AppCalendar::_monthDd_cb(lv_event_t* e)
     lv_obj_set_style_text_color(self->_month_dd, lv_color_hex(cText()), 0);
     lv_obj_set_style_bg_color(self->_month_dd, lv_color_hex(cHeader()), 0);
     lv_dropdown_set_symbol(self->_month_dd, nullptr);
-    lv_obj_set_style_text_align(self->_month_dd, LV_TEXT_ALIGN_CENTER, 0);
+    if (lv_obj_get_child_cnt(self->_month_dd) > 0)
+        lv_obj_set_style_text_align(lv_obj_get_child(self->_month_dd, 0),
+                                    LV_TEXT_ALIGN_CENTER, 0);
     lv_dropdown_open(self->_month_dd);
     finalize_dropdown(self, self->_scr, self->_month_dd);
     lv_obj_add_event_cb(self->_month_dd, [](lv_event_t* ev) {
