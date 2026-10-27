@@ -57,6 +57,7 @@ void AppCalendar::onOpen()
     mclog::tagInfo(TAG, "on open");
     if (_scr) {
         lv_screen_load(_scr);   // 复用留存屏 (_requestClose 不删屏)
+        _refreshMonth();        // 刷新内容 (日期/今天高亮可能变化)
         return;
     }
     _alive = std::make_shared<bool>(true);
@@ -78,15 +79,12 @@ void AppCalendar::onClose()
 {
     mclog::tagInfo(TAG, "on close");
     _removeSwipeGesture();
-    if (_scr) {
-        // 活动屏不可同步删 (LVGL9 崩溃, home rebuild/radio 同款坑):
-        // 先切临时屏 → 删旧屏 → 临时屏异步回收
-        lv_obj_t* tmp = lv_obj_create(NULL);
-        lv_screen_load(tmp);
-        lv_obj_delete(_scr);
-        _scr = nullptr;
-        lv_obj_delete_async(tmp);
-    }
+    // 屏不删! lv_screen_load 是异步生效, 同步删"刚才的活动屏"会在渲染
+    // timer 下一拍踩空 (lv_obj_update_layout → Load access fault, 2026-10-27
+    // 上拨退出重启实锤, addr2line 定位 lv_refr.c:382)。屏对象随 app 常驻,
+    // 下次 onOpen 复用 (lv_screen_load 回来即可), 内容由 _refreshMonth 刷新。
+    // 下拉/拦截层等子对象随屏保留, 状态无害。
+    _scr = nullptr;
     _title = _grid = _detail_lbl = nullptr;
     _year_lbl = _month_lbl = _year_dd = _month_dd = nullptr;
     _day_cells.clear();
