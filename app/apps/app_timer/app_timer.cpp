@@ -414,12 +414,24 @@ void AppTimer::_installSwipeGesture()
     while (indev) {
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
             _gesture_ctx = new SwipeCtx{this, _alive};
+            static lv_point_t s_gpress{0, 0};   // PRESSED 起点 (底部起手判定)
             lv_indev_add_event_cb(indev, [](lv_event_t* e) {
                 auto* ctx = static_cast<SwipeCtx*>(lv_event_get_user_data(e));
                 auto alive = ctx->alive.lock();
                 if (!alive || !*alive) return;
-                if (lv_indev_get_gesture_dir(
-                        static_cast<lv_indev_t*>(lv_event_get_target(e))) == LV_DIR_TOP) {
+                const lv_event_code_t gcode = lv_event_get_code(e);
+                lv_indev_t* gdev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+                if (gcode == LV_EVENT_PRESSED) {
+                    lv_point_t gp; lv_indev_get_point(gdev, &gp);
+                    s_gpress = gp;
+                    return;
+                }
+                if (gcode != LV_EVENT_GESTURE) return;
+                if (lv_indev_get_gesture_dir(gdev) == LV_DIR_TOP) {
+                    // 双守卫: 只在本 app 前台 + 屏幕最下缘 (y>650) 起手
+                    // (indev 手势广播给所有注册回调, 2026-10-27 实锤)
+                    if (!ctx->app->_scr || lv_screen_active() != ctx->app->_scr) return;
+                    if (s_gpress.y <= 650) return;
                     auto* defer = new SwipeCtx{ctx->app, ctx->alive};
                     lv_async_call([](void* u) {
                         auto* c = static_cast<SwipeCtx*>(u);
@@ -428,7 +440,7 @@ void AppTimer::_installSwipeGesture()
                         delete c;
                     }, defer);
                 }
-            }, LV_EVENT_GESTURE, _gesture_ctx);
+            }, LV_EVENT_ALL, _gesture_ctx);
             _gesture_indev = indev;
             break;
         }

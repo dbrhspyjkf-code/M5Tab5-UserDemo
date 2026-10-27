@@ -589,6 +589,8 @@ void AppCalendar::_installSwipeGesture()
                 if (!ctx->app->_scr || lv_screen_active() != ctx->app->_scr) return;
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
+                    // 位置守卫: 只认屏幕最下缘 (y>650) 起手的上拨
+                    if (ctx->press_y <= 650) return;
                     auto* defer = new CalSwipeCtx{ctx->app, ctx->alive};
                     lv_async_call([](void* u) {
                         auto* c = static_cast<CalSwipeCtx*>(u);
@@ -624,7 +626,8 @@ void AppCalendar::_installSwipeGesture()
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
                     const int dx = p.x - ctx->press_x, dy = p.y - ctx->press_y;
-                    if (dy < -120 && abs(dy) > abs(dx) * 2) {
+                    const bool from_bottom = ctx->press_y > 650;   // 同 GESTURE 路径
+                    if (from_bottom && dy < -120 && abs(dy) > abs(dx) * 2) {
                         auto* defer = new CalSwipeCtx{ctx->app, ctx->alive};
                         lv_async_call([](void* u) {
                             auto* c = static_cast<CalSwipeCtx*>(u);

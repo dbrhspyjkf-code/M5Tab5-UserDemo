@@ -244,7 +244,7 @@ void AppReachy::_installSwipeGesture() {
     _removeSwipeGesture();
     for (lv_indev_t* indev = lv_indev_get_next(nullptr); indev; indev = lv_indev_get_next(indev)) {
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
-            lv_indev_add_event_cb(indev, _gestureCb, LV_EVENT_GESTURE, this);
+            lv_indev_add_event_cb(indev, _gestureCb, LV_EVENT_ALL, this);
             _gesture_indev = indev;
             break;
         }
@@ -1138,10 +1138,22 @@ void AppReachy::_confirmNoCb(lv_event_t* e) {
     if (auto* top = lv_layer_top()) lv_obj_clean(top);
 }
 void AppReachy::_modalBgCb(lv_event_t* e) { if (auto* top = lv_layer_top()) lv_obj_clean(top); }
+static lv_point_t s_gesture_press{0, 0};   // PRESSED 起点 (底部起手判定)
+
 void AppReachy::_gestureCb(lv_event_t* e) {
     auto* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        lv_indev_get_point(dev, &s_gesture_press);
+        return;
+    }
+    if (code != LV_EVENT_GESTURE) return;
     if (lv_indev_get_gesture_dir(dev) != LV_DIR_TOP) return;
     auto* self = static_cast<AppReachy*>(lv_event_get_user_data(e));
+    // 双守卫 (2026-10-27 "所有 app 上拨都退工具页" 实锤): indev 手势广播给
+    // 所有注册回调 —— ① 只在本 app 前台; ② 只认屏幕最下缘 (y>650) 起手.
+    if (!self || !self->_scr || lv_screen_active() != self->_scr) return;
+    if (s_gesture_press.y <= 650) return;
     // A joystick push toward the top of the pad is a fast upward drag —
     // LVGL classifies it as a gesture exactly like the exit swipe. Driving
     // forward must never close the app, so suppress the exit while the base

@@ -427,11 +427,24 @@ void AppLoraChat::_uartRxTask(void* arg)
 
 // ── Swipe-up gesture ─────────────────────────────────────────────────────
 
+static lv_point_t s_gesture_press{0, 0};   // PRESSED 起点 (底部起手判定)
+
 void AppLoraChat::_gesture_cb(lv_event_t* e)
 {
     lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        lv_indev_get_point(dev, &s_gesture_press);
+        return;
+    }
+    if (code != LV_EVENT_GESTURE) return;
     if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
         auto* self = static_cast<AppLoraChat*>(lv_event_get_user_data(e));
+        // 双守卫 (2026-10-27 "所有 app 上拨都退工具页" 实锤): indev 级手势
+        // 广播给所有已注册的回调 —— ① 只在本 app 前台; ② 只认屏幕最下缘
+        // (y>650) 起手的上拨, 其余位置归滚动.
+        if (!self || !self->_scr || lv_screen_active() != self->_scr) return;
+        if (s_gesture_press.y <= 650) return;
         // 退出走 _close_cb → openApp(工具页), mooncake 不触发 onClose, 所以
         // 在这里收尾: 卸载 UART 释放 GPIO53, 再把 PORT A 交还后台邮件通知器
         // (否则 setPortAOwnedByApp(true) 永不复位, worker 永久让位).
@@ -446,7 +459,7 @@ void AppLoraChat::_installSwipeGesture()
     lv_indev_t* indev = lv_indev_get_next(nullptr);
     while (indev) {
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
-            lv_indev_add_event_cb(indev, _gesture_cb, LV_EVENT_GESTURE, this);
+            lv_indev_add_event_cb(indev, _gesture_cb, LV_EVENT_ALL, this);
             _gesture_indev = indev;
             break;
         }

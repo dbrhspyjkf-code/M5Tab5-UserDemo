@@ -83,15 +83,26 @@ void AppXiaoZhi::_installSwipeGesture()
     lv_indev_t* indev = lv_indev_get_next(NULL);
     while (indev) {
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            static lv_point_t s_gpress{0, 0};   // PRESSED 起点 (底部起手判定)
             lv_indev_add_event_cb(indev, [](lv_event_t* e) {
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+                const lv_event_code_t code = lv_event_get_code(e);
+                if (code == LV_EVENT_PRESSED) {
+                    lv_point_t p; lv_indev_get_point(dev, &p);
+                    s_gpress = p;
+                    return;
+                }
+                if (code != LV_EVENT_GESTURE) return;
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
+                    // 位置守卫: 只认屏幕最下缘 (y>650) 起手的上拨
+                    // (indev 手势广播给所有注册回调, 2026-10-27 实锤)
+                    if (s_gpress.y <= 650) return;
                     lv_async_call([](void* udata) {
                         auto* app = static_cast<AppXiaoZhi*>(udata);
                         if (app) app->close();
                     }, lv_event_get_user_data(e));
                 }
-            }, LV_EVENT_GESTURE, this);
+            }, LV_EVENT_ALL, this);
             _gesture_indev = indev;
             break;
         }

@@ -949,12 +949,24 @@ void AppUnitPuzzle::_updateDiag()
 // 不另起虚拟 indev. 在任意位置滑动都触发)
 // =============================================================================
 static lv_indev_t* s_gesture_indev = nullptr;
+static lv_point_t s_gesture_press{0, 0};   // PRESSED 起点 (底部起手判定)
 
 void AppUnitPuzzle::_gesture_event_cb(lv_event_t* e)
 {
     lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        lv_indev_get_point(dev, &s_gesture_press);
+        return;
+    }
+    if (code != LV_EVENT_GESTURE) return;
     if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
         auto* app = static_cast<AppUnitPuzzle*>(lv_event_get_user_data(e));
+        // 双守卫 (2026-10-27 "所有 app 上拨都退工具页" 实锤): indev 级手势
+        // 广播给所有已注册的回调 —— ① 只在本 app 前台; ② 只认屏幕最下缘
+        // (y>650) 起手的上拨, 其余位置归滚动.
+        if (!app || !app->_scr || lv_screen_active() != app->_scr) return;
+        if (s_gesture_press.y <= 650) return;
         if (app) {
             // lv_async_call 切回 LVGL 线程再调 close, 安全
             AppUnitPuzzle* a = app;
@@ -971,7 +983,7 @@ void AppUnitPuzzle::_installSwipeGesture()
     lv_indev_t* indev = lv_indev_get_next(nullptr);
     while (indev) {
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
-            lv_indev_add_event_cb(indev, _gesture_event_cb, LV_EVENT_GESTURE, this);
+            lv_indev_add_event_cb(indev, _gesture_event_cb, LV_EVENT_ALL, this);
             s_gesture_indev = indev;
             return;
         }
