@@ -214,18 +214,10 @@ void AppStocks::_teardownHardware()
 // 指数卡片长按 → 走势图 (行情未到时标题只带名称+代码)
 void AppStocks::_openIndexChart(int i)
 {
-    IndexQuote q;
-    {
-        std::lock_guard<std::mutex> lk(_index_mu);
-        q = _index_quotes[i];
-    }
+    // 标题固定部分只放名称+代码; 现价/涨跌/指标由 worker 从 qt 节点取, 进跑马灯
     char title[160];
-    if (q.ok)
-        std::snprintf(title, sizeof(title), "%s  %s   %.2f  %+.2f%%",
-                      kIndices[i].name, kIndices[i].tencent, q.price, q.chg_pct);
-    else
-        std::snprintf(title, sizeof(title), "%s  %s",
-                      kIndices[i].name, kIndices[i].tencent);
+    std::snprintf(title, sizeof(title), "%s  %s",
+                  kIndices[i].name, kIndices[i].tencent);
     // ifzq 代码映射: qt 的 r_hkHSI → hkHSI (去 r_ 前缀), 其余原样
     std::string tencent = kIndices[i].tencent;
     if (tencent.rfind("r_", 0) == 0) tencent.erase(0, 2);
@@ -757,10 +749,9 @@ void AppStocks::_showDetail(int row_idx)
         if (row_idx < 0 || row_idx >= (int)_items.size()) return;
         s = _items[row_idx];
     }
-    // 个股 ifzq 代码: 6 开头 = 沪(sh), 其余(0/3) = 深(sz)
+    // 标题固定部分只放名称+代码; 价格/涨跌/指标进跑马灯 (用户指定)
     char title[160];
-    std::snprintf(title, sizeof(title), "%s  %s   %.2f  %+.2f%%",
-                  s.name.c_str(), s.code.c_str(), s.price, s.chg);
+    std::snprintf(title, sizeof(title), "%s  %s", s.name.c_str(), s.code.c_str());
     _openChart(title, (s.code.rfind("6", 0) == 0 ? "sh" : "sz") + s.code);
 }
 
@@ -799,9 +790,9 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
         lv_label_set_long_mode(_chart_marquee, LV_LABEL_LONG_SCROLL_CIRCULAR);
         lv_obj_set_width(_chart_marquee, mw > 60 ? mw : 60);
         lv_label_set_text(_chart_marquee, "指标加载中…");
-        lv_obj_set_style_text_font(_chart_marquee, zh_font_sm(), 0);
-        lv_obj_set_style_text_color(_chart_marquee, lv_color_hex(C_DIM()), 0);
-        lv_obj_align(_chart_marquee, LV_ALIGN_TOP_LEFT, mx, 20);
+        lv_obj_set_style_text_font(_chart_marquee, zh_font_lg(), 0);   // 与股票名称同字号
+        lv_obj_set_style_text_color(_chart_marquee, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(_chart_marquee, LV_ALIGN_TOP_LEFT, mx, 14);
     }
 
     // 分时 / 日K 切换 tab (CHECKABLE: 选中态 accent 底白字)
@@ -857,7 +848,7 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
     {
         const uint32_t leg_col[3] = {0xF1C40F, 0xE91E63, 0x3498DB};  // 黄/品红/蓝
         const char* leg_txt[3] = {"MA5", "MA10", "MA20"};
-        const int leg_dx[3] = {-132, -60, -12};   // 右→左: MA20 最靠右
+        const int leg_dx[3] = {-146, -78, -12};   // 右→左: MA20 最靠右 (间距防重叠)
         for (int k = 0; k < 3; k++) {
             lv_obj_t* leg = lv_label_create(_detail_modal);
             lv_label_set_text(leg, leg_txt[k]);
@@ -961,26 +952,32 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
                         local.minute_prices.push_back(std::stof(line.substr(sp1 + 1, sp2 - sp1 - 1)));
                     }
                 }
-                // 指标跑马灯: 响应内嵌 qt 节点 = qt.gtimg 实时数组,
-                // [37]成交额(万) [38]换手率 [39]PE [49]量比 (GBK, 只取数字字段)
+                // 跑马灯全文: 现价 涨跌 涨跌% + 成交额/换手/量比/PE —— 全部来自
+                // 响应内嵌 qt 节点 (= qt.gtimg 实时数组, GBK 但只取数字字段;
+                // [3]现价 [31]涨跌 [32]涨跌% [37]成交额(万) [38]换手 [39]PE [49]量比)
                 const auto& qtn = j["data"][prefixed]["qt"][prefixed];
                 if (qtn.is_array() && qtn.size() > 49) {
                     auto qf = [&](int n) -> std::string {
                         return qtn[n].is_string() ? qtn[n].get<std::string>() : "";
                     };
+                    auto num = [](const std::string& sv) -> double {
+                        try { return std::stod(sv); } catch (...) { return 0; }
+                    };
                     std::string m;
+                    char b[48];
+                    if (!qf(3).empty()) { std::snprintf(b, sizeof b, "%.2f", num(qf(3))); m += b; }
+                    if (!qf(31).empty()) { std::snprintf(b, sizeof b, "  %+.2f", num(qf(31))); m += b; }
+                    if (!qf(32).empty()) { std::snprintf(b, sizeof b, "  %+.2f%%", num(qf(32))); m += b; }
                     const std::string amt = qf(37);
                     if (!amt.empty()) {
-                        double v = 0;
-                        try { v = std::stod(amt); } catch (...) {}
-                        char b[40];
-                        if (v >= 10000) std::snprintf(b, sizeof b, "成交额 %.2f亿", v / 10000);
-                        else std::snprintf(b, sizeof b, "成交额 %.0f万", v);
+                        const double v = num(amt);
+                        if (v >= 10000) std::snprintf(b, sizeof b, "   成交额 %.2f亿", v / 10000);
+                        else std::snprintf(b, sizeof b, "   成交额 %.0f万", v);
                         m += b;
                     }
-                    if (!qf(38).empty()) m += "   换手 " + qf(38) + "%";
-                    if (!qf(49).empty()) m += "   量比 " + qf(49);
-                    if (!qf(39).empty()) m += "   PE " + qf(39);
+                    if (!qf(38).empty()) { std::snprintf(b, sizeof b, "   换手 %.2f%%", num(qf(38))); m += b; }
+                    if (!qf(49).empty()) { std::snprintf(b, sizeof b, "   量比 %.2f", num(qf(49))); m += b; }
+                    if (!qf(39).empty()) { std::snprintf(b, sizeof b, "   PE %.2f", num(qf(39))); m += b; }
                     local.metrics = std::move(m);
                 }
             } catch (...) {}
@@ -1144,9 +1141,7 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
         auto y_of = [&](float v) {
             return (int)((B - T) * (hi - v) / (hi - lo)) + T;
         };
-        // 涨跌区不再染上下两色 (用户要求分时/日K背景一致), 仅画昨收基准线
-        const int yb = y_of(base);
-        px_rect(pix, W, H, L, yb, R, yb, COL_AXIS);
+        // 开盘/昨收基准线不画 (用户要求去掉)
         // 分时折线 (涨红跌绿, 对基准)
         const uint32_t line_col = c.minute_prices.back() >= base ? COL_UP : COL_DOWN;
         const int n = (int)c.minute_prices.size();
