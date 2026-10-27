@@ -102,6 +102,15 @@ extern "C" void xiaozhi_activate_screen(void)
     }
 }
 
+extern "C" bool xiaozhi_screen_is_active(void)
+{
+    auto* display = static_cast<Tab5BridgeLcdDisplay*>(
+        Board::GetInstance().GetDisplay()
+    );
+    return display && display->GetScreen()
+        && lv_screen_active() == display->GetScreen();
+}
+
 extern "C" void xiaozhi_set_battery_percent(int percent)
 {
     s_battery_percent = percent;

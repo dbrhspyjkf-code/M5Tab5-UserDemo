@@ -13,6 +13,9 @@ void xiaozhi_start_task(void);
 /** Activate xiaozhi's dedicated LVGL screen on the bridge display. */
 void xiaozhi_activate_screen(void);
 
+/** True when xiaozhi's dedicated screen is the active screen (前台守卫用). */
+bool xiaozhi_screen_is_active(void);
+
 /** Hide xiaozhi's dedicated screen while keeping the audio pipeline alive.
  *  Counterpart of xiaozhi_activate_screen(). Safe to call from any context. */
 void xiaozhi_deactivate_screen(void);

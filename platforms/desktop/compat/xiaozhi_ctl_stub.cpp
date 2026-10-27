@@ -8,6 +8,7 @@ static int s_volume   = 60;
 void xiaozhi_start_task(void) {}
 bool xiaozhi_is_initialized(void) { return true; }
 void xiaozhi_activate_screen(void) {}
+bool xiaozhi_screen_is_active(void) { return false; }
 void xiaozhi_deactivate_screen(void) {}
 int  xiaozhi_get_device_state(void) { return 3; /* kDeviceStateIdle */ }
 void xiaozhi_ensure_output(void) {}

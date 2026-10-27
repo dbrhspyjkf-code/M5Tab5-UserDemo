@@ -13,6 +13,7 @@ extern "C" {
 void xiaozhi_start_task(void);
 bool xiaozhi_is_initialized(void);
 void xiaozhi_activate_screen(void);
+bool xiaozhi_screen_is_active(void);
 void xiaozhi_deactivate_screen(void);
 int  xiaozhi_get_device_state(void);
 void xiaozhi_ensure_output(void);

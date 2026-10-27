@@ -94,8 +94,10 @@ void AppXiaoZhi::_installSwipeGesture()
                 }
                 if (code != LV_EVENT_GESTURE) return;
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
-                    // 位置守卫: 只认屏幕最下缘 (y>650) 起手的上拨
-                    // (indev 手势广播给所有注册回调, 2026-10-27 实锤)
+                    // 双守卫: ① 小智屏在前台 (无此前台守卫时, 别的 app 里
+                    // 上拨会触发 close() → restoreScreen 拉回主页, 2026-10-27
+                    // "邮件/汇率等子页上拨退到主页" 真凶); ② 屏幕最下缘起手.
+                    if (!xiaozhi_screen_is_active()) return;
                     if (s_gpress.y <= 650) return;
                     lv_async_call([](void* udata) {
                         auto* app = static_cast<AppXiaoZhi*>(udata);
