@@ -216,24 +216,32 @@ void AppStocks::_buildUi()
         lv_label_set_text(name, "--");
         lv_obj_set_style_text_font(name, zh_font_lg(), 0);
         lv_obj_set_style_text_color(name, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 26);
+        lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 20);
 
         lv_obj_t* price = lv_label_create(card);
         lv_label_set_text(price, "--");
         lv_obj_set_style_text_font(price, &lv_font_montserrat_38, 0);
         lv_obj_set_style_text_color(price, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 82);
+        lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 66);
 
         lv_obj_t* chg = lv_label_create(card);
         lv_label_set_text(chg, "");
         lv_obj_set_style_text_font(chg, &lv_font_montserrat_30, 0);
         lv_obj_set_style_text_color(chg, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(chg, LV_ALIGN_TOP_MID, 0, 148);
+        lv_obj_align(chg, LV_ALIGN_TOP_MID, 0, 124);
+
+        // 涨跌额 (24px, 略淡一档)
+        lv_obj_t* amt = lv_label_create(card);
+        lv_label_set_text(amt, "");
+        lv_obj_set_style_text_font(amt, &lv_font_montserrat_24, 0);
+        lv_obj_set_style_text_color(amt, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(amt, LV_ALIGN_TOP_MID, 0, 166);
 
         _cards[i]      = card;
         _card_name[i]  = name;
         _card_price[i] = price;
         _card_chg[i]   = chg;
+        _card_amt[i]   = amt;
     }
 
     lv_screen_load(_scr);
@@ -251,7 +259,8 @@ void AppStocks::_destroyUi()
         _scr = nullptr;
     }
     for (int i = 0; i < N_CARDS; i++)
-        _cards[i] = _card_name[i] = _card_price[i] = _card_chg[i] = nullptr;
+        _cards[i] = _card_name[i] = _card_price[i] = _card_chg[i] =
+        _card_amt[i] = nullptr;
     if (_poll_timer) { lv_timer_delete(_poll_timer); _poll_timer = nullptr; }
     _alive = std::make_shared<bool>(true);  // fresh flag for the next _buildUi/_installSwipeGesture
 }
@@ -442,9 +451,11 @@ void AppStocks::_refreshUiFromItems()
             lv_obj_set_style_text_color(_card_name[i],  lv_color_hex(C_DIM()), 0);
             lv_obj_set_style_text_color(_card_price[i], lv_color_hex(C_DIM()), 0);
             lv_obj_set_style_text_color(_card_chg[i],   lv_color_hex(C_DIM()), 0);
+            lv_obj_set_style_text_color(_card_amt[i],   lv_color_hex(C_DIM()), 0);
             lv_label_set_text(_card_name[i],  "--");
             lv_label_set_text(_card_price[i], "--");
             lv_label_set_text(_card_chg[i],   "");
+            lv_label_set_text(_card_amt[i],   "");
             continue;
         }
 
@@ -474,7 +485,8 @@ void AppStocks::_refreshUiFromItems()
         lv_obj_set_style_bg_color(card, lv_color_hex(bg), 0);
         lv_obj_set_style_text_color(_card_name[i],  lv_color_hex(fg), 0);
         lv_obj_set_style_text_color(_card_price[i], lv_color_hex(fg), 0);
-        lv_obj_set_style_text_color(_card_chg[i],   lv_color_hex(fg2), 0);
+        lv_obj_set_style_text_color(_card_chg[i],   lv_color_hex(fg), 0);
+        lv_obj_set_style_text_color(_card_amt[i],   lv_color_hex(fg2), 0);
 
         lv_label_set_text(_card_name[i], st.name.c_str());
         char buf[24];
@@ -482,6 +494,8 @@ void AppStocks::_refreshUiFromItems()
         lv_label_set_text(_card_price[i], buf);
         snprintf(buf, sizeof(buf), "%+.2f%%", st.chg);
         lv_label_set_text(_card_chg[i], buf);
+        snprintf(buf, sizeof(buf), "%+.2f", st.pchg);
+        lv_label_set_text(_card_amt[i], buf);
     }
 }
 

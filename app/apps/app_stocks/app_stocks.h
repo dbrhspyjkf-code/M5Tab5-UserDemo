@@ -98,6 +98,7 @@ private:
     lv_obj_t* _card_name[N_CARDS]  {nullptr};
     lv_obj_t* _card_price[N_CARDS] {nullptr};
     lv_obj_t* _card_chg[N_CARDS]   {nullptr};
+    lv_obj_t* _card_amt[N_CARDS]   {nullptr};   // 涨跌额 (2026-10-27 用户加)
     lv_obj_t* _detail_modal{nullptr};
     lv_timer_t* _poll_timer{nullptr};
 
