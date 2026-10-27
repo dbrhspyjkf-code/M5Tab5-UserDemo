@@ -423,10 +423,17 @@ void finalize_dropdown(AppCalendar* self, lv_obj_t* scr, lv_obj_t* dd)
     auto* ctx = new DdShieldCtx{self, dd};
     lv_obj_add_event_cb(shield, [](lv_event_t* ev) {
         auto* c = static_cast<DdShieldCtx*>(lv_event_get_user_data(ev));
-        lv_dropdown_close(c->dd);                       // 触发 CANCEL → 既有清理
-        lv_obj_delete_async(lv_event_get_current_target_obj(ev));
-        delete c;
+        // 只关下拉: CANCEL → _closeDropdown 统一 delete_async(shield+dd).
+        // 这里绝不能再自删 shield —— close() 同步触发 _closeDropdown 已把它
+        // 排入删除, 再 delete_async 一次 = 双重释放 → 堆损坏 → 随后任何
+        // 重绘/free 崩溃 (2026-10-27 实锤: Guru Load access + heap_caps_free
+        // assert 两种死法, "点万年历任何位置都重启").
+        lv_dropdown_close(c->dd);
     }, LV_EVENT_CLICKED, ctx);
+    // ctx 的释放也单一所有者: 跟着 shield 的 DELETE 走 (无论哪条路径删它)
+    lv_obj_add_event_cb(shield, [](lv_event_t* ev) {
+        delete static_cast<DdShieldCtx*>(lv_event_get_user_data(ev));
+    }, LV_EVENT_DELETE, ctx);
     lv_obj_move_to_index(shield, 0);   // 垫底 (dropdown list 挂更新层, 在其上)
 }
 }  // namespace
