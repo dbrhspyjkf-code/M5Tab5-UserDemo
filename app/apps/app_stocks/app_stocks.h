@@ -154,6 +154,8 @@ private:
     int            _chart_mode   = 0;         // 0=分时 1=日K
     lv_obj_t*      _chart_status  {nullptr};
     lv_obj_t*      _chart_marquee {nullptr};  // 指标跑马灯 (标题栏循环滚动)
+    lv_obj_t*      _chart_hilo    {nullptr};  // 日K 窗口内最高/最低价 (右上角)
+    int            _kline_win     = 250;      // 日K 可视窗口根数 (缩放)
     void*          _chart_pixels  {nullptr};  // canvas 像素堆缓冲 (chart 绘制专用)
     std::atomic<bool> _chart_ready{false}; // worker 完成 → onRunning 消费
     std::string    _chart_code;             // 当前弹窗的股票代码
@@ -201,6 +203,7 @@ private:
     void _applyCharts();   // worker 完成 → UI 线程绘制 (onRunning 检查 _chart_ready)
     void _drawChartCanvas(const ChartData& c);  // 无锁绘制 (UI 线程已持 LVGL 锁)
     void _onChartTab(int mode, lv_obj_t* btn);  // 分时/日K 切换
+    void _zoomKline(int delta);                 // 日K 可视窗口 ±根数 (缩放)
     void _chartFetchWorker(std::string ifzq_code, std::shared_ptr<bool> alive);
     void _trySpawnChartWorker(const std::string& ifzq_code);  // 已在飞则跳过; 派生失败还旗标
     void _openChart(const std::string& title, const std::string& ifzq_code);  // 全屏走势图

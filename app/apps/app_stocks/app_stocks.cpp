@@ -786,7 +786,7 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
                                                   (uint32_t)title.size(),
                                                   zh_font_lg(), 0);
         const int mx = 16 + title_w + 24;
-        const int mw = 1280 - 500 - mx;   // 右侧留 ~500px 给 分时/日K/关闭
+        const int mw = 1280 - 660 - mx;   // 右侧留 ~660px 给 分时/日K/关闭/＋/－
         _chart_marquee = lv_label_create(_detail_modal);
         lv_label_set_long_mode(_chart_marquee, LV_LABEL_LONG_SCROLL_CIRCULAR);
         lv_obj_set_width(_chart_marquee, mw > 60 ? mw : 60);
@@ -842,6 +842,38 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
     lv_obj_set_style_text_font(_chart_status, zh_font_sm(), 0);
     lv_obj_set_style_text_color(_chart_status, lv_color_hex(C_DIM()), 0);
     lv_obj_align(_chart_status, LV_ALIGN_TOP_MID, 0, 64 + CHART_H / 2 - 10);
+
+    // 日K 缩放: ＋/－ 调整可视窗口根数 (放大=窗口小看细节, y 轴随窗口
+    // 自适应; 缩小=窗口大看全貌). 任何视图下点都自动切到日K.
+    {
+        auto mk_zoom = [&](const char* txt, int dx_off, int delta) {
+            lv_obj_t* b = lv_button_create(_detail_modal);
+            lv_obj_set_size(b, 64, 48);
+            lv_obj_align(b, LV_ALIGN_TOP_RIGHT, dx_off, 10);
+            lv_obj_set_style_bg_color(b, lv_color_hex(0x33363A), 0);
+            lv_obj_set_style_radius(b, 10, 0);
+            lv_obj_add_event_cb(b, [](lv_event_t* e) {
+                auto* self = static_cast<AppStocks*>(lv_event_get_user_data(e));
+                self->_zoomKline((int)(intptr_t)lv_obj_get_user_data(
+                    lv_event_get_current_target_obj(e)));
+            }, LV_EVENT_CLICKED, this);
+            lv_obj_set_user_data(b, (void*)(intptr_t)delta);
+            lv_obj_t* l = lv_label_create(b);
+            lv_label_set_text(l, txt);
+            lv_obj_set_style_text_font(l, &lv_font_montserrat_28, 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_center(l);
+        };
+        mk_zoom("-", -568, -40);   // 缩小窗口 = 放大细节
+        mk_zoom("+", -496, +40);   // 扩大窗口 = 缩小看全貌
+    }
+
+    // 日K 窗口内最高/最低价 (右上角, _drawChartCanvas 填内容; 须在 canvas 之后)
+    _chart_hilo = lv_label_create(_detail_modal);
+    lv_label_set_text(_chart_hilo, "");
+    lv_obj_set_style_text_font(_chart_hilo, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(_chart_hilo, lv_color_hex(C_DIM()), 0);
+    lv_obj_align(_chart_hilo, LV_ALIGN_TOP_RIGHT, -16, 66);
 
     // 均线图例 (颜色与 _drawChartCanvas 的 ma_col 对应, 仅日K 视图显示),
     // 位置在图表左上角横排 (用户指定). 必须建在 canvas 之后: 画布不透明且
@@ -906,6 +938,7 @@ void AppStocks::_closeDetail()
         _detail_modal = nullptr;
     }
     _chart_canvas = _chart_status = _chart_marquee = nullptr;
+    _chart_hilo = nullptr;
     for (lv_obj_t*& b : _chart_tab_btn) b = nullptr;
     for (lv_obj_t*& l : _chart_ma_leg) l = nullptr;
     if (_chart_pixels) {           // canvas 缓冲是堆分配, 弹窗关了就还
@@ -985,11 +1018,11 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
         }
     }
 
-    // ── 日K: fqkline/get, 最近 120 根前复权 (2026-10-27 用户 60→120) ──
+    // ── 日K: fqkline/get, 最近 250 根前复权 (~1 年, 2026-10-27 用户 120→250) ──
     {
         auto resp = GetHAL()->httpGet(
             "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=" +
-            prefixed + ",day,,,120,qfq");
+            prefixed + ",day,,,250,qfq");
         if (resp.ok && parse_ok(resp.body)) {
             try {
                 auto j = nlohmann::json::parse(resp.body);
@@ -1119,6 +1152,11 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
         if (draw_minute) lv_obj_add_flag(leg, LV_OBJ_FLAG_HIDDEN);
         else lv_obj_clear_flag(leg, LV_OBJ_FLAG_HIDDEN);
     }
+    // 高低价仅日K视图显示
+    if (_chart_hilo) {
+        if (draw_minute) lv_obj_add_flag(_chart_hilo, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_clear_flag(_chart_hilo, LV_OBJ_FLAG_HIDDEN);
+    }
     // 指标跑马灯 (数据来自 minute/query 内嵌 qt 节点, 随图表数据一并到位)
     if (_chart_marquee)
         lv_label_set_text(_chart_marquee,
@@ -1155,10 +1193,16 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
             px_ = x; py_ = y;
         }
     } else if (have_day) {
-        // 日K: 最近 120 根蜡烛 + MA5/10/20 均线 + 底部成交量副图
+        // 日K: 全量 250 根 (~1 年), 可视窗口 _kline_win 根锚定最新 (2026-10-27
+        // 用户要求缩放: 窗口小=放大看细节, y 轴随窗口自适应). MA 全量预计算后
+        // 只画窗口段 (均线值不随窗口变). 底部成交量副图同窗口归一化.
         const int n = (int)c.day_close.size();
+        int win = _kline_win > 0 ? _kline_win : n;
+        if (win > n) win = n;
+        if (win < 10) win = 10;
+        const int start = n - win;   // 显示 [start, n)
         float hi = -1e9f, lo = 1e9f;
-        for (int i = 0; i < n; i++) {
+        for (int i = start; i < n; i++) {
             hi = c.day_high[i] > hi ? c.day_high[i] : hi;
             lo = c.day_low[i]  < lo ? c.day_low[i]  : lo;
         }
@@ -1172,12 +1216,13 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
         auto y_of = [&](float v) { return (int)((PB - T) * (hi - v) / (hi - lo)) + T; };
         px_rect(pix, W, H, L, PB, R, PB, COL_GRID);      // 价格区/副图分界 (上下横线已去掉)
         float vmax = 0;
-        for (int i = 0; i < n; i++)
+        for (int i = start; i < n; i++)
             vmax = c.day_volume[i] > vmax ? c.day_volume[i] : vmax;
-        const int step = (R - L) / n;
+        const int step = (R - L) / win;
         const int body_w = step * 3 / 5 > 3 ? step * 3 / 5 : 3;
-        for (int i = 0; i < n; i++) {
-            const int x = L + step * i + step / 2;
+        auto x_of = [&](int i) { return L + step * (i - start) + step / 2; };
+        for (int i = start; i < n; i++) {
+            const int x = x_of(i);
             const bool up = c.day_close[i] >= c.day_open[i];
             const uint32_t col = up ? COL_UP : COL_DOWN;
             const int yh = y_of(c.day_high[i]), yl = y_of(c.day_low[i]);
@@ -1191,8 +1236,7 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
                 px_rect(pix, W, H, x - body_w / 2, VB - bh, x + body_w / 2, VB, col);
             }
         }
-        // MA5/10/20 均线 (收盘价简单均值, 滑窗; 前 p-1 根无值不画).
-        // 收盘价必然落在 [lo,hi] 内 (high/low 包络), 无越界.
+        // MA5/10/20 均线: 全量数据滑窗预计算 (窗口左缘也有值), 再画窗口段.
         const uint32_t ma_col[3] = {0xF1C40F, 0xE91E63, 0x3498DB};  // 黄/品红/蓝
         const int ma_period[3] = {5, 10, 20};
         for (int k = 0; k < 3; k++) {
@@ -1203,15 +1247,55 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
             int mx = -1, my = -1;
             for (int i = p - 1; i < n; i++) {
                 if (i > p - 1) sum += c.day_close[i] - c.day_close[i - p];
-                const int x = L + step * i + step / 2;
+                if (i < start) continue;          // 窗口外只推进滑窗不画
+                const int x = x_of(i);
                 const int y = y_of(sum / (float)p);
                 if (mx >= 0) px_line(pix, W, H, mx, my, x, y, ma_col[k]);
                 mx = x; my = y;
             }
         }
+        // 窗口内最高/最低价 (右上角; 浮点必须 snprintf — LVGL printf 无 %f)
+        if (_chart_hilo) {
+            float wh = -1e9f, wl = 1e9f;
+            for (int i = start; i < n; i++) {
+                wh = c.day_high[i] > wh ? c.day_high[i] : wh;
+                wl = c.day_low[i]  < wl ? c.day_low[i]  : wl;
+            }
+            char b[96];
+            std::snprintf(b, sizeof b, "最高 %.2f   最低 %.2f   (%d 日)", wh, wl, win);
+            lv_label_set_text(_chart_hilo, b);
+        }
     }
 
     lv_obj_invalidate(_chart_canvas);
+}
+
+// 日K 可视窗口缩放 (UI 线程, 已持 LVGL 锁): win ∈ [40, 数据根数], 步进 40.
+// 非日K 视图下点击自动切到日K (tab 选中态同步).
+void AppStocks::_zoomKline(int delta)
+{
+    ChartData c;
+    {
+        std::lock_guard<std::mutex> lk(_chart_mu);
+        c = _chart;
+    }
+    if (c.day_close.empty()) return;
+    const int n = (int)c.day_close.size();
+    int win = _kline_win + delta;
+    if (win < 40) win = 40;
+    if (win > n) win = n;
+    const bool mode_changed = (_chart_mode != 1);
+    if (win == _kline_win && !mode_changed) return;
+    _kline_win = win;
+    if (mode_changed) {
+        _chart_mode = 1;
+        for (int i = 0; i < 2; i++)
+            if (_chart_tab_btn[i]) {
+                if (i == 1) lv_obj_add_state(_chart_tab_btn[i], LV_STATE_CHECKED);
+                else        lv_obj_clear_state(_chart_tab_btn[i], LV_STATE_CHECKED);
+            }
+    }
+    _drawChartCanvas(c);
 }
 
 // 分时/日K tab 点击 (UI 线程, 已持 LVGL 锁): 换模式 + 同步两钮选中态 + 重绘.
