@@ -74,7 +74,7 @@ static lv_obj_t* value_label(lv_obj_t* parent, const char* text, int x, int y,
     return label;
 }
 
-AppReachy::AppReachy() { setAppInfo().name = "YRobot 控制台"; }
+AppReachy::AppReachy() { setAppInfo().name = "Reachy"; }
 void AppReachy::onCreate() {}
 
 void AppReachy::onOpen() {
@@ -269,7 +269,7 @@ void AppReachy::_buildHeader() {
     lv_obj_set_style_pad_all(header, 0, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    makeLabel(header, "YRobot 控制台", 28, 17, zh_font_lg(), kText());
+    makeLabel(header, "Reachy", 28, 17, zh_font_lg(), kText());
     _hdr_host = makeLabel(header, "等待连接", 290, 20, zh_font_sm(), kTextMuted());
     _hdr_state = makeStatusPill(header, "连接中…", 1020, 12, 220, zh_font_sm(), kWarn());
 }

@@ -35,15 +35,84 @@ static const lv_font_t* zh_font_30()
 // Chinese font defined in app_ha/view/font_zh_36.c (now includes 工具计算器).
 extern lv_font_t font_zh_36;
 
-// Tool tile icons (ARGB8888) defined in app_settings/calc_icon.c & fx_icon.c & unit_icon.c.
-extern const lv_image_dsc_t calc_icon;   // 80x112
-extern const lv_image_dsc_t fx_icon;     // 100x100
-extern const lv_image_dsc_t unit_icon;   // 200x200
-extern const lv_image_dsc_t lora_logo;   // 130x130
-extern const lv_image_dsc_t stocks_icon; // 130x130
-extern const lv_image_dsc_t calendar_icon; // 100x100 (icons8-日历, 原色)
-extern const lv_image_dsc_t stocks8_icon;  // 100x100 (icons8-股市, 原色)
-extern const lv_image_dsc_t reachy_icon; // 130x130 (app_reachy/reachy_icon.c)
+// 工具页 tile 图标全部为 make_tile 图形分支现画 (线条取主题强调色, 随主题切换):
+// 自选股/万年历 2026-10-27 弃用 stocks8_icon/calendar_icon, 计算器/汇率/单位换算/
+// LoRa/RFID/邮件/Reachy 同日弃用 calc_icon/fx_icon/unit_icon/lora_logo/reachy_icon.
+// 上述 .c 图片源文件仅存档, 不再被引用 (真机 gc-sections 自动剔除).
+
+// 工具页图形分支共用: 画一块纯色小矩形 (图标线条/圆点), 自动冒泡点击到父 tile.
+static lv_obj_t* tool_accent_rect(lv_obj_t* parent, uint32_t color,
+                                  int x, int y, int w, int h, int radius)
+{
+    lv_obj_t* r = lv_obj_create(parent);
+    lv_obj_set_size(r, w, h);
+    lv_obj_set_pos(r, x, y);
+    lv_obj_set_style_bg_color(r, lv_color_hex(color), 0);
+    lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(r, radius, 0);
+    lv_obj_set_style_border_width(r, 0, 0);
+    lv_obj_set_style_shadow_width(r, 0, 0);
+    lv_obj_set_style_pad_all(r, 0, 0);
+    lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(r, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(r, LV_OBJ_FLAG_EVENT_BUBBLE);
+    return r;
+}
+
+// 工具页图形分支共用: 画一个纯色描边圆角框 (透明底; radius=边长一半即圆环),
+// 自动冒泡点击到父 tile.
+static lv_obj_t* tool_accent_frame(lv_obj_t* parent, uint32_t color,
+                                   int x, int y, int w, int h, int radius, int border_w)
+{
+    lv_obj_t* f = lv_obj_create(parent);
+    lv_obj_set_size(f, w, h);
+    lv_obj_set_pos(f, x, y);
+    lv_obj_set_style_bg_opa(f, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(f, radius, 0);
+    lv_obj_set_style_border_width(f, border_w, 0);
+    lv_obj_set_style_border_color(f, lv_color_hex(color), 0);
+    lv_obj_set_style_shadow_width(f, 0, 0);
+    lv_obj_set_style_pad_all(f, 0, 0);
+    lv_obj_clear_flag(f, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(f, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(f, LV_OBJ_FLAG_EVENT_BUBBLE);
+    return f;
+}
+
+// 工具页图形分支共用: 用 lv_line 画折线 (pts 相对线对象原点, 线对象放在 (x,y)),
+// 自动冒泡点击到父 tile.
+static lv_obj_t* tool_accent_line(lv_obj_t* parent, uint32_t color, int x, int y,
+                                  const lv_point_precise_t pts[], uint32_t n, int width)
+{
+    lv_obj_t* line = lv_line_create(parent);
+    lv_line_set_points(line, pts, n);
+    lv_obj_set_pos(line, x, y);
+    lv_obj_set_style_line_color(line, lv_color_hex(color), 0);
+    lv_obj_set_style_line_width(line, width, 0);
+    lv_obj_set_style_line_rounded(line, true, 0);
+    lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(line, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(line, LV_OBJ_FLAG_EVENT_BUBBLE);
+    return line;
+}
+
+// 工具页图形分支共用: 用 33 段折线近似画一段圆弧 (角度制, 0°=右, 顺时针增,
+// cx/cy 为圆心在父 tile 里的绝对坐标). lv_line 的点数组必须跨帧存活 -> 存静态池;
+// 图标几何固定, 页面重建时原槽位重算复用.
+static lv_obj_t* tool_accent_arc(lv_obj_t* parent, uint32_t color, int cx, int cy,
+                                 int radius, float a0_deg, float a1_deg, int width)
+{
+    static lv_point_precise_t pool[16][33];
+    static int used = 0;
+    lv_point_precise_t* pts = pool[used];
+    used = (used + 1) % 16;
+    for (int i = 0; i <= 32; i++) {
+        const float a = (a0_deg + (a1_deg - a0_deg) * i / 32.0f) * 3.14159265f / 180.0f;
+        pts[i].x = cx + radius * cosf(a);
+        pts[i].y = cy + radius * sinf(a);
+    }
+    return tool_accent_line(parent, color, 0, 0, pts, 33, width);
+}
 
 // Calculator fonts (Arial Unicode subsets) defined in this app's font_calc_*.c.
 extern const lv_font_t font_calc_big;   // 80px result line
@@ -310,76 +379,135 @@ void AppSettings::_buildToolsPage()
             lv_obj_align(icon, LV_ALIGN_LEFT_MID, start, 0);
             lv_obj_align(name, LV_ALIGN_LEFT_MID, start + img_w + ICON_GAP, 0);
         } else {
-            // kind 分支: 0=点阵 (灯阵) / 1=信封 (邮件)
+            // kind 分支: 0=点阵 (灯阵) / 1=信封 (邮件) / 2=嵌套方框标签 (RFID) /
+            // 3=走势 (自选股) / 4=日历 (万年历) / 5=计算器 / 6=硬币双箭头 (汇率) /
+            // 7=尺子 (单位换算) / 8=电波 (LoRa) / 9=机器人 (Reachy).
+            // 线条全部随主题强调色 (2026-10-27 起工具页图标全图形化, 静态图全弃用).
             if (kind == 1) {
-                // 信封 (邮件 tile) — 白色矩形 + 顶上一条横线表示封口.
-                // 跟点阵分支一样完全脱离字体, 用纯 lv_obj 矩形拼.
+                // 信封 (邮件 tile) — 圆角轮廓 + V 形封盖, 参考 icons8-邮件 描边款.
                 const int EW = 84, EH = 56;
                 const int ex = (TW - EW - ICON_GAP - name_w) / 2;
                 const int ey = (TH - EH) / 2;
-                lv_obj_t* env_body = lv_obj_create(tile);
-                lv_obj_set_size(env_body, EW, EH);
-                lv_obj_set_pos(env_body, ex, ey);
-                lv_obj_set_style_bg_color(env_body, lv_color_hex(C_TEXT), 0);
-                lv_obj_set_style_bg_opa(env_body, LV_OPA_COVER, 0);
-                lv_obj_set_style_radius(env_body, 6, 0);
-                lv_obj_set_style_border_width(env_body, 0, 0);
-                lv_obj_set_style_shadow_width(env_body, 0, 0);
-                lv_obj_set_style_pad_all(env_body, 0, 0);
-                lv_obj_clear_flag(env_body, LV_OBJ_FLAG_SCROLLABLE);
-                lv_obj_clear_flag(env_body, LV_OBJ_FLAG_CLICKABLE);
-                // 关键: 让 env_body 不吞 click 事件, 冒泡到父 tile
-                lv_obj_add_flag(env_body, LV_OBJ_FLAG_EVENT_BUBBLE);
-                // 封口横线
-                lv_obj_t* flap = lv_obj_create(tile);
-                lv_obj_set_size(flap, EW - 16, 2);
-                lv_obj_set_pos(flap, ex + 8, ey + 18);
-                lv_obj_set_style_bg_color(flap, lv_color_hex(C_SHADOW), 0);
-                lv_obj_set_style_bg_opa(flap, LV_OPA_COVER, 0);
-                lv_obj_set_style_border_width(flap, 0, 0);
-                lv_obj_set_style_radius(flap, 0, 0);
-                lv_obj_set_style_shadow_width(flap, 0, 0);
-                lv_obj_set_style_pad_all(flap, 0, 0);
-                lv_obj_clear_flag(flap, LV_OBJ_FLAG_SCROLLABLE);
-                lv_obj_clear_flag(flap, LV_OBJ_FLAG_CLICKABLE);
-                // 关键: flap 不吞 click 事件, 冒泡到父 tile
-                lv_obj_add_flag(flap, LV_OBJ_FLAG_EVENT_BUBBLE);
+                tool_accent_frame(tile, C_ACCENT, ex, ey, EW, EH, 8, 6);
+                // V 形封盖: 点位相对线对象原点 (线对象放在信封左上角)
+                static const lv_point_precise_t flap[] = {{7, 4}, {42, 30}, {77, 4}};
+                tool_accent_line(tile, C_ACCENT, ex, ey, flap, 3, 5);
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, ex + EW + ICON_GAP, 0);
             } else if (kind == 2) {
-                // NFC 感应图标 (RFID tile) — 3 个同心圆环 + 中心芯片方块.
-                // 与信封/点阵分支一样用纯 lv_obj 拼, 不依赖字体符号.
-                const int ccx = (TW - 96 - ICON_GAP - name_w) / 2 + 48;  // 圆心 x (整组居中)
-                const int ccy = TH / 2;        // 圆心 y (tile 垂直居中)
-                const int sizes[3] = {96, 68, 40};
-                for (int i = 0; i < 3; i++) {
-                    lv_obj_t* ring = lv_obj_create(tile);
-                    lv_obj_set_size(ring, sizes[i], sizes[i]);
-                    lv_obj_set_pos(ring, ccx - sizes[i] / 2, ccy - sizes[i] / 2);
-                    lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
-                    lv_obj_set_style_radius(ring, sizes[i] / 2, 0);   // 圆形
-                    lv_obj_set_style_border_width(ring, 4, 0);
-                    lv_obj_set_style_border_color(ring, lv_color_hex(C_ACCENT), 0);
-                    lv_obj_set_style_shadow_width(ring, 0, 0);
-                    lv_obj_set_style_pad_all(ring, 0, 0);
-                    lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
-                    // 关键: 圆环不吞 click 事件, 冒泡到父 tile
-                    lv_obj_add_flag(ring, LV_OBJ_FLAG_EVENT_BUBBLE);
-                }
-                // 中心芯片方块
-                lv_obj_t* chip = lv_obj_create(tile);
-                lv_obj_set_size(chip, 16, 16);
-                lv_obj_set_pos(chip, ccx - 8, ccy - 8);
-                lv_obj_set_style_bg_color(chip, lv_color_hex(C_ACCENT), 0);
-                lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
-                lv_obj_set_style_radius(chip, 3, 0);
-                lv_obj_set_style_border_width(chip, 0, 0);
-                lv_obj_set_style_shadow_width(chip, 0, 0);
-                lv_obj_set_style_pad_all(chip, 0, 0);
-                lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
-                lv_obj_clear_flag(chip, LV_OBJ_FLAG_CLICKABLE);
-                lv_obj_add_flag(chip, LV_OBJ_FLAG_EVENT_BUBBLE);
-                lv_obj_align(name, LV_ALIGN_LEFT_MID, ccx + 48 + ICON_GAP, 0);
+                // RFID 标签 — 三层嵌套圆角方框 + 中心芯片, 参考 icons8-rfid标签.
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                tool_accent_frame(tile, C_ACCENT, start + 8, top + 8, 80, 80, 10, 6);
+                tool_accent_frame(tile, C_ACCENT, start + 22, top + 22, 52, 52, 8, 5);
+                tool_accent_frame(tile, C_ACCENT, start + 34, top + 34, 28, 28, 5, 4);
+                tool_accent_rect(tile, C_ACCENT, start + 43, top + 43, 10, 10, 2);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 3) {
+                // 自选股 (行情走势) — L 形坐标轴 + 上升折线 + 终点圆点,
+                // 线条同灯阵圆点一样取主题强调色 C_ACCENT. 图标盒 96x96.
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                // 纵轴 / 横轴 (6px 粗)
+                tool_accent_rect(tile, C_ACCENT, start, top, 6, 84, 3);
+                tool_accent_rect(tile, C_ACCENT, start, top + 78, 84, 6, 3);
+                // 上升折线 (点位相对线对象原点, 线对象放在图标盒 (12,6) 处)
+                static const lv_point_precise_t trend_pts[] = {
+                    {0, 52}, {15, 34}, {27, 42}, {46, 18}, {58, 26}, {74, 2}
+                };
+                tool_accent_line(tile, C_ACCENT, start + 12, top + 6, trend_pts, 6, 6);
+                // 折线终点圆点 (终点绝对坐标 start+86, top+8)
+                tool_accent_rect(tile, C_ACCENT, start + 80, top + 2, 12, 12, 6);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 4) {
+                // 万年历 — 圆角日历框 + 顶部两个装订环 + 表头分隔线 + 日期圆点,
+                // 线条同灯阵圆点一样取主题强调色 C_ACCENT. 图标盒 96x96.
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                const int fx = start + 6, fy = top + 18, fw = 84, fh = 72;
+                // 装订环 (先画, 下半截被日历框边框盖住, 露出上半截)
+                tool_accent_rect(tile, C_ACCENT, fx + 14, top + 8, 8, 20, 4);
+                tool_accent_rect(tile, C_ACCENT, fx + fw - 22, top + 8, 8, 20, 4);
+                // 日历框: 圆角边框, 背景透明
+                tool_accent_frame(tile, C_ACCENT, fx, fy, fw, fh, 14, 6);
+                // 表头分隔线
+                tool_accent_rect(tile, C_ACCENT, fx + 6, fy + 22, fw - 12, 4, 2);
+                // 日期圆点 3x2
+                for (int r = 0; r < 2; r++)
+                    for (int c = 0; c < 3; c++)
+                        tool_accent_rect(tile, C_ACCENT,
+                                         fx + 14 + c * 22, fy + 36 + r * 16, 10, 10, 5);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 5) {
+                // 计算器 — 圆角机身 + 显示屏条 + 4x3 按键阵, 参考 icons8-计算器.
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                const int bx = start + 16, by = top + 6;   // 机身 64x84
+                tool_accent_frame(tile, C_ACCENT, bx, by, 64, 84, 12, 6);
+                tool_accent_rect(tile, C_ACCENT, bx + 10, by + 10, 44, 13, 3);  // 显示屏
+                for (int r = 0; r < 3; r++)
+                    for (int c = 0; c < 4; c++)
+                        tool_accent_rect(tile, C_ACCENT,
+                                         bx + 10 + c * 12, by + 31 + r * 13, 8, 8, 2);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 6) {
+                // 汇率 (外币兑换) — 对角两枚硬币 + 上下反向箭头, 参考 icons8-外币兑换.
+                // 币面不带字: 96px 盒里 30px 的 ￥ 过挤, 表意交给 tile 文字「汇率」.
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                tool_accent_frame(tile, C_ACCENT, start + 6, top + 8, 34, 34, 17, 6);
+                tool_accent_frame(tile, C_ACCENT, start + 56, top + 54, 34, 34, 17, 6);
+                // 上箭头 (向左) / 下箭头 (向右)
+                tool_accent_rect(tile, C_ACCENT, start + 52, top + 10, 38, 5, 2);
+                tool_accent_rect(tile, C_ACCENT, start + 6, top + 81, 38, 5, 2);
+                // 箭头头部 (V 形折线, 点位相对线对象原点)
+                static const lv_point_precise_t head_l[] = {{6, 0}, {0, 6}, {6, 12}};
+                static const lv_point_precise_t head_r[] = {{0, 0}, {6, 6}, {0, 12}};
+                tool_accent_line(tile, C_ACCENT, start + 52, top + 7, head_l, 3, 5);
+                tool_accent_line(tile, C_ACCENT, start + 38, top + 78, head_r, 3, 5);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 7) {
+                // 单位换算 (尺子) — 圆角尺身 + 5 根刻度, 参考 icons8-尺子 (横放).
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                tool_accent_frame(tile, C_ACCENT, start + 4, top + 26, 88, 44, 8, 6);
+                for (int i = 0; i < 5; i++)
+                    tool_accent_rect(tile, C_ACCENT,
+                                     start + 12 + i * 16, top + 32, 5, 16, 2);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 8) {
+                // LoRa Chat (无线电波) — 中心圆环 + 左右各两道弧, 参考 icons8-无线电波.
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int icx = start + IW / 2, icy = TH / 2;
+                tool_accent_frame(tile, C_ACCENT, icx - 9, icy - 9, 18, 18, 9, 6);
+                tool_accent_arc(tile, C_ACCENT, icx, icy, 30, 145, 215, 5);
+                tool_accent_arc(tile, C_ACCENT, icx, icy, 44, 150, 210, 5);
+                tool_accent_arc(tile, C_ACCENT, icx, icy, 30, -35, 35, 5);
+                tool_accent_arc(tile, C_ACCENT, icx, icy, 44, -30, 30, 5);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 9) {
+                // Reachy (机器人头) — 圆角头框 + 双耳 + 双天线 + 双眼 + 嘴,
+                // 参考 icons8-机器人.
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int icx = start + IW / 2, icy = TH / 2;
+                tool_accent_frame(tile, C_ACCENT, icx - 30, icy - 24, 60, 48, 12, 6);
+                tool_accent_rect(tile, C_ACCENT, icx - 38, icy - 7, 8, 14, 3);   // 左耳
+                tool_accent_rect(tile, C_ACCENT, icx + 30, icy - 7, 8, 14, 3);   // 右耳
+                tool_accent_rect(tile, C_ACCENT, icx - 16, icy - 38, 4, 14, 2);  // 左天线
+                tool_accent_rect(tile, C_ACCENT, icx + 12, icy - 38, 4, 14, 2);  // 右天线
+                tool_accent_rect(tile, C_ACCENT, icx - 18, icy - 46, 8, 8, 4);   // 天线顶球
+                tool_accent_rect(tile, C_ACCENT, icx + 10, icy - 46, 8, 8, 4);
+                tool_accent_rect(tile, C_ACCENT, icx - 18, icy - 12, 8, 8, 2);   // 双眼
+                tool_accent_rect(tile, C_ACCENT, icx + 10, icy - 12, 8, 8, 2);
+                tool_accent_rect(tile, C_ACCENT, icx - 8, icy + 4, 16, 5, 2);    // 嘴
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -413,63 +541,30 @@ void AppSettings::_buildToolsPage()
         }
     };
 
-    // All three tool icons render at 130×130 to match the 汇率 (fx) icon.
-    //   fx_icon  : 100×100 native × 1.30 (scale 333) → 130×130
-    //   unit_icon: 130×130 native × 1.00             → 130×130
-    //   calc_icon: 130×130 native × 1.00             → 130×130
-    make_tile(0, 0, &calc_icon, 130, "计算器",  _toolBtn_cb);
-    make_tile(1, 0, &fx_icon,   150, "汇率",    _toolFx_cb,   384);  // 384 = 256 × 1.5x → 150×150
-    make_tile(2, 0, &unit_icon, 130, "单位换算", _toolUnit_cb);
+    // 行 0: 计算器 / 汇率 / 单位换算 / 灯阵 — 图标全部走 make_tile 图形分支
+    // (kind 5/6/7/0), 线条随主题强调色, 原静态图 calc_icon/fx_icon/unit_icon 已弃用.
+    make_tile(0, 0, nullptr, 130, "计算器",  _toolBtn_cb, 256, 12, -1, 5);
+    make_tile(1, 0, nullptr, 130, "汇率",    _toolFx_cb, 256, 12, -1, 6);
+    make_tile(2, 0, nullptr, 130, "单位换算", _toolUnit_cb, 256, 12, -1, 7);
     make_tile(3, 0, nullptr, 130, "灯  阵", _toolPuzzle_cb);
 
-    // 第 2 行第 2 列: LoRa 聊天 (Unit C6L SX1262, PORT.A UART)
-    //   图标: 4 根逐渐升高的信号柱
-    {
-        const int x = MARGIN + 0 * (TW + GAP_X), y_pos = 20 + 1 * (TH + GAP_Y);
-        lv_obj_t* tile = lv_obj_create(_tools_page);
-        lv_obj_set_size(tile, TW, TH);
-        lv_obj_align(tile, LV_ALIGN_TOP_LEFT, x, y_pos);
-        lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD), 0);
-        lv_obj_set_style_radius(tile, 20, 0);
-        lv_obj_set_style_border_width(tile, 0, 0);
-        lv_obj_set_style_pad_all(tile, 0, 0);
-        lv_obj_set_style_shadow_width(tile, 18, 0);
-        lv_obj_set_style_shadow_color(tile, lv_color_hex(C_SHADOW), 0);
-        lv_obj_set_style_shadow_opa(tile, LV_OPA_30, 0);
-        lv_obj_set_style_shadow_ofs_y(tile, 4, 0);
-        lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD_PR), LV_STATE_PRESSED);
-        lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(tile, _toolLoraChat_cb, LV_EVENT_CLICKED, this);
-
-        // LoRa 官方 logo 图标 —— 内容成组水平居中
-        lv_obj_t* icon = lv_image_create(tile);
-        lv_image_set_src(icon, &lora_logo);
-        lv_image_set_scale(icon, 256);  // 130×130 native, 1:1
-        const char* lora_txt = "LoRa Chat";
-        const int lora_name_w = (int)lv_txt_get_width(lora_txt, (uint32_t)strlen(lora_txt),
-                                                      zh_font_30(), 0);
-        const int lora_start = (TW - 130 - 20 - lora_name_w) / 2;
-        lv_obj_align(icon, LV_ALIGN_LEFT_MID, lora_start, 0);
-        lv_obj_add_flag(icon, LV_OBJ_FLAG_EVENT_BUBBLE);
-        lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE);
-
-        lv_obj_t* name = lv_label_create(tile);
-        lv_label_set_text(name, "LoRa Chat");
-        lv_obj_set_style_text_font(name, zh_font_30(), 0);
-        lv_obj_set_style_text_color(name, lv_color_hex(C_TEXT), 0);
-        lv_obj_align(name, LV_ALIGN_LEFT_MID, lora_start + 130 + 20, 0);
-    }
+    // 第 2 行第 1 列: LoRa 聊天 (Unit C6L SX1262, PORT.A UART) — kind=8 电波分支,
+    // 线条随主题强调色 (原 lora_logo 静态图 + 手写 tile 块已弃用).
+    make_tile(0, 1, nullptr, 130, "LoRa Chat", _toolLoraChat_cb, 256, 12, -1, 8);
 
     // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表), kind=1 信封分支
     make_tile(2, 1, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 1);
 
     // 第 3 行第 2 列: 自选股 (走 hermes :8766/api/stocks/portfolio, mx-selfselect 后端)
-    make_tile(3, 1, &stocks8_icon, 100, "自选股", _toolStocks_cb);
+    //   kind=3 走势分支, 线条随主题强调色 (原 stocks8_icon 静态图已弃用)
+    make_tile(3, 1, nullptr, 130, "自选股", _toolStocks_cb, 256, 12, -1, 3);
 
-    // 第 3 行第 3 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
-        make_tile(0, 2, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb);
-    make_tile(1, 2, &calendar_icon, 100, "万年历", _toolCalendar_cb);
+    // 第 3 行第 1 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
+    //   kind=9 机器人分支; 2026-10-27 用户要求由「YRobot 控制台」改名「Reachy」,
+    //   原 reachy_icon 静态图弃用.
+    make_tile(0, 2, nullptr, 130, "Reachy", _toolReachy_cb, 256, 12, -1, 9);
+    //   kind=4 日历分支, 线条随主题强调色 (原 calendar_icon 静态图已弃用)
+    make_tile(1, 2, nullptr, 130, "万年历", _toolCalendar_cb, 256, 12, -1, 4);
 
     // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
     //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
