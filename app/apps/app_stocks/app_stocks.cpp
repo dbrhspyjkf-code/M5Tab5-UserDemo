@@ -256,7 +256,7 @@ void AppStocks::_buildUi()
         lv_label_set_text(name, "--");
         lv_obj_set_style_text_font(name, zh_font_lg(), 0);
         lv_obj_set_style_text_color(name, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 20);
+        lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 16);
 
         lv_obj_t* price = lv_label_create(card);
         lv_label_set_text(price, "--");
@@ -335,19 +335,19 @@ void AppStocks::_buildIndexPage()
         lv_label_set_text(price, "--");
         lv_obj_set_style_text_font(price, &lv_font_montserrat_38, 0);
         lv_obj_set_style_text_color(price, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 82);
+        lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 70);
 
         lv_obj_t* amt = lv_label_create(card);
         lv_label_set_text(amt, "");
         lv_obj_set_style_text_font(amt, &lv_font_montserrat_30, 0);
         lv_obj_set_style_text_color(amt, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(amt, LV_ALIGN_TOP_MID, 0, 136);
+        lv_obj_align(amt, LV_ALIGN_TOP_MID, 0, 120);
 
         lv_obj_t* pct = lv_label_create(card);
         lv_label_set_text(pct, "");
         lv_obj_set_style_text_font(pct, &lv_font_montserrat_30, 0);
         lv_obj_set_style_text_color(pct, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(pct, LV_ALIGN_TOP_MID, 0, 180);
+        lv_obj_align(pct, LV_ALIGN_TOP_MID, 0, 162);
 
         _index_cards[i] = card;
         _index_name[i]  = name;
