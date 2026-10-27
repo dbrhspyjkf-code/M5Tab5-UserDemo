@@ -255,7 +255,7 @@ void AppCalendar::_refreshMonth()
                 }
             }
 
-            char db[8];
+            char db[16];
             snprintf(db, sizeof(db), "%d", day);
             lv_label_set_text(d_lbl, db);
             lv_label_set_text(l_lbl, lunar_txt.c_str());
