@@ -342,7 +342,7 @@ void AppHome::onOpen()
         lv_obj_t* card = row_card(366, 242, theme::cur().card[3], theme::cur().border);
         // 垂直均匀分布: 标题顶 / 英文中 / 中文底 (行数变化间距恒定)
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_BETWEEN,
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_EVENLY,
                               LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
         lv_obj_set_style_pad_left(card, 24, 0);
         lv_obj_set_style_pad_right(card, 24, 0);
@@ -614,7 +614,7 @@ void AppHome::_fetch_weather()
 void AppHome::_nextSentence(lv_obj_t* card)
 {
     if (!card) return;
-    lv_obj_set_style_outline_color(card, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_set_style_outline_color(card, lv_color_hex(theme::cur().card[3]), 0);
     lv_obj_set_style_outline_width(card, 6, 0);
     lv_timer_create([](lv_timer_t* tm) {
         lv_obj_set_style_outline_width(
