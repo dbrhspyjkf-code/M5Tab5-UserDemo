@@ -44,6 +44,7 @@ idf_component_register(SRCS "app_main.cpp" ${APP_LAYER_SRCS} ${MY_HAL_SRCS}
                         xiaozhi_core
                         78__xiaozhi-fonts
                         esp_http_client
+                        esp-tls
                         esp_pm
                         voice_input)
 

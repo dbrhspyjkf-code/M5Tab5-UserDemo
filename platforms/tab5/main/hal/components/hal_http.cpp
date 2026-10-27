@@ -5,6 +5,7 @@
 #include "../hal_esp32.h"
 #include <mooncake_log.h>
 #include <esp_http_client.h>
+#include <esp_crt_bundle.h>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -50,6 +51,10 @@ hal::HalBase::HttpResponse_t HalEsp32::httpGet(
     config.timeout_ms     = _is_slow_hermes_url(url) ? 30000 : 10000;
     config.buffer_size    = 2048;
     config.buffer_size_tx = 512;
+    // https 必须给服务器校验选项, 否则 esp-tls 拒绝建连
+    // ("No server verification option set", 2026-10-27 指数页 qt.gtimg.cn 实锤).
+    // 证书 bundle (sdkconfig CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y) 覆盖主流 CA.
+    config.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) { mclog::tagWarn(_tag, "init failed"); return resp; }
@@ -88,6 +93,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPost(
     config.timeout_ms     = _is_claude_gateway_url(url) ? 240000 : 10000;
     config.buffer_size    = 1024;
     config.buffer_size_tx = 2048;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) { mclog::tagWarn(_tag, "init failed"); return resp; }
@@ -127,6 +133,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPut(
     config.timeout_ms     = 10000;
     config.buffer_size    = 1024;
     config.buffer_size_tx = 2048;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) { mclog::tagWarn(_tag, "init failed"); return resp; }
@@ -201,6 +208,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPostKeepAlive(
             config.buffer_size       = 1024;
             config.buffer_size_tx    = 2048;
             config.keep_alive_enable = true;
+            config.crt_bundle_attach = esp_crt_bundle_attach;
             s_keepalive_client = esp_http_client_init(&config);
             if (!s_keepalive_client) {
                 mclog::tagWarn(_tag, "keep-alive init failed");
