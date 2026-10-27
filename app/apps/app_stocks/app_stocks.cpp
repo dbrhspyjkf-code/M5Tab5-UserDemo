@@ -232,21 +232,23 @@ void AppStocks::_openIndexChart(int i)
     _openChart(title, tencent);
 }
 
-// 卡片闪烁 160ms 后执行 open (长按反馈, 用户要求"闪烁一下再打开").
-// 一次性定时器, ctx 堆分配自毁; open 在 LVGL 线程执行.
-void AppStocks::_flashCardThen(lv_obj_t* card, std::function<void()> open)
+// 卡片描边闪烁 160ms 后执行 open (长按反馈, 用户要求"闪烁一下再打开").
+// 闪烁走 outline 而非 bg: 卡底是按涨跌幅度动态重刷的渐变色, 快照恢复会把它
+// 覆盖成中性底 (2026-10-27 实锤: 开图后卡片"回不去原色"). 一次性定时器自毁.
+void AppStocks::_flashCardThen(lv_obj_t* card, uint32_t flash_col,
+                               std::function<void()> open)
 {
     if (!card) return;
     struct Ctx {
         lv_obj_t* card;
-        uint32_t orig;
         std::function<void()> open;
     };
-    auto* ctx = new Ctx{card, C_HEADER(), std::move(open)};
-    lv_obj_set_style_bg_color(card, lv_color_hex(theme::cur().accent), 0);
+    auto* ctx = new Ctx{card, std::move(open)};
+    lv_obj_set_style_outline_color(card, lv_color_hex(flash_col), 0);
+    lv_obj_set_style_outline_width(card, 6, 0);
     lv_timer_t* t = lv_timer_create([](lv_timer_t* t) {
         auto* c = static_cast<Ctx*>(lv_timer_get_user_data(t));
-        lv_obj_set_style_bg_color(c->card, lv_color_hex(c->orig), 0);
+        lv_obj_set_style_outline_width(c->card, 0, 0);
         c->open();
         lv_timer_del(t);
         delete c;
@@ -279,7 +281,14 @@ void AppStocks::_ensureCards(int n)
             auto* self = static_cast<AppStocks*>(lv_event_get_user_data(e));
             const int idx = (int)(intptr_t)lv_obj_get_user_data(
                 lv_event_get_current_target_obj(e));
+            float chg = 0;   // 闪烁色按涨跌方向: 涨红/跌绿 (与卡片渐变同语义)
+            {
+                std::lock_guard<std::mutex> lk(self->_items_mu);
+                if (idx >= 0 && idx < (int)self->_items.size())
+                    chg = self->_items[idx].chg;
+            }
             self->_flashCardThen(lv_event_get_current_target_obj(e),
+                                 self->_chgColor(chg),
                                  [self, idx]() { self->_showDetail(idx); });
         }, LV_EVENT_LONG_PRESSED, this);
 
@@ -413,7 +422,13 @@ void AppStocks::_buildIndexPage()
             auto* self = static_cast<AppStocks*>(lv_event_get_user_data(e));
             const int i = (int)(intptr_t)lv_obj_get_user_data(
                 lv_event_get_current_target_obj(e));
+            float chg = 0;   // 闪烁色按涨跌方向
+            {
+                std::lock_guard<std::mutex> lk(self->_index_mu);
+                chg = self->_index_quotes[i].chg_pct;
+            }
             self->_flashCardThen(lv_event_get_current_target_obj(e),
+                                 self->_chgColor(chg),
                                  [self, i]() { self->_openIndexChart(i); });
         }, LV_EVENT_LONG_PRESSED, this);
 
@@ -787,8 +802,8 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
     const char* tab_names[2] = {"分时", "日K"};
     for (int i = 1; i >= 0; i--) {   // 右起建, 让出最右给关闭钮
         lv_obj_t* btn = lv_button_create(_detail_modal);
-        lv_obj_set_size(btn, 110, 44);
-        lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -134 - (1 - i) * 118, 10);
+        lv_obj_set_size(btn, 150, 48);
+        lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -174 - (1 - i) * 158, 10);
         lv_obj_set_style_bg_color(btn, lv_color_hex(0x33363A), 0);
         lv_obj_set_style_bg_color(btn, lv_color_hex(theme::cur().accent), LV_STATE_CHECKED);
         lv_obj_set_style_text_color(btn, lv_color_hex(C_DIM()), 0);            // 继承给 label
@@ -848,7 +863,7 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
     lv_obj_align(_chart_status, LV_ALIGN_TOP_MID, 0, 64 + CHART_H / 2 - 10);
 
     lv_obj_t* close_btn = lv_button_create(_detail_modal);
-    lv_obj_set_size(close_btn, 110, 44);
+    lv_obj_set_size(close_btn, 150, 48);
     lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -16, 10);   // 日K 右侧 (用户指定)
     lv_obj_set_style_bg_color(close_btn, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_radius(close_btn, 10, 0);

@@ -203,7 +203,8 @@ private:
     void _trySpawnChartWorker(const std::string& ifzq_code);  // 已在飞则跳过; 派生失败还旗标
     void _openChart(const std::string& title, const std::string& ifzq_code);  // 全屏走势图
     void _openIndexChart(int i);                // 指数卡片 → 走势图 (长按)
-    void _flashCardThen(lv_obj_t* card, std::function<void()> open);  // 闪烁 160ms 后 open
+    void _flashCardThen(lv_obj_t* card, uint32_t flash_col,
+                        std::function<void()> open);  // 描边闪烁 160ms 后 open
     void _fetchStocksAsync();
     void _doFetch();
     void _parseStocksJson(const std::string& body);
