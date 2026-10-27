@@ -564,6 +564,9 @@ void AppCalendar::_installSwipeGesture()
                 auto* ctx = static_cast<CalSwipeCtx*>(lv_event_get_user_data(e));
                 auto alive = ctx->alive.lock();
                 if (!alive || !*alive) return;
+                // 前台守卫: 手势挂在全局 indev, 失焦后 (未及卸载的窗口期)
+                // 别的页面上的手势/点击抖动不得触发退出
+                if (!ctx->app->_scr || lv_screen_active() != ctx->app->_scr) return;
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
                     auto* defer = new CalSwipeCtx{ctx->app, ctx->alive};
