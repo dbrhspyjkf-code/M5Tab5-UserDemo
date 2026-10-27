@@ -573,7 +573,12 @@ void AppCalendar::_installSwipeGesture()
                     lv_async_call([](void* u) {
                         auto* c = static_cast<CalSwipeCtx*>(u);
                         auto a = c->alive.lock();
-                        if (a && *a) c->app->_requestClose();
+                        // 执行时再验前台: 排队期间页面可能已切换 (偶发
+                        // "点万年历任何位置都弹回工具页" 的根因)
+                        if (a && *a && c->app->_scr
+                            && lv_screen_active() == c->app->_scr) {
+                            c->app->_requestClose();
+                        }
                         delete c;
                     }, defer);
                 }
