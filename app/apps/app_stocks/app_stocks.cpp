@@ -747,6 +747,23 @@ void AppStocks::_showDetail(int row_idx)
         if (i == _chart_mode) lv_obj_add_state(btn, LV_STATE_CHECKED);
     }
 
+    // 均线图例 (颜色与 _drawChartCanvas 的 ma_col 对应, 仅日K 视图显示)
+    {
+        const uint32_t leg_col[3] = {0xF1C40F, 0xE91E63, 0x3498DB};  // 黄/品红/蓝
+        const char* leg_txt[3] = {"MA5", "MA10", "MA20"};
+        int lx = 8;
+        for (int k = 0; k < 3; k++) {
+            lv_obj_t* leg = lv_label_create(_detail_modal);
+            lv_label_set_text(leg, leg_txt[k]);
+            lv_obj_set_style_text_font(leg, zh_font_sm(), 0);
+            lv_obj_set_style_text_color(leg, lv_color_hex(leg_col[k]), 0);
+            lv_obj_align(leg, LV_ALIGN_TOP_LEFT, lx, 60);
+            lv_obj_add_flag(leg, LV_OBJ_FLAG_HIDDEN);   // 默认分时视图
+            _chart_ma_leg[k] = leg;
+            lx += 64;
+        }
+    }
+
     // canvas: 1200x530 ARGB8888 (堆缓冲, worker 绘制在 UI 线程做)
     // 2.4MB 大块: 设备端 SPIRAM_USE_MALLOC=y, malloc 自动落 PSRAM;
     // 勿用 heap_caps_malloc(MALLOC_CAP_SPIRAM) —— SPIRAM_USE_CAPS_ALLOC
@@ -813,6 +830,7 @@ void AppStocks::_closeDetail()
     }
     _chart_canvas = _chart_status = nullptr;
     for (lv_obj_t*& b : _chart_tab_btn) b = nullptr;
+    for (lv_obj_t*& l : _chart_ma_leg) l = nullptr;
     if (_chart_pixels) {           // canvas 缓冲是堆分配, 弹窗关了就还
         free(_chart_pixels);
         _chart_pixels = nullptr;
@@ -861,11 +879,11 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
         }
     }
 
-    // ── 日K: fqkline/get, 最近 60 根前复权 ──
+    // ── 日K: fqkline/get, 最近 120 根前复权 (2026-10-27 用户 60→120) ──
     {
         auto resp = GetHAL()->httpGet(
             "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=" +
-            prefixed + ",day,,,60,qfq");
+            prefixed + ",day,,,120,qfq");
         if (resp.ok && parse_ok(resp.body)) {
             try {
                 auto j = nlohmann::json::parse(resp.body);
@@ -986,6 +1004,13 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
     if (_chart_mode == 1 && have_day) draw_minute = false;
     if (_chart_mode == 0 && !have_min && have_day) draw_minute = false;
 
+    // 均线图例仅日K视图显示
+    for (lv_obj_t* leg : _chart_ma_leg) {
+        if (!leg) continue;
+        if (draw_minute) lv_obj_add_flag(leg, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_clear_flag(leg, LV_OBJ_FLAG_HIDDEN);
+    }
+
     // ── 分时整幅 / 日K整幅, 由 tab 切换 (_chart_mode), 缺数据回退另一序列 ──
     px_fill(pix, W, H, COL_BG);
 
@@ -1023,7 +1048,7 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
             px_ = x; py_ = y;
         }
     } else if (have_day) {
-        // 日K: 最近 60 根蜡烛
+        // 日K: 最近 120 根蜡烛 + MA5/10/20 均线
         const int n = (int)c.day_close.size();
         float hi = -1e9f, lo = 1e9f;
         for (int i = 0; i < n; i++) {
@@ -1046,6 +1071,24 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
             if (yo > yc) { int t = yo; yo = yc; yc = t; }
             px_line(pix, W, H, x, yh, x, yl, col);          // 影线
             px_rect(pix, W, H, x - body_w / 2, yo, x + body_w / 2, yc > yo ? yc : yo + 1, col);
+        }
+        // MA5/10/20 均线 (收盘价简单均值, 滑窗; 前 p-1 根无值不画).
+        // 收盘价必然落在 [lo,hi] 内 (high/low 包络), 无越界.
+        const uint32_t ma_col[3] = {0xF1C40F, 0xE91E63, 0x3498DB};  // 黄/品红/蓝
+        const int ma_period[3] = {5, 10, 20};
+        for (int k = 0; k < 3; k++) {
+            const int p = ma_period[k];
+            if (n < p) continue;
+            float sum = 0;
+            for (int i = 0; i < p; i++) sum += c.day_close[i];
+            int mx = -1, my = -1;
+            for (int i = p - 1; i < n; i++) {
+                if (i > p - 1) sum += c.day_close[i] - c.day_close[i - p];
+                const int x = L + step * i + step / 2;
+                const int y = y_of(sum / (float)p);
+                if (mx >= 0) px_line(pix, W, H, mx, my, x, y, ma_col[k]);
+                mx = x; my = y;
+            }
         }
     }
 

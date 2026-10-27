@@ -147,6 +147,7 @@ private:
     std::atomic<bool> _chart_in_flight{false};
     lv_obj_t*      _chart_canvas  {nullptr};  // 1200x530 ARGB8888
     lv_obj_t*      _chart_tab_btn[2]{nullptr, nullptr};  // 分时/日K 切换按钮
+    lv_obj_t*      _chart_ma_leg[3]{nullptr, nullptr, nullptr};  // MA5/10/20 图例 (仅日K)
     int            _chart_mode   = 0;         // 0=分时 1=日K
     lv_obj_t*      _chart_status  {nullptr};
     void*          _chart_pixels  {nullptr};  // canvas 像素堆缓冲 (chart 绘制专用)
