@@ -556,7 +556,16 @@ void AppCalendar::_monthDd_cb(lv_event_t* e)
 void AppCalendar::_dayClick_cb(lv_event_t* e)
 {
     auto* self = static_cast<AppCalendar*>(lv_event_get_user_data(e));
-    const int day = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_current_target_obj(e));
+    lv_obj_t* cell = lv_event_get_current_target_obj(e);
+    const int day = (int)(intptr_t)lv_obj_get_user_data(cell);
+    // 同主页每日一句卡: 当前底色同色描边外扩 160ms (视觉=卡片放大)
+    lv_obj_set_style_outline_color(cell, lv_obj_get_style_bg_color(cell, 0), 0);
+    lv_obj_set_style_outline_width(cell, 6, 0);
+    lv_timer_create([](lv_timer_t* tm) {
+        lv_obj_set_style_outline_width(
+            static_cast<lv_obj_t*>(lv_timer_get_user_data(tm)), 0, 0);
+        lv_timer_del(tm);
+    }, 160, cell);
     if (day >= 1) self->_showDayDetail(day);
 }
 

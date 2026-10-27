@@ -67,6 +67,8 @@ static lv_obj_t* mk_round_btn(lv_obj_t* parent, int w, int h, uint32_t bg,
     lv_obj_set_size(btn, w, h);
     lv_obj_set_style_bg_color(btn, lv_color_hex(bg), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    // 按下变色 (同主页按钮, 2026-10-28 用户要求)
+    lv_obj_set_style_bg_color(btn, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_radius(btn, h / 2, 0);
     lv_obj_set_style_pad_all(btn, 0, 0);

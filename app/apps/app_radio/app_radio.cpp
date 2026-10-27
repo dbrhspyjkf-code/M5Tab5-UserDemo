@@ -556,6 +556,8 @@ void AppRadio::onOpen()
         lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(b, lv_color_hex(C_CARD_ON), 0);
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        // 按下变色 (同主页按钮, 2026-10-28 用户要求)
+        lv_obj_set_style_bg_color(b, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
         lv_obj_set_style_border_width(b, 2, 0);
         lv_obj_set_style_border_color(b, lv_color_hex(C_ACCENT), 0);
         lv_obj_set_style_border_opa(b, LV_OPA_70, 0);
