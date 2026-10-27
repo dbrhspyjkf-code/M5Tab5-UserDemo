@@ -275,14 +275,16 @@ void AppHome::onOpen()
     // 右列滚动容器 (2026-10-27 用户要求: 5 张卡可上下拉动, OPi 沉底靠滚动查看)
     _dash_scroll = lv_obj_create(_scr);
     lv_obj_set_pos(_dash_scroll, 468, 40);
-    lv_obj_set_size(_dash_scroll, 756, 720 - 40);
+    // 高度恰好容纳 01-04 四卡 (96*3+240+gap36=564), 底部止于 y=604,
+    // 不压底部按钮区 (y=616 起); OPi 第 5 卡下拉查看 (2026-10-27 用户指定)
+    lv_obj_set_size(_dash_scroll, 756, 564);
     lv_obj_set_style_bg_opa(_dash_scroll, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_dash_scroll, 0, 0);
     lv_obj_set_style_pad_all(_dash_scroll, 0, 0);
     lv_obj_set_style_pad_row(_dash_scroll, 0, 0);
     lv_obj_set_style_pad_column(_dash_scroll, 0, 0);
     lv_obj_set_scroll_dir(_dash_scroll, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(_dash_scroll, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_scrollbar_mode(_dash_scroll, LV_SCROLLBAR_MODE_OFF);   // 滚动条不显示
     auto row_card = [&](int y, int h, uint32_t bg, uint32_t border) {
         lv_obj_t* card = lv_obj_create(_dash_scroll);
         lv_obj_set_pos(card, 0, y);
@@ -330,7 +332,7 @@ void AppHome::onOpen()
         _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 16);
         _dash_ag2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
     }
-    {   // 04 每日一句英文宽卡 (hermes /daily/sentence, 按日期轮换; 2026-10-27 加)
+    {   // 04 每日一句英文宽卡 (hermes /daily/sentence?offset=N, 点击换下一句)
         lv_obj_t* card = row_card(324, 240, theme::cur().card[3], theme::cur().border);
         mk_lbl(card, zh_font_md(), theme::cur().text_dim, "每日一句",
                LV_ALIGN_TOP_LEFT, 24, 16);
@@ -338,6 +340,7 @@ void AppHome::onOpen()
         lv_label_set_text(_dash_sent_en, "--");
         lv_obj_set_style_text_font(_dash_sent_en, zh_font_lg(), 0);
         lv_obj_set_style_text_color(_dash_sent_en, lv_color_hex(theme::cur().text_hi), 0);
+        lv_obj_set_style_text_line_space(_dash_sent_en, 10, 0);   // 行距均匀
         lv_label_set_long_mode(_dash_sent_en, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(_dash_sent_en, 756 - 48);
         lv_obj_align(_dash_sent_en, LV_ALIGN_TOP_LEFT, 24, 52);
@@ -345,9 +348,17 @@ void AppHome::onOpen()
         lv_label_set_text(_dash_sent_cn, "");
         lv_obj_set_style_text_font(_dash_sent_cn, zh_font_md(), 0);
         lv_obj_set_style_text_color(_dash_sent_cn, lv_color_hex(theme::cur().text_dim), 0);
+        lv_obj_set_style_text_line_space(_dash_sent_cn, 6, 0);
         lv_label_set_long_mode(_dash_sent_cn, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(_dash_sent_cn, 756 - 48);
-        lv_obj_align(_dash_sent_cn, LV_ALIGN_TOP_LEFT, 24, 176);
+        // 中文紧跟英文实际底部 (行数变化间距也均匀), 固定 y 会忽远忽近
+        lv_obj_align_to(_dash_sent_cn, _dash_sent_en, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 14);
+        // 点击: 卡片闪一下 → offset+1 拉下一句
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, [](lv_event_t* e) {
+            static_cast<AppHome*>(lv_event_get_user_data(e))
+                ->_nextSentence(lv_event_get_current_target_obj(e));
+        }, LV_EVENT_CLICKED, this);
     }
     {   // 05 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
@@ -587,6 +598,36 @@ void AppHome::_fetch_weather()
     });
 }
 
+// 每日一句卡点击: outline 闪 160ms + offset+1 异步拉下一句 (worker 只写
+// 文本缓存, onRunning 应用 — 与 _fetch_dashboard 同模式)
+void AppHome::_nextSentence(lv_obj_t* card)
+{
+    if (!card) return;
+    lv_obj_set_style_outline_color(card, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_set_style_outline_width(card, 6, 0);
+    lv_timer_create([](lv_timer_t* tm) {
+        lv_obj_set_style_outline_width(
+            static_cast<lv_obj_t*>(lv_timer_get_user_data(tm)), 0, 0);
+        lv_timer_del(tm);
+    }, 160, card);
+
+    const int off = ++_sent_offset;
+    const std::string base =
+        "http://" + GetHAL()->getConfig("svc_host", "192.168.1.200") + ":8766";
+    GetHAL()->tryRunDetached([this, base, off]() {
+        auto resp = GetHAL()->httpGet(base + "/daily/sentence?offset="
+                                      + std::to_string(off));
+        try {
+            auto j = nlohmann::json::parse(resp.body);
+            if (j.value("ok", false)) {
+                std::lock_guard<std::mutex> lk(_dash_mutex);
+                _dash_sent_en_txt = j.value("en", std::string());
+                _dash_sent_cn_txt = j.value("cn", std::string());
+            }
+        } catch (...) {}
+    });
+}
+
 void AppHome::_fetch_dashboard()
 {
     // Four cached endpoints on the OrangePi hermes service (port 8766, the
@@ -649,7 +690,8 @@ void AppHome::_fetch_dashboard()
         if (auto j = pick(GetHAL()->httpGet(base + "/api/deepseek/balance").body); !j.is_null()) {
             ds_txt = j.value("total_balance", std::string("?")) + " 元";
         }
-        if (auto j = pick(GetHAL()->httpGet(base + "/daily/sentence").body); !j.is_null()) {
+        if (auto j = pick(GetHAL()->httpGet(base + "/daily/sentence?offset="
+                                          + std::to_string(_sent_offset)).body); !j.is_null()) {
             // 每日一句 (按日期轮换, 服务端缓存; 失败保持上次内容)
             std::string en = j.value("en", std::string());
             std::string cn = j.value("cn", std::string());
