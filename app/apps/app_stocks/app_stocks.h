@@ -100,6 +100,24 @@ private:
     lv_obj_t* _card_chg[N_CARDS]   {nullptr};
     lv_obj_t* _card_amt[N_CARDS]   {nullptr};   // 涨跌额 (2026-10-27 用户加)
     lv_obj_t* _detail_modal{nullptr};
+
+    // ── 分时图 / K线图 (腾讯行情接口, 2026-10-27) ──
+    struct ChartData {
+        bool ok = false;
+        std::vector<float> minute_prices;    // 分时: 全天分钟价, [0]=昨收基准
+        std::vector<float> day_open, day_close, day_high, day_low;  // 日K: 最近 N=60 根
+        std::vector<std::string> day_date;
+    };
+    ChartData      _chart;                   // guarded by _chart_mu
+    std::mutex     _chart_mu;
+    std::atomic<bool> _chart_in_flight{false};
+    lv_obj_t*      _chart_canvas  {nullptr};  // 944x420 ARGB8888
+    lv_obj_t*      _chart_tab     {nullptr};  // 当前页 ("分时"/"日K")
+    lv_obj_t*      _chart_status  {nullptr};
+    void*          _chart_pixels  {nullptr};  // canvas 像素堆缓冲 (chart 绘制专用)
+    std::atomic<bool> _chart_ready{false}; // worker 完成 → onRunning 消费
+    std::string    _chart_code;             // 当前弹窗的股票代码
+
     lv_timer_t* _poll_timer{nullptr};
 
     // Swipe-up-to-exit gesture, registered on the (persistent, global) pointer
@@ -138,6 +156,8 @@ private:
     void _removeSwipeGesture();
     void _showDetail(int row);
     void _closeDetail();
+    void _applyCharts();   // worker 完成 → UI 线程绘制 (onRunning 检查 _chart_ready)
+    void _chartFetchWorker(std::string code, std::shared_ptr<bool> alive);
     void _fetchStocksAsync();
     void _doFetch();
     void _parseStocksJson(const std::string& body);

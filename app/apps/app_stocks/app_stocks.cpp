@@ -1,5 +1,10 @@
 #include "app_stocks.h"
 #include "../utils/theme/theme.h"
+#ifdef PLATFORM_BUILD_DESKTOP
+#include <cstdlib>              // malloc/free (桌面)
+#else
+#include <esp_heap_caps.h>      // PSRAM 优先分配 (设备)
+#endif
 #include "stock_market_hours.h"
 #include <mooncake_log.h>
 #include <hal/hal.h>
@@ -102,6 +107,9 @@ void AppStocks::onOpen()
 
 void AppStocks::onRunning()
 {
+    if (_chart_ready.exchange(false)) {
+        _applyCharts();
+    }
     // mooncake 给每个已装 app 每轮都调 onRunning, 且 openApp(其他) 不会把本 app
     // 切到 GoClose → onClose 永不触发. 所以这里自己判断是否还在前台 (LVGL 活动屏
     // 是不是本 app 的 _scr). 一旦被切到后台 (上拨返回 / 唤醒词 / 屏保 等任何方式),
@@ -333,51 +341,46 @@ void AppStocks::_showDetail(int row_idx)
     _closeDetail();
 
     _detail_modal = lv_obj_create(_scr);
-    lv_obj_set_size(_detail_modal, 1000, 560);  // 摘要较长, 加大弹窗
+    lv_obj_set_size(_detail_modal, 1000, 620);
     lv_obj_center(_detail_modal);
     lv_obj_set_style_bg_color(_detail_modal, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_border_color(_detail_modal, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_border_width(_detail_modal, 2, 0);
     lv_obj_set_style_radius(_detail_modal, 16, 0);
-    lv_obj_set_style_pad_all(_detail_modal, 28, 0);
+    lv_obj_set_style_pad_all(_detail_modal, 20, 0);
     lv_obj_clear_flag(_detail_modal, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* title = lv_label_create(_detail_modal);
-    lv_label_set_text_fmt(title, "%s  %s", s.name.c_str(), s.code.c_str());
+    lv_label_set_text_fmt(title, "%s  %s   %.2f  %+.2f%%", s.name.c_str(),
+                          s.code.c_str(), s.price, s.chg);
     lv_obj_set_style_text_font(title, zh_font_lg(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 4, 2);
 
-    lv_obj_t* date = lv_label_create(_detail_modal);
-    std::string date_text = s.analysis_date.empty()
-        ? "分析日期：--" : "分析日期：" + s.analysis_date;
-    lv_label_set_text(date, date_text.c_str());
-    lv_obj_set_style_text_font(date, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(date, lv_color_hex(C_DIM()), 0);
-    lv_obj_align(date, LV_ALIGN_TOP_LEFT, 0, 48);
+    // canvas: 944x420 ARGB8888 (堆缓冲, worker 绘制在 UI 线程做)
+    #ifdef PLATFORM_BUILD_DESKTOP
+    _chart_pixels = malloc(944 * 420 * 4);
+#else
+    // 先试 PSRAM (大缓冲), 失败退内部 RAM
+    _chart_pixels = heap_caps_malloc(944 * 420 * 4, MALLOC_CAP_SPIRAM);
+    if (!_chart_pixels) _chart_pixels = heap_caps_malloc(944 * 420 * 4, MALLOC_CAP_8BIT);
+#endif
+    if (_chart_pixels) memset(_chart_pixels, 0, 944 * 420 * 4);
+    _chart_canvas = lv_canvas_create(_detail_modal);
+    lv_canvas_set_buffer(_chart_canvas, _chart_pixels, 944, 420, LV_COLOR_FORMAT_ARGB8888);
+    lv_obj_align(_chart_canvas, LV_ALIGN_TOP_LEFT, 0, 56);
 
-    // 摘要可能很长 → 放进一个可竖向滚动的容器, 不会盖住关闭键.
-    lv_obj_t* body = lv_obj_create(_detail_modal);
-    lv_obj_set_size(body, 944, 348);            // 标题(0)+日期(48) 之下, 关闭键之上
-    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, 92);
-    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(body, 0, 0);
-    lv_obj_set_style_pad_all(body, 0, 0);
-    lv_obj_set_scroll_dir(body, LV_DIR_VER);
+    _chart_status = lv_label_create(_detail_modal);
+    lv_label_set_text(_chart_status, "行情加载中…");
+    lv_obj_set_style_text_font(_chart_status, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(_chart_status, lv_color_hex(C_DIM()), 0);
+    lv_obj_center(_chart_status);
 
-    lv_obj_t* conclusion = lv_label_create(body);
-    // 优先显示更完整的分析摘要 analysis_summary, 退回 one_sentence, 再退回占位.
-    const char* conclusion_text =
-        !s.analysis_summary.empty() ? s.analysis_summary.c_str()
-        : (!s.one_sentence.empty()  ? s.one_sentence.c_str()
-                                    : "暂无分析结论");
-    lv_label_set_text(conclusion, conclusion_text);
-    lv_label_set_long_mode(conclusion, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(conclusion, 920);
-    lv_obj_set_style_text_font(conclusion, zh_font_lg(), 0);  // 大字号 (30px), 容器可滚动
-    lv_obj_set_style_text_color(conclusion, lv_color_hex(C_TEXT()), 0);
-    lv_obj_set_style_text_line_space(conclusion, 10, 0);
-    lv_obj_align(conclusion, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_t* hint = lv_label_create(_detail_modal);
+    lv_label_set_text(hint, "分时 / 日K");
+    lv_obj_set_style_text_font(hint, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(C_DIM()), 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -4, 8);
 
     lv_obj_t* close_btn = lv_button_create(_detail_modal);
     lv_obj_set_size(close_btn, 150, 54);
@@ -392,6 +395,20 @@ void AppStocks::_showDetail(int row_idx)
     lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
         static_cast<AppStocks*>(lv_event_get_user_data(e))->_closeDetail();
     }, LV_EVENT_CLICKED, this);
+
+    // 异步拉取分时 + 日K (worker 不碰 LVGL)
+    {
+        std::lock_guard<std::mutex> lk(_chart_mu);
+        _chart = ChartData{};
+        _chart_code = s.code;
+    }
+    _chart_ready.store(false);
+    if (!_chart_in_flight.exchange(true)) {
+        std::shared_ptr<bool> alive = _alive;
+        GetHAL()->tryRunDetached([this, code = s.code, alive]() {
+            _chartFetchWorker(code, alive);
+        });
+    }
 }
 
 void AppStocks::_closeDetail()
@@ -400,7 +417,220 @@ void AppStocks::_closeDetail()
         lv_obj_delete(_detail_modal);
         _detail_modal = nullptr;
     }
+    _chart_canvas = _chart_status = nullptr;
+    if (_chart_pixels) {           // canvas 缓冲是堆分配, 弹窗关了就还
+#ifdef PLATFORM_BUILD_DESKTOP
+        free(_chart_pixels);
+#else
+        heap_caps_free(_chart_pixels);
+#endif
+        _chart_pixels = nullptr;
+    }
+    _chart_ready.store(false);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  分时图 / K线图 (腾讯行情接口, 免 key; 2026-10-27)
+//  worker 只填 _chart + 置 _chart_ready, 绘制在 UI 线程 (_applyCharts)。
+// ════════════════════════════════════════════════════════════════════════════
+void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
+{
+    // code 前缀: 6 开头 = 沪(sh), 其余(0/3) = 深(sz)
+    const std::string prefixed = (code.rfind("6", 0) == 0 ? "sh" : "sz") + code;
+
+    ChartData local;
+    auto parse_ok = [](const std::string& body) {
+        try { auto j = nlohmann::json::parse(body); return j.value("code", -1) == 0; }
+        catch (...) { return false; }
+    };
+
+    // ── 分时: web.ifzq.gtimg.cn/appstock/app/minute/query ──
+    {
+        auto resp = GetHAL()->httpGet(
+            "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=" + prefixed);
+        if (resp.ok && parse_ok(resp.body)) {
+            try {
+                auto j = nlohmann::json::parse(resp.body);
+                const auto& arr = j["data"][prefixed]["data"]["data"];
+                if (arr.is_array()) {
+                    for (auto& row : arr) {
+                        // 每行: "HHMM price cum_volume cum_amount"
+                        const std::string line = row.get<std::string>();
+                        const size_t sp1 = line.find(' ');
+                        const size_t sp2 = line.find(' ', sp1 + 1);
+                        if (sp1 == std::string::npos || sp2 == std::string::npos) continue;
+                        local.minute_prices.push_back(std::stof(line.substr(sp1 + 1, sp2 - sp1 - 1)));
+                    }
+                }
+            } catch (...) {}
+        }
+    }
+
+    // ── 日K: fqkline/get, 最近 60 根前复权 ──
+    {
+        auto resp = GetHAL()->httpGet(
+            "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=" +
+            prefixed + ",day,,,60,qfq");
+        if (resp.ok && parse_ok(resp.body)) {
+            try {
+                auto j = nlohmann::json::parse(resp.body);
+                auto node = j["data"][prefixed];
+                // 有 qfqday 用 qfqday, 否则 day
+                const auto* arr = node.contains("qfqday") ? &node["qfqday"] : &node["day"];
+                if (arr->is_array()) {
+                    for (auto& row : *arr) {
+                        if (!row.is_array() || row.size() < 5) continue;
+                        local.day_date.push_back(row[0].get<std::string>());
+                        local.day_open.push_back(std::stof(row[1].get<std::string>()));
+                        local.day_close.push_back(std::stof(row[2].get<std::string>()));
+                        local.day_high.push_back(std::stof(row[3].get<std::string>()));
+                        local.day_low.push_back(std::stof(row[4].get<std::string>()));
+                    }
+                }
+            } catch (...) {}
+        }
+    }
+
+    local.ok = !local.minute_prices.empty() || !local.day_close.empty();
+    {
+        std::lock_guard<std::mutex> lk(_chart_mu);
+        _chart = std::move(local);
+    }
+    _chart_ready.store(true);   // onRunning 在 UI 线程消费
+    (void)alive;                // 生命周期由 _chart_in_flight + UI 判空兜底
+}
+
+// ── 绘制辅助: 在 canvas 像素上画横线/矩形/折线 (ARGB8888, XRGB 值即可) ──
+namespace {
+inline void px_fill(void* pix, int W, int H, uint32_t color)
+{
+    uint32_t* p = (uint32_t*)pix;
+    for (int i = 0; i < W * H; i++) p[i] = color | 0xFF000000;
+}
+inline void px_rect(void* pix, int W, int H, int x0, int y0, int x1, int y1, uint32_t color)
+{
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= W) x1 = W - 1;
+    if (y1 >= H) y1 = H - 1;
+    for (int y = y0; y <= y1; y++) {
+        uint32_t* row = (uint32_t*)pix + y * W;
+        for (int x = x0; x <= x1; x++) row[x] = color | 0xFF000000;
+    }
+}
+inline void px_line(void* pix, int W, int H, int x0, int y0, int x1, int y1, uint32_t color)
+{
+    // Bresenham
+    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    for (;;) {
+        if (x0 >= 0 && x0 < W && y0 >= 0 && y0 < H)
+            ((uint32_t*)pix)[y0 * W + x0] = color | 0xFF000000;
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+}  // namespace
+
+void AppStocks::_applyCharts()
+{
+    LvglLockGuard lock;
+    if (!_chart_canvas || !_chart_pixels) return;   // 弹窗已关
+
+    ChartData c;
+    {
+        std::lock_guard<std::mutex> lk(_chart_mu);
+        c = _chart;
+    }
+    if (!c.ok) {
+        if (_chart_status)
+            lv_label_set_text(_chart_status, "行情获取失败");
+        return;
+    }
+    if (_chart_status) {
+        lv_obj_add_flag(_chart_status, LV_OBJ_FLAG_HIDDEN);
+        _chart_status = nullptr;
+    }
+
+    constexpr int W = 944, H = 420;
+    void* pix = _chart_pixels;
+    const uint32_t COL_BG    = 0x0A1610;   // 图区底
+    const uint32_t COL_GRID  = 0x24402F;
+    const uint32_t COL_UP    = 0xE74C3C;   // A 股: 涨红
+    const uint32_t COL_DOWN  = 0x2ECC71;   // 跌绿
+    const uint32_t COL_AXIS  = 0x6E9486;
+
+    // ── 有分时画分时, 否则画日K; 两者都有画分时(左 55%) + 日K(右 45%) ──
+    // 简化: 先分时整幅; 无分时再日K整幅 (弹窗只有一个 canvas)
+    px_fill(pix, W, H, COL_BG);
+
+    if (!c.minute_prices.empty()) {
+        // 分时: 昨收基准 = 第一根分钟价之前的均线……腾讯接口无昨收字段,
+        // 用全天均价近似: 以开盘(第一值)为基准线即可表达强弱.
+        const float base = c.minute_prices.front();
+        float hi = base, lo = base;
+        for (float v : c.minute_prices) { hi = v > hi ? v : hi; lo = v < lo ? v : lo; }
+        if (hi - lo < 0.01f) { hi = base + 0.05f; lo = base - 0.05f; }
+        const float pad = (hi - lo) * 0.08f; hi += pad; lo -= pad;
+
+        const int L = 46, R = W - 14, T = 16, B = H - 30;
+        // 网格: 中轴 + 上下边
+        px_rect(pix, W, H, L, (T + B) / 2, R, (T + B) / 2, COL_GRID);
+        px_rect(pix, W, H, L, T, R, T, COL_GRID);
+        px_rect(pix, W, H, L, B, R, B, COL_GRID);
+        // 价格→y
+        auto y_of = [&](float v) {
+            return (int)((B - T) * (hi - v) / (hi - lo)) + T;
+        };
+        // 涨跌区着色 (base 之上淡红 / 之下淡绿)
+        const int yb = y_of(base);
+        if (yb > T)      px_rect(pix, W, H, L, T, R, yb - 1, 0x1C2420);       // 下方淡绿区
+        if (yb + 1 <= B) px_rect(pix, W, H, L, yb + 1, R, B, 0x2A1E1C);       // 上方淡红区
+        px_rect(pix, W, H, L, yb, R, yb, COL_AXIS);
+        // 分时折线 (涨红跌绿, 对基准)
+        const uint32_t line_col = c.minute_prices.back() >= base ? COL_UP : COL_DOWN;
+        const int n = (int)c.minute_prices.size();
+        int px_ = L, py_ = y_of(c.minute_prices[0]);
+        for (int i = 1; i < n; i++) {
+            const int x = L + (R - L) * i / (n - 1 > 0 ? n - 1 : 1);
+            const int y = y_of(c.minute_prices[i]);
+            px_line(pix, W, H, px_, py_, x, y, line_col);
+            px_ = x; py_ = y;
+        }
+    } else if (!c.day_close.empty()) {
+        // 日K: 最近 60 根蜡烛
+        const int n = (int)c.day_close.size();
+        float hi = -1e9f, lo = 1e9f;
+        for (int i = 0; i < n; i++) {
+            hi = c.day_high[i] > hi ? c.day_high[i] : hi;
+            lo = c.day_low[i]  < lo ? c.day_low[i]  : lo;
+        }
+        const float pad = (hi - lo) * 0.06f; hi += pad; lo -= pad;
+        const int L = 20, R = W - 20, T = 16, B = H - 30;
+        auto y_of = [&](float v) { return (int)((B - T) * (hi - v) / (hi - lo)) + T; };
+        px_rect(pix, W, H, L, T, R, T, COL_GRID);
+        px_rect(pix, W, H, L, B, R, B, COL_GRID);
+        const int step = (R - L) / n;
+        const int body_w = step * 3 / 5 > 3 ? step * 3 / 5 : 3;
+        for (int i = 0; i < n; i++) {
+            const int x = L + step * i + step / 2;
+            const bool up = c.day_close[i] >= c.day_open[i];
+            const uint32_t col = up ? COL_UP : COL_DOWN;
+            const int yh = y_of(c.day_high[i]), yl = y_of(c.day_low[i]);
+            int yo = y_of(c.day_open[i]), yc = y_of(c.day_close[i]);
+            if (yo > yc) { int t = yo; yo = yc; yc = t; }
+            px_line(pix, W, H, x, yh, x, yl, col);          // 影线
+            px_rect(pix, W, H, x - body_w / 2, yo, x + body_w / 2, yc > yo ? yc : yo + 1, col);
+        }
+    }
+
+    lv_obj_invalidate(_chart_canvas);
+}
+
+
 
 // 颜色线性插值: t=0 → a, t=1 → b
 static uint32_t lerp_color(uint32_t a, uint32_t b, float t)
