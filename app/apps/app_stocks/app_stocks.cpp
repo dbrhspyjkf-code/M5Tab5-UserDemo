@@ -787,6 +787,23 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
     lv_obj_set_style_text_color(title_lbl, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(title_lbl, LV_ALIGN_TOP_LEFT, 16, 14);
 
+    // 指标跑马灯 (成交额/换手/量比/PE, worker 从 minute/query 内嵌 qt 节点解析):
+    // 标题右侧到按钮区之间的循环滚动 label
+    {
+        const int title_w = (int)lv_txt_get_width(title.c_str(),
+                                                  (uint32_t)title.size(),
+                                                  zh_font_lg(), 0);
+        const int mx = 16 + title_w + 24;
+        const int mw = 1280 - 500 - mx;   // 右侧留 ~500px 给 分时/日K/关闭
+        _chart_marquee = lv_label_create(_detail_modal);
+        lv_label_set_long_mode(_chart_marquee, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_obj_set_width(_chart_marquee, mw > 60 ? mw : 60);
+        lv_label_set_text(_chart_marquee, "指标加载中…");
+        lv_obj_set_style_text_font(_chart_marquee, zh_font_sm(), 0);
+        lv_obj_set_style_text_color(_chart_marquee, lv_color_hex(C_DIM()), 0);
+        lv_obj_align(_chart_marquee, LV_ALIGN_TOP_LEFT, mx, 20);
+    }
+
     // 分时 / 日K 切换 tab (CHECKABLE: 选中态 accent 底白字)
     const char* tab_names[2] = {"分时", "日K"};
     for (int i = 1; i >= 0; i--) {   // 右起建, 让出最右给关闭钮
@@ -814,23 +831,6 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
         if (i == _chart_mode) lv_obj_add_state(btn, LV_STATE_CHECKED);
     }
 
-    // 均线图例 (颜色与 _drawChartCanvas 的 ma_col 对应, 仅日K 视图显示),
-    // 位置在图表右下角 (用户指定)
-    {
-        const uint32_t leg_col[3] = {0xF1C40F, 0xE91E63, 0x3498DB};  // 黄/品红/蓝
-        const char* leg_txt[3] = {"MA5", "MA10", "MA20"};
-        const int leg_dx[3] = {-132, -60, -12};   // 右→左: MA20 最靠右
-        for (int k = 0; k < 3; k++) {
-            lv_obj_t* leg = lv_label_create(_detail_modal);
-            lv_label_set_text(leg, leg_txt[k]);
-            lv_obj_set_style_text_font(leg, zh_font_sm(), 0);
-            lv_obj_set_style_text_color(leg, lv_color_hex(leg_col[k]), 0);
-            lv_obj_align(leg, LV_ALIGN_BOTTOM_RIGHT, leg_dx[k], -8);
-            lv_obj_add_flag(leg, LV_OBJ_FLAG_HIDDEN);   // 默认分时视图
-            _chart_ma_leg[k] = leg;
-        }
-    }
-
     // canvas: 1280x656 = 全屏 - 顶部行; ARGB8888 (堆缓冲, worker 绘制在 UI 线程做)
     // 3.4MB 大块: 设备端 SPIRAM_USE_MALLOC=y, malloc 自动落 PSRAM;
     // 勿用 heap_caps_malloc(MALLOC_CAP_SPIRAM) —— SPIRAM_USE_CAPS_ALLOC
@@ -850,6 +850,24 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
     lv_obj_set_style_text_font(_chart_status, zh_font_sm(), 0);
     lv_obj_set_style_text_color(_chart_status, lv_color_hex(C_DIM()), 0);
     lv_obj_align(_chart_status, LV_ALIGN_TOP_MID, 0, 64 + CHART_H / 2 - 10);
+
+    // 均线图例 (颜色与 _drawChartCanvas 的 ma_col 对应, 仅日K 视图显示),
+    // 位置在图表右下角 (用户指定). 必须建在 canvas 之后: 画布不透明且
+    // LVGL 后建者在上, 先建会被整个盖住 (2026-10-27 实锤: 图例不可见根因).
+    {
+        const uint32_t leg_col[3] = {0xF1C40F, 0xE91E63, 0x3498DB};  // 黄/品红/蓝
+        const char* leg_txt[3] = {"MA5", "MA10", "MA20"};
+        const int leg_dx[3] = {-132, -60, -12};   // 右→左: MA20 最靠右
+        for (int k = 0; k < 3; k++) {
+            lv_obj_t* leg = lv_label_create(_detail_modal);
+            lv_label_set_text(leg, leg_txt[k]);
+            lv_obj_set_style_text_font(leg, zh_font_sm(), 0);
+            lv_obj_set_style_text_color(leg, lv_color_hex(leg_col[k]), 0);
+            lv_obj_align(leg, LV_ALIGN_BOTTOM_RIGHT, leg_dx[k], -8);
+            lv_obj_add_flag(leg, LV_OBJ_FLAG_HIDDEN);   // 默认分时视图
+            _chart_ma_leg[k] = leg;
+        }
+    }
 
     lv_obj_t* close_btn = lv_button_create(_detail_modal);
     lv_obj_set_size(close_btn, 150, 48);
@@ -895,7 +913,7 @@ void AppStocks::_closeDetail()
         lv_obj_delete(_detail_modal);
         _detail_modal = nullptr;
     }
-    _chart_canvas = _chart_status = nullptr;
+    _chart_canvas = _chart_status = _chart_marquee = nullptr;
     for (lv_obj_t*& b : _chart_tab_btn) b = nullptr;
     for (lv_obj_t*& l : _chart_ma_leg) l = nullptr;
     if (_chart_pixels) {           // canvas 缓冲是堆分配, 弹窗关了就还
@@ -942,6 +960,28 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
                         if (sp1 == std::string::npos || sp2 == std::string::npos) continue;
                         local.minute_prices.push_back(std::stof(line.substr(sp1 + 1, sp2 - sp1 - 1)));
                     }
+                }
+                // 指标跑马灯: 响应内嵌 qt 节点 = qt.gtimg 实时数组,
+                // [37]成交额(万) [38]换手率 [39]PE [49]量比 (GBK, 只取数字字段)
+                const auto& qtn = j["data"][prefixed]["qt"][prefixed];
+                if (qtn.is_array() && qtn.size() > 49) {
+                    auto qf = [&](int n) -> std::string {
+                        return qtn[n].is_string() ? qtn[n].get<std::string>() : "";
+                    };
+                    std::string m;
+                    const std::string amt = qf(37);
+                    if (!amt.empty()) {
+                        double v = 0;
+                        try { v = std::stod(amt); } catch (...) {}
+                        char b[40];
+                        if (v >= 10000) std::snprintf(b, sizeof b, "成交额 %.2f亿", v / 10000);
+                        else std::snprintf(b, sizeof b, "成交额 %.0f万", v);
+                        m += b;
+                    }
+                    if (!qf(38).empty()) m += "   换手 " + qf(38) + "%";
+                    if (!qf(49).empty()) m += "   量比 " + qf(49);
+                    if (!qf(39).empty()) m += "   PE " + qf(39);
+                    local.metrics = std::move(m);
                 }
             } catch (...) {}
         }
@@ -1078,6 +1118,10 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
         if (draw_minute) lv_obj_add_flag(leg, LV_OBJ_FLAG_HIDDEN);
         else lv_obj_clear_flag(leg, LV_OBJ_FLAG_HIDDEN);
     }
+    // 指标跑马灯 (数据来自 minute/query 内嵌 qt 节点, 随图表数据一并到位)
+    if (_chart_marquee)
+        lv_label_set_text(_chart_marquee,
+                          c.metrics.empty() ? "暂无指标" : c.metrics.c_str());
 
     // ── 分时整幅 / 日K整幅, 由 tab 切换 (_chart_mode), 缺数据回退另一序列 ──
     px_fill(pix, W, H, COL_BG);
@@ -1100,10 +1144,8 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
         auto y_of = [&](float v) {
             return (int)((B - T) * (hi - v) / (hi - lo)) + T;
         };
-        // 涨跌区着色 (base 之上淡红 / 之下淡绿)
+        // 涨跌区不再染上下两色 (用户要求分时/日K背景一致), 仅画昨收基准线
         const int yb = y_of(base);
-        if (yb > T)      px_rect(pix, W, H, L, T, R, yb - 1, 0x1C2420);       // 下方淡绿区
-        if (yb + 1 <= B) px_rect(pix, W, H, L, yb + 1, R, B, 0x2A1E1C);       // 上方淡红区
         px_rect(pix, W, H, L, yb, R, yb, COL_AXIS);
         // 分时折线 (涨红跌绿, 对基准)
         const uint32_t line_col = c.minute_prices.back() >= base ? COL_UP : COL_DOWN;

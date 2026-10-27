@@ -140,8 +140,9 @@ private:
     struct ChartData {
         bool ok = false;
         std::vector<float> minute_prices;    // 分时: 全天分钟价, [0]=昨收基准
-        std::vector<float> day_open, day_close, day_high, day_low;  // 日K: 最近 N=60 根
+        std::vector<float> day_open, day_close, day_high, day_low;  // 日K: 最近 N=120 根
         std::vector<std::string> day_date;
+        std::string metrics;                 // 指标跑马灯 (成交额/换手/量比/PE)
     };
     ChartData      _chart;                   // guarded by _chart_mu
     std::mutex     _chart_mu;
@@ -151,6 +152,7 @@ private:
     lv_obj_t*      _chart_ma_leg[3]{nullptr, nullptr, nullptr};  // MA5/10/20 图例 (仅日K)
     int            _chart_mode   = 0;         // 0=分时 1=日K
     lv_obj_t*      _chart_status  {nullptr};
+    lv_obj_t*      _chart_marquee {nullptr};  // 指标跑马灯 (标题栏循环滚动)
     void*          _chart_pixels  {nullptr};  // canvas 像素堆缓冲 (chart 绘制专用)
     std::atomic<bool> _chart_ready{false}; // worker 完成 → onRunning 消费
     std::string    _chart_code;             // 当前弹窗的股票代码
