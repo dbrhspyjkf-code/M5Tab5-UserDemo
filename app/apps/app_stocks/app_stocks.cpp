@@ -668,11 +668,12 @@ void AppStocks::_installSwipeGesture()
                         }, app_ctx);
                         return;
                     }
-                    // 上拨退出: 只认「从屏幕底部往上拨」—— 起点在屏幕下缘
-                    // 1/4 (y>540) 且纵向为主、位移>120px. 其余位置的纵向拖动
-                    // 一律归列表滚动, 不退出 (2026-10-27 用户反馈: 任意上下
-                    // 拖动都误退, 滚动位判定修不住, 改按起点位置判定).
-                    const bool from_bottom = ctx->press_y > 540;
+                    // 上拨退出: 只认「从屏幕最下缘往上拨」(y>650, 下缘 10%,
+                    // 在卡片网格之外的边缘带). 首版 540 (75%) 与第三行卡片
+                    // (y≈464-670) 大面积重叠, 中下位置的滚动拖动起点落进
+                    // 540-670 区间被误退 (2026-10-27 串口实锤 press_y=545/548
+                    // 压线退出). 其余位置纵向拖动一律归列表滚动.
+                    const bool from_bottom = ctx->press_y > 650;
                     if (from_bottom && dy < -120 && abs(dy) > abs(dx) * 2) {
                         auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
                         lv_async_call([](void* u) {
@@ -693,9 +694,9 @@ void AppStocks::_installSwipeGesture()
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 const lv_dir_t dir = lv_indev_get_gesture_dir(dev);
                 if (dir == LV_DIR_TOP) {
-                    // 只认「从屏幕底部往上拨」(起点在屏幕下缘 1/4); 其余位置
-                    // 的上拨全部归列表滚动, 不退出 (与 RELEASED 路径同判据).
-                    if (ctx->app->_touch_start.y <= 540) return;
+                    // 只认「从屏幕最下缘往上拨」(y>650, 与 RELEASED 路径同判据);
+                    // 其余位置的上拨全部归列表滚动, 不退出.
+                    if (ctx->app->_touch_start.y <= 650) return;
                     // Defer: don't tear down _scr synchronously from inside indev dispatch.
                     auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
                     lv_async_call([](void* u) {
