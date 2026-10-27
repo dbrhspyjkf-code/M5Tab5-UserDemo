@@ -363,12 +363,14 @@ void AppCalendar::_yearDd_cb(lv_event_t* e)
     if (!self->_scr || self->_year_dd) return;
 
     self->_year_dd = lv_dropdown_create(self->_scr);
+    // 注意: 必须用 set_options (内部复制) —— set_options_static 只存指针,
+    // 局部 std::string 析构后悬空, 下拉列表渲染空白 (2026-10-27 实锤)
     std::string opts;
     for (int y = lunar::kBaseYear; y <= lunar::kLastYear; ++y) {
         opts += std::to_string(y);
         if (y < lunar::kLastYear) opts += "\n";
     }
-    lv_dropdown_set_options_static(self->_year_dd, opts.c_str());
+    lv_dropdown_set_options(self->_year_dd, opts.c_str());
     lv_dropdown_set_selected(self->_year_dd, self->_year - lunar::kBaseYear);
     lv_obj_set_size(self->_year_dd, 200, 64);
     lv_obj_set_pos(self->_year_dd, 436, 96);
@@ -417,9 +419,7 @@ void AppCalendar::_monthDd_cb(lv_event_t* e)
     if (!self->_scr || self->_month_dd) return;
 
     self->_month_dd = lv_dropdown_create(self->_scr);
-    static const char* opts = "1 月\n2 月\n3 月\n4 月\n5 月\n6 月\n"
-                              "7 月\n8 月\n9 月\n10 月\n11 月\n12 月";
-    lv_dropdown_set_options_static(self->_month_dd, opts);
+    lv_dropdown_set_options(self->_month_dd, "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12");
     lv_dropdown_set_selected(self->_month_dd, self->_month - 1);
     lv_obj_set_size(self->_month_dd, 200, 64);
     lv_obj_set_pos(self->_month_dd, 660, 96);
