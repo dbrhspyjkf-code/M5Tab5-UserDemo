@@ -198,45 +198,18 @@ void AppStocks::_teardownHardware()
 #endif
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  涨跌配色 (UI 详情卡 + LED ticker 共用)
-// ════════════════════════════════════════════════════════════════════════════
-uint32_t AppStocks::_chgColor(float chg)
-{
-    if (chg > 0.01f)  return C_UP();
-    if (chg < -0.01f) return C_DOWN();
-    return C_FLAT();
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  UI
-// ════════════════════════════════════════════════════════════════════════════
-void AppStocks::_buildUi()
+// 按需创建卡位到滚动容器 (n = 目标数量). 只增不减, 多余卡位在刷新时隐藏.
+void AppStocks::_ensureCards(int n)
 {
     LvglLockGuard lock;
-
-    _scr = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG()), 0);
-    lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
-
-    // 两页容器: 0=自选股 1=指数看板 (左右拨切换, _setPage)
-    _stocks_page = lv_obj_create(_scr);
-    lv_obj_set_size(_stocks_page, SCREEN_W, SCREEN_H);
-    lv_obj_set_pos(_stocks_page, 0, 0);
-    lv_obj_set_style_bg_opa(_stocks_page, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(_stocks_page, 0, 0);
-    lv_obj_set_style_pad_all(_stocks_page, 0, 0);
-    lv_obj_clear_flag(_stocks_page, LV_OBJ_FLAG_SCROLLABLE);
-
-    // ── 卡片网格 4×3 (2026-10-27 用户指定, 参考工具页卡片) ──────────────
-    // 每只股票一张卡: 名称 / 股价 / 涨跌幅; 涨=红底 跌=绿底;
-    // 排布顺序 = 涨跌幅降序 (在 _refreshUiFromItems 里排序绑定).
-    for (int i = 0; i < N_CARDS; i++) {
+    if (!_stocks_scroll) return;
+    if (n > MAX_CARDS) n = MAX_CARDS;
+    for (int i = (int)_cards.size(); i < n; i++) {
         const int col = i % GRID_COLS, row = i / GRID_COLS;
-        lv_obj_t* card = lv_obj_create(_stocks_page);
+        lv_obj_t* card = lv_obj_create(_stocks_scroll);
         lv_obj_set_size(card, CARD_W, CARD_H);
         lv_obj_set_pos(card, GRID_X0 + col * (CARD_W + GRID_GAP),
-                       GRID_Y0 + row * (CARD_H + GRID_GAP));
+                       24 + row * (CARD_H + GRID_GAP));
         lv_obj_set_style_bg_color(card, lv_color_hex(C_HEADER()), 0);
         lv_obj_set_style_radius(card, 18, 0);
         lv_obj_set_style_border_width(card, 0, 0);
@@ -277,12 +250,64 @@ void AppStocks::_buildUi()
         lv_obj_set_style_text_color(amt, lv_color_hex(C_TEXT()), 0);
         lv_obj_align(amt, LV_ALIGN_TOP_MID, 0, 166);
 
-        _cards[i]      = card;
-        _card_name[i]  = name;
-        _card_price[i] = price;
-        _card_chg[i]   = chg;
-        _card_amt[i]   = amt;
+        _cards.push_back(card);
+        _card_name.push_back(name);
+        _card_price.push_back(price);
+        _card_chg.push_back(chg);
+        _card_amt.push_back(amt);
     }
+    // 滚动内容高度: 行数 × 行高 + 上下边距; 卡片绝对定位在容器坐标系里,
+    // 容器按内容设置滚动范围 (内容不足一屏时自然不滚).
+    const int rows = (n + GRID_COLS - 1) / GRID_COLS;
+    const int content_h = 24 + rows * (CARD_H + GRID_GAP);
+    lv_obj_set_size(_stocks_scroll, SCREEN_W, SCREEN_H);
+    lv_obj_scroll_to_y(_stocks_scroll, 0, LV_ANIM_OFF);   // 数量变化后回到顶部
+    (void)content_h;  // LVGL 自适应子对象范围 (cards 是容器子对象, 滚动范围自动)
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  涨跌配色 (UI 详情卡 + LED ticker 共用)
+// ════════════════════════════════════════════════════════════════════════════
+uint32_t AppStocks::_chgColor(float chg)
+{
+    if (chg > 0.01f)  return C_UP();
+    if (chg < -0.01f) return C_DOWN();
+    return C_FLAT();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  UI
+// ════════════════════════════════════════════════════════════════════════════
+void AppStocks::_buildUi()
+{
+    LvglLockGuard lock;
+
+    _scr = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG()), 0);
+    lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 两页容器: 0=自选股 1=指数看板 (左右拨切换, _setPage)
+    _stocks_page = lv_obj_create(_scr);
+    lv_obj_set_size(_stocks_page, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_stocks_page, 0, 0);
+    lv_obj_set_style_bg_opa(_stocks_page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_stocks_page, 0, 0);
+    lv_obj_set_style_pad_all(_stocks_page, 0, 0);
+    lv_obj_clear_flag(_stocks_page, LV_OBJ_FLAG_SCROLLABLE);
+
+    // ── 卡片网格 4 列 (参考工具页卡片风格) ──────────────────────────────
+    // 纵向滚动容器承载: 行数随持仓数动态扩展, 超过一屏上下拨滚动查看;
+    // 滚动发生在本容器, 切页/退出走全局 indev 手势 (方向不同, 互不冲突).
+    _stocks_scroll = lv_obj_create(_stocks_page);
+    lv_obj_set_size(_stocks_scroll, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_stocks_scroll, 0, 0);
+    lv_obj_set_style_bg_opa(_stocks_scroll, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_stocks_scroll, 0, 0);
+    lv_obj_set_style_pad_all(_stocks_scroll, 0, 0);
+    lv_obj_set_scroll_dir(_stocks_scroll, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(_stocks_scroll, LV_SCROLLBAR_MODE_AUTO);
+
+    // 卡位在 _refreshUiFromItems 里按持仓数动态创建 (_ensureCards)
 
     _buildIndexPage();
     {
@@ -485,9 +510,10 @@ void AppStocks::_destroyUi()
         lv_obj_delete(_scr);
         _scr = nullptr;
     }
-    for (int i = 0; i < N_CARDS; i++)
-        _cards[i] = _card_name[i] = _card_price[i] = _card_chg[i] =
-        _card_amt[i] = nullptr;
+    _cards.clear(); _card_name.clear(); _card_price.clear();
+    _card_chg.clear(); _card_amt.clear();
+    _n_cards = 0;
+    _stocks_scroll = nullptr;
     for (int i = 0; i < 9; i++)
         _index_cards[i] = _index_name[i] = _index_price[i] =
         _index_amt[i] = _index_pct[i] = nullptr;
@@ -547,6 +573,20 @@ void AppStocks::_installSwipeGesture()
                             if (a && *a) c->app->_setPage(c->app->_page == 0 ? 1 : 0);
                             delete c;
                         }, app_ctx);
+                        return;
+                    }
+                    // 上拨退出兜底 (滚动容器会吞 GESTURE): 在滚动顶部,
+                    // 纵向快速上甩 (>120px, 纵向为主, 时序短) → 退出.
+                    const bool at_top = !ctx->app->_stocks_scroll ||
+                        lv_obj_get_scroll_y(ctx->app->_stocks_scroll) <= 2;
+                    if (at_top && dy < -120 && abs(dy) > abs(dx) * 2) {
+                        auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
+                        lv_async_call([](void* u) {
+                            auto* c = static_cast<SwipeCtx*>(u);
+                            auto a = c->alive.lock();
+                            if (a && *a) c->app->_requestClose();
+                            delete c;
+                        }, app_ctx);
                     }
                     return;
                 }
@@ -558,6 +598,12 @@ void AppStocks::_installSwipeGesture()
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 const lv_dir_t dir = lv_indev_get_gesture_dir(dev);
                 if (dir == LV_DIR_TOP) {
+                    // 滚动容器在顶部时上拨才退出; 已向下滚过 (y>0) 则本次
+                    // 上拨归滚动 (把页面拨回顶部), 不误退.
+                    if (ctx->app->_stocks_scroll &&
+                        lv_obj_get_scroll_y(ctx->app->_stocks_scroll) > 2) {
+                        return;   // 让 LVGL 继续把本手势交给滚动
+                    }
                     // Defer: don't tear down _scr synchronously from inside indev dispatch.
                     auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
                     lv_async_call([](void* u) {
@@ -908,6 +954,13 @@ void AppStocks::_refreshUiFromItems()
         snapshot = _items;
     }
 
+    // 卡位数 = min(持仓数, MAX_CARDS), 按需创建 (2026-10-27: 超 12 只
+    // 全部显示, 滚动容器纵向扩展)
+    const int n = std::min((int)snapshot.size(), MAX_CARDS);
+    if (n <= 0) return;
+    _ensureCards(n);
+    _n_cards = n;
+
     // 按涨跌幅降序; 卡片从左到右、从上到下依次绑定
     std::vector<int> order(snapshot.size());
     for (int i = 0; i < (int)order.size(); i++) order[i] = i;
@@ -916,33 +969,13 @@ void AppStocks::_refreshUiFromItems()
 
     // 渐变端点: 可见卡中的最大涨幅 / 最大跌幅
     float max_chg = 0, min_chg = 0;
-    for (int i = 0; i < (int)order.size() && i < N_CARDS; i++) {
+    for (int i = 0; i < (int)order.size() && i < n; i++) {
         max_chg = snapshot[order[i]].chg > max_chg ? snapshot[order[i]].chg : max_chg;
         min_chg = snapshot[order[i]].chg < min_chg ? snapshot[order[i]].chg : min_chg;
     }
 
-    for (int i = 0; i < N_CARDS; i++) {
+    for (int i = 0; i < n; i++) {
         lv_obj_t* card = _cards[i];
-        if (i >= (int)order.size()) {
-            if (!snapshot.empty()) {          // 数据比卡位少 → 多余的卡藏掉
-                lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
-                continue;
-            }
-            // 完全无数据 (首拉失败等): 显示中性 "--" 卡
-            lv_obj_clear_flag(card, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_user_data(card, (void*)(intptr_t)-1);
-            lv_obj_set_style_bg_color(card, lv_color_hex(C_HEADER()), 0);
-            lv_obj_set_style_text_color(_card_name[i],  lv_color_hex(C_DIM()), 0);
-            lv_obj_set_style_text_color(_card_price[i], lv_color_hex(C_DIM()), 0);
-            lv_obj_set_style_text_color(_card_chg[i],   lv_color_hex(C_DIM()), 0);
-            lv_obj_set_style_text_color(_card_amt[i],   lv_color_hex(C_DIM()), 0);
-            lv_label_set_text(_card_name[i],  "--");
-            lv_label_set_text(_card_price[i], "--");
-            lv_label_set_text(_card_chg[i],   "");
-            lv_label_set_text(_card_amt[i],   "");
-            continue;
-        }
-
         lv_obj_clear_flag(card, LV_OBJ_FLAG_HIDDEN);
         const auto& st = snapshot[order[i]];
         lv_obj_set_user_data(card, (void*)(intptr_t)order[i]);  // 点击 → 原始下标

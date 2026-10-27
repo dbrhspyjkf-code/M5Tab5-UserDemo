@@ -71,13 +71,14 @@ private:
     void _indexFetchWorker();
     void _setPage(int page);
 
-    // 卡片网格 4×3 (2026-10-27 用户指定, 参考工具页卡片风格)
+    // 卡片网格 4 列 (2026-10-27, 参考工具页卡片风格); 行数随持仓数动态
+    // 扩展, 纵向滚动容器承载. 超过一屏的持仓上下拨滚动查看 (2026-10-27
+    // 用户指定); 卡位按持仓数动态创建, 上限 40 (MX 列表现实规模).
     static constexpr int GRID_COLS   = 4;
-    static constexpr int N_CARDS     = 12;
+    static constexpr int MAX_CARDS   = 40;
     static constexpr int CARD_W      = 294;
     static constexpr int CARD_H      = 213;
     static constexpr int GRID_X0     = 28;   // (1280-4*294-3*16)/2
-    static constexpr int GRID_Y0     = 24;
     static constexpr int GRID_GAP    = 16;
 
     // ── Color palette (must match app_home / app_ha) ──────────────────
@@ -123,11 +124,13 @@ private:
 
     // ── LVGL handles ───────────────────────────────────────────────────
     lv_obj_t* _scr         {nullptr};
-    lv_obj_t* _cards[N_CARDS]      {nullptr};
-    lv_obj_t* _card_name[N_CARDS]  {nullptr};
-    lv_obj_t* _card_price[N_CARDS] {nullptr};
-    lv_obj_t* _card_chg[N_CARDS]   {nullptr};
-    lv_obj_t* _card_amt[N_CARDS]   {nullptr};   // 涨跌额 (2026-10-27 用户加)
+    std::vector<lv_obj_t*> _cards;      // 卡位随持仓数动态创建
+    std::vector<lv_obj_t*> _card_name;
+    std::vector<lv_obj_t*> _card_price;
+    std::vector<lv_obj_t*> _card_chg;
+    std::vector<lv_obj_t*> _card_amt;   // 涨跌额 (2026-10-27 用户加)
+    lv_obj_t* _stocks_scroll {nullptr};  // 纵向滚动容器 (承载卡片网格)
+    int         _n_cards     = 0;        // 当前实际卡位数
     lv_obj_t* _detail_modal{nullptr};
 
     // ── 分时图 / K线图 (腾讯行情接口, 2026-10-27) ──
@@ -191,6 +194,7 @@ private:
     void _doFetch();
     void _parseStocksJson(const std::string& body);
     void _refreshUiFromItems();
+    void _ensureCards(int n);   // 按需创建卡位到滚动容器
     // 涨绿 / 跌红 / 平灰 — UI 详情卡 + LED ticker 共用, 两平台都要.
     uint32_t _chgColor(float chg);
 
