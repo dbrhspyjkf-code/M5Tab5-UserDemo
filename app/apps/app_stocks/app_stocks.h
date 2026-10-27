@@ -118,7 +118,7 @@ private:
     std::atomic<bool>      _app_open {false};
     // 同一时间只允许一个 HTTP 请求，避免刷新边界上重复创建 worker。
     std::atomic<bool>      _fetch_in_flight {false};
-    static constexpr int   FETCH_INTERVAL_MS = 60 * 1000;
+    static constexpr int   FETCH_INTERVAL_MS = 5 * 1000;   // 2026-10-27 用户指定 60s→5s (仅交易时段生效)
     static constexpr int   FETCH_TIMEOUT_MS  = 5 * 1000;
 
     // ── LVGL handles ───────────────────────────────────────────────────
