@@ -20,7 +20,7 @@ public:
 
     void onCreate()  override {}
     void onOpen()    override;
-    void onRunning() override {}
+    void onRunning() override;   // 失焦检测 → 删屏收尾 (stocks 模式)
     void onClose()   override;
 
 private:
@@ -50,7 +50,10 @@ private:
     void*       _gesture_ctx   = nullptr;
     void _installSwipeGesture();
     void _removeSwipeGesture();
-    void _requestClose() { close(); }
+    // 照 app_stocks: 只发回调不调 close() —— close() 的 GoClose 会与
+    // openApp(工具页) 同拍竞争, 把 tile 刚置的 GoOpen 打回去 (on open 永不
+    // 执行); 失焦收尾在 onRunning 里检测 lv_screen_active() 完成。
+    void _requestClose() { if (_close_cb) _close_cb(); }
 
     std::function<void()> _close_cb;
     lv_obj_t* _scr        = nullptr;

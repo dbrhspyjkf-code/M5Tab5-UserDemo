@@ -75,21 +75,35 @@ void AppCalendar::onOpen()
     _installSwipeGesture();
 }
 
+// mooncake 每轮调 (app 失焦也调): 检测失焦 → 删屏收尾 (stocks 模式)。
+// openApp(工具页) 不会关本 app, 必须自己发现被切走。删屏走 async:
+// 本回调在工具页 onOpen load 之后至少一拍, 万年历屏必非活动。
+void AppCalendar::onRunning()
+{
+    if (_scr && lv_screen_active() != _scr) {
+        mclog::tagInfo(TAG, "lost foreground, tearing down screen");
+        _removeSwipeGesture();
+        lv_obj_t* scr = _scr;
+        _scr = nullptr;
+        _title = _grid = _detail_lbl = nullptr;
+        _year_lbl = _month_lbl = _year_dd = _month_dd = nullptr;
+        _dd_shield = nullptr;
+        _day_cells.clear();
+        lv_async_call([](void* p) {
+            lv_obj_delete(static_cast<lv_obj_t*>(p));
+        }, scr);
+    }
+}
+
 void AppCalendar::onClose()
 {
+    // mooncake 真关闭 (GoClose)。正常情况下屏已被 onRunning 失焦收尾删掉;
+    // 这里兜底: 若 _scr 仍在 (极端时序), 也走 async 延迟删 (届时必非活动)。
     mclog::tagInfo(TAG, "on close");
     _removeSwipeGesture();
-    // 删屏必须延迟一拍: onClose 时万年历屏仍是活动屏 (工具页 onOpen 在
-    // 下一拍才 load), 同步删 → 渲染 timer 踩空 (addr2line 实锤
-    // lv_refr.c:382)。async 回调执行时工具页已加载, 删除安全。
     if (_scr) {
         lv_obj_t* scr = _scr;
         _scr = nullptr;
-        // async 回调执行时工具页 (close_cb 里 openApp) 的 onOpen 已跑完,
-        // act_scr 已是工具页 → 直接删万年历屏即可。切勿再加"临时屏双保险":
-        // load(tmp) 会把 act_scr 从工具页抢走, 随后 delete(tmp) 又变删活动屏
-        // → 渲染踩空崩溃 (2026-10-27 13:52 实锤: warn 晚 close 0.8s 正是
-        // delete_async(tmp) 的执行时刻)。
         lv_async_call([](void* p) {
             lv_obj_delete(static_cast<lv_obj_t*>(p));
         }, scr);
@@ -98,7 +112,6 @@ void AppCalendar::onClose()
     _year_lbl = _month_lbl = _year_dd = _month_dd = nullptr;
     _dd_shield = nullptr;
     _day_cells.clear();
-    if (_close_cb) _close_cb();
 }
 
 // ── 主题色便捷取值 ──────────────────────────────────────────────────────────
