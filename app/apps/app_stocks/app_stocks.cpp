@@ -393,6 +393,18 @@ void AppStocks::_closeDetail()
     }
 }
 
+// 颜色线性插值: t=0 → a, t=1 → b
+static uint32_t lerp_color(uint32_t a, uint32_t b, float t)
+{
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    const int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
+    const int br = (b >> 16) & 0xFF, bg_ = (b >> 8) & 0xFF, bb = b & 0xFF;
+    return ((uint32_t)(ar + (br - ar) * t) << 16) |
+           ((uint32_t)(ag + (bg_ - ag) * t) << 8) |
+           (uint32_t)(ab + (bb - ab) * t);
+}
+
 void AppStocks::_refreshUiFromItems()
 {
     LvglLockGuard lock;
@@ -408,6 +420,13 @@ void AppStocks::_refreshUiFromItems()
     for (int i = 0; i < (int)order.size(); i++) order[i] = i;
     std::stable_sort(order.begin(), order.end(),
                      [&](int a, int b) { return snapshot[a].chg > snapshot[b].chg; });
+
+    // 渐变端点: 可见卡中的最大涨幅 / 最大跌幅
+    float max_chg = 0, min_chg = 0;
+    for (int i = 0; i < (int)order.size() && i < N_CARDS; i++) {
+        max_chg = snapshot[order[i]].chg > max_chg ? snapshot[order[i]].chg : max_chg;
+        min_chg = snapshot[order[i]].chg < min_chg ? snapshot[order[i]].chg : min_chg;
+    }
 
     for (int i = 0; i < N_CARDS; i++) {
         lv_obj_t* card = _cards[i];
@@ -433,10 +452,20 @@ void AppStocks::_refreshUiFromItems()
         const auto& st = snapshot[order[i]];
         lv_obj_set_user_data(card, (void*)(intptr_t)order[i]);  // 点击 → 原始下标
 
-        // 中国 A 股惯例: 涨=红 跌=绿. 彩底上白字.
+        // 中国 A 股惯例: 涨=红 跌=绿, 彩底白字.
+        // 颜色随涨跌幅度渐变 (2026-10-27 用户指定): 涨幅最大的卡用满红
+        // C_UP, 跌幅最大的卡用满绿 C_DOWN, 其余按 |chg|/极值 向中性底色
+        // (主题卡底) 线性过渡, 平盘即纯中性底.
         const bool up   = st.chg > 0.01f;
         const bool down = st.chg < -0.01f;
-        const uint32_t bg  = up ? C_UP() : down ? C_DOWN() : C_HEADER();
+        uint32_t bg = C_HEADER();
+        if (up || down) {
+            const float max_up   = max_chg > 0 ? max_chg : 0;
+            const float max_down = min_chg < 0 ? -min_chg : 0;
+            const float t = up ? (max_up > 0 ? st.chg / max_up : 1)
+                               : (max_down > 0 ? -st.chg / max_down : 1);
+            bg = lerp_color(C_HEADER(), up ? C_UP() : C_DOWN(), t);
+        }
         const uint32_t fg  = (up || down) ? 0xFFFFFF : C_TEXT();
         const uint32_t fg2 = (up || down) ? 0xFFFFFF : C_DIM();
         lv_obj_set_style_bg_color(card, lv_color_hex(bg), 0);
