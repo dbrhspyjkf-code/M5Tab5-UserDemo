@@ -140,10 +140,11 @@ void AppCalendar::_buildUi()
         lv_obj_center(l);
         return b;
     };
-    mk_arrow(40,  "<<", _prevYearClick_cb);
-    mk_arrow(140, "<",  _prevClick_cb);
-    mk_arrow(1056, ">", _nextClick_cb);
-    mk_arrow(1156, ">>", _nextYearClick_cb);
+    // 与日期网格左右边缘对齐 (2026-10-27 用户指定)
+    mk_arrow(GRID_X,          "<<", _prevYearClick_cb);
+    mk_arrow(GRID_X + 100,    "<",  _prevClick_cb);
+    mk_arrow(GRID_X + GRID_W - 84 - 100, ">", _nextClick_cb);
+    mk_arrow(GRID_X + GRID_W - 84,       ">>", _nextYearClick_cb);
 
     // 年/月可点击标签 (点击弹下拉)
     _year_lbl = lv_label_create(_scr);
