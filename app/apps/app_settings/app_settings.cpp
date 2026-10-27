@@ -140,6 +140,11 @@ void AppSettings::onOpen()
     _buildToolsPage();
     lv_screen_load(_scr);
     _installSwipeGesture();
+#ifdef PLATFORM_BUILD_DESKTOP
+    if (const char* e = getenv("TAB5_OPEN_CALENDAR")) {
+        if (e[0] == '1') openCalendar();   // 桌面调试: 直落万年历
+    }
+#endif
 }
 
 void AppSettings::onRunning()
@@ -238,7 +243,9 @@ void AppSettings::_buildToolsPage()
     lv_obj_set_style_bg_opa(_tools_page, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_tools_page, 0, 0);
     lv_obj_set_style_pad_all(_tools_page, 0, 0);
-    lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_SCROLLABLE);
+    // 4 行 tile (10 个工具) 超出一屏: 纵向可滚 (2026-10-27 加万年历第 4 行)
+    lv_obj_set_scroll_dir(_tools_page, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(_tools_page, LV_SCROLLBAR_MODE_AUTO);
 
     // Tool card — same style as the HA "灯光" device cards: rounded card with a
     // soft shadow, icon on the left, name on the right. 3×3 网格铺满整屏
@@ -456,6 +463,9 @@ void AppSettings::_buildToolsPage()
     // 第 3 行第 3 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
     make_tile(2, 2, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb);
 
+    // 第 4 行第 1 列: 万年历 (lunar_calendar.h 公历↔农历, 1900-2100)
+    make_tile(0, 3, nullptr, 130, "万年历", _toolCalendar_cb);
+
     // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
     //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
     make_tile(2, 1, nullptr, 130, "RFID", _toolRfid_cb, 256, 12, -1, 2);
@@ -500,6 +510,19 @@ void AppSettings::_toolMail_cb(lv_event_t* e)
 void AppSettings::_toolStocks_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->openStocks();
+}
+
+void AppSettings::openCalendar()
+{
+    if (_calendar_id > 0) {
+        _tools_page = nullptr;   // 子 app 打开后本页随 _scr 一起由 onClose 清
+        mooncake::GetMooncake().openApp(_calendar_id);
+    }
+}
+
+void AppSettings::_toolCalendar_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->openCalendar();
 }
 
 void AppSettings::openStocks()

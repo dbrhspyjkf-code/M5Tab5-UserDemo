@@ -44,6 +44,8 @@ public:
     // AppStocks (自选股) 的 mooncake app id, 由 app_installer 注入.
     void setStocksAppId(int id) { _stocks_id = id; }
     void openStocks();  // 工具页 tile → 打开自选股 app
+    void setCalendarAppId(int id) { _calendar_id = id; }
+    void openCalendar();  // 工具页 tile → 打开万年历 app
 
     // AppReachy (Reachy 仪表盘) 的 mooncake app id, 由 app_installer 注入.
     void setReachyAppId(int id) { _reachy_id = id; }
@@ -79,6 +81,7 @@ private:
     int _puzzle_id    = -1;
     int _lora_chat_id = -1;
     int _stocks_id    = -1;
+    int _calendar_id  = -1;
     int _reachy_id    = -1;
     int _rfid_id      = -1;
 
@@ -171,6 +174,7 @@ private:
 
     static void _toolMail_cb(lv_event_t* e);   // tools tile → open email page
     static void _toolStocks_cb(lv_event_t* e); // tools tile → open 自选股
+    static void _toolCalendar_cb(lv_event_t* e); // tools tile → open 万年历
     static void _toolReachy_cb(lv_event_t* e); // tools tile → open Reachy app
     static void _toolRfid_cb(lv_event_t* e);   // tools tile → open RFID 读写器
     static void _emailRefresh_cb(lv_event_t* e); // 邮件子页刷新按钮 → _emailFetch

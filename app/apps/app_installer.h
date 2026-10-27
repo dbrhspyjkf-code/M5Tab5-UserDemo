@@ -24,6 +24,7 @@
 #include "app_radio/app_radio.h"
 #include "app_player/app_player.h"
 #include "app_timer/app_timer.h"
+#include "app_calendar/app_calendar.h"
 #include "app_idle_screen/app_idle_screen.h"
 #include "xiaozhi_ctl.h"
 /* Header files locator (Don't remove) */
@@ -92,6 +93,9 @@ inline void on_install_apps()
     auto ti_uptr = std::make_unique<AppTimer>();
     AppTimer* timer = ti_uptr.get();     // 计时器: 主页入口
 
+    auto cal_uptr = std::make_unique<AppCalendar>();
+    AppCalendar* calendar = cal_uptr.get();  // 万年历: 工具页入口
+
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
 
@@ -108,6 +112,7 @@ inline void on_install_apps()
     int ra_id = mooncake::GetMooncake().installApp(std::move(ra_uptr));
     int pl_id = mooncake::GetMooncake().installApp(std::move(pl_uptr));
     int ti_id = mooncake::GetMooncake().installApp(std::move(ti_uptr));
+    int cal_id = mooncake::GetMooncake().installApp(std::move(cal_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
@@ -124,6 +129,10 @@ inline void on_install_apps()
     });
     // 自选股也从「工具」页打开, 返回 (← / 上拨) 回到工具页.
     stocks->setCloseCallback([set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+    });
+    // 万年历同样从「工具」页打开, 上拨返回工具页.
+    calendar->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
     // Reachy 同样从「工具」页打开, 返回 (← / 上拨) 回到工具页.
@@ -147,6 +156,7 @@ inline void on_install_apps()
     settings->setPuzzleAppId(up_id);
     settings->setLoraChatAppId(lc_id);
     settings->setStocksAppId(st_id);
+    settings->setCalendarAppId(cal_id);
     settings->setReachyAppId(re_id);
     settings->setRfidAppId(rf_id);
 
