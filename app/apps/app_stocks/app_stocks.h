@@ -160,6 +160,7 @@ private:
     std::shared_ptr<bool> _alive = std::make_shared<bool>(true);
     lv_indev_t* _gesture_indev{nullptr};
     void*       _gesture_ctx{nullptr};  // opaque SwipeCtx*, defined in app_stocks.cpp
+    lv_point_t  _touch_start{0, 0};     // PRESSING 起点, 区分翻页手势与卡片点击
 
     // ── LED handles (ESP only) ─────────────────────────────────────────
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -190,6 +191,7 @@ private:
     void _closeDetail();
     void _applyCharts();   // worker 完成 → UI 线程绘制 (onRunning 检查 _chart_ready)
     void _chartFetchWorker(std::string code, std::shared_ptr<bool> alive);
+    void _trySpawnChartWorker(const std::string& code);  // 已在飞则跳过; 派生失败还旗标
     void _fetchStocksAsync();
     void _doFetch();
     void _parseStocksJson(const std::string& body);

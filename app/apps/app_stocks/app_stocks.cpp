@@ -555,6 +555,7 @@ void AppStocks::_installSwipeGesture()
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
                     ctx->press_x = p.x; ctx->press_y = p.y;
+                    ctx->app->_touch_start = p;   // 供 _showDetail 区分翻页与点击
                     return;
                 }
                 if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
@@ -639,6 +640,15 @@ void AppStocks::_removeSwipeGesture()
 
 void AppStocks::_showDetail(int row_idx)
 {
+    // 两页切换是 obj_set_pos 而非滚动容器, 横向拨动时抬起会落在卡片上并被
+    // LVGL 当 CLICKED (2026-10-27 实锤: 拨到指数页必弹分时图). 用位移量排除:
+    // 与 _installSwipeGesture 同判据 — 横向 >90px 且远大于纵向 = 翻页, 不是点击.
+    if (lv_indev_t* indev = lv_indev_active()) {
+        lv_point_t p;
+        lv_indev_get_point(indev, &p);
+        const int dx = p.x - _touch_start.x, dy = p.y - _touch_start.y;
+        if (abs(dx) > 90 && abs(dx) > abs(dy) * 2) return;
+    }
     StockItem s;
     {
         std::lock_guard<std::mutex> lk(_items_mu);
@@ -713,11 +723,20 @@ void AppStocks::_showDetail(int row_idx)
         _chart_code = s.code;
     }
     _chart_ready.store(false);
-    if (!_chart_in_flight.exchange(true)) {
-        std::shared_ptr<bool> alive = _alive;
-        GetHAL()->tryRunDetached([this, code = s.code, alive]() {
+    _trySpawnChartWorker(s.code);
+}
+
+// 派生分时/K线 worker. 已有 worker 在飞则跳过 (worker 结束时会检查期间产生的新
+// 请求并补拉); 派生失败必须还旗标, 否则 _chart_in_flight 永远 true, 之后所有
+// 弹窗都卡「行情加载中」(2026-10-27 实锤: 旗标置位后从来没人复位).
+void AppStocks::_trySpawnChartWorker(const std::string& code)
+{
+    if (_chart_in_flight.exchange(true)) return;
+    std::shared_ptr<bool> alive = _alive;
+    if (!GetHAL()->tryRunDetached([this, code, alive]() {
             _chartFetchWorker(code, alive);
-        });
+        })) {
+        _chart_in_flight.store(false);
     }
 }
 
@@ -733,6 +752,10 @@ void AppStocks::_closeDetail()
         _chart_pixels = nullptr;
     }
     _chart_ready.store(false);
+    {   // 清当前请求: 在飞的 worker 结束时据此把结果作废、不再补拉
+        std::lock_guard<std::mutex> lk(_chart_mu);
+        _chart_code.clear();
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -800,11 +823,22 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
     local.ok = !local.minute_prices.empty() || !local.day_close.empty();
     mclog::tagInfo(TAG, "chart fetched: minute={} kline={} ok={}",
                    local.minute_prices.size(), local.day_close.size(), local.ok);
+    // 只把「仍被请求」的结果交给 UI: 在飞期间用户换了股票 (_chart_code 变了)
+    // 或已关弹窗 (_chart_code 清空) 时, 本次结果作废; 若有新请求则补拉.
+    bool current;
+    std::string pending;
     {
         std::lock_guard<std::mutex> lk(_chart_mu);
-        _chart = std::move(local);
+        current = (_chart_code == code);
+        pending = current ? std::string() : _chart_code;
+        if (current) _chart = std::move(local);
     }
-    _chart_ready.store(true);   // onRunning 在 UI 线程消费
+    _chart_in_flight.store(false);
+    if (!pending.empty()) {
+        _trySpawnChartWorker(pending);   // 在飞时点开的新股票, 现在补拉
+    } else if (current) {
+        _chart_ready.store(true);        // onRunning 在 UI 线程消费
+    }
     (void)alive;                // 生命周期由 _chart_in_flight + UI 判空兜底
 }
 
