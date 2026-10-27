@@ -344,44 +344,44 @@ void AppSettings::_buildToolsPage()
                 lv_obj_add_flag(flap, LV_OBJ_FLAG_EVENT_BUBBLE);
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, ex + EW + ICON_GAP, 0);
             } else if (kind == 3) {
-                // 万年历图标 — 参考 icons8-日历: 圆角卡 + 顶部粗条 + 两枚挂环
-                // + 内容区两列"数字"竖笔 (1 和 31 的意象), 纯 lv_obj 拼
-                const int CW = 92, CH = 86;
+                // 万年历图标 — 参考 icons8-日历: 实心圆角卡 + 顶部深色横条
+                // + 挂环×2 + 内部日期格块 (小月历缩略图, 饱满实心)
+                const int CW = 96, CH = 88;
                 const int cx = (TW - CW - ICON_GAP - name_w) / 2;
-                const int cy = 22;
-                // 卡体 (圆角边框, 内容区)
+                const int cy = (TH - CH - 14) / 2;
+                // 实心卡
                 lv_obj_t* card = lv_obj_create(tile);
                 lv_obj_set_size(card, CW, CH);
-                lv_obj_set_pos(card, cx, cy);
-                lv_obj_set_style_bg_opa(card, LV_OPA_TRANSP, 0);
-                lv_obj_set_style_border_width(card, 5, 0);
-                lv_obj_set_style_border_color(card, lv_color_hex(C_ACCENT), 0);
-                lv_obj_set_style_radius(card, 14, 0);
+                lv_obj_set_pos(card, cx, cy + 10);
+                lv_obj_set_style_bg_color(card, lv_color_hex(C_ACCENT), 0);
+                lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+                lv_obj_set_style_border_width(card, 0, 0);
+                lv_obj_set_style_radius(card, 12, 0);
                 lv_obj_set_style_shadow_width(card, 0, 0);
                 lv_obj_set_style_pad_all(card, 0, 0);
                 lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
                 lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE);
                 lv_obj_add_flag(card, LV_OBJ_FLAG_EVENT_BUBBLE);
-                // 顶部粗横条 (贴卡顶, 同色)
-                lv_obj_t* top = lv_obj_create(card);
-                lv_obj_set_size(top, CW - 10, 16);
-                lv_obj_set_pos(top, 0, -2);
-                lv_obj_set_style_bg_color(top, lv_color_hex(C_ACCENT), 0);
-                lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
-                lv_obj_set_style_radius(top, 12, 0);
-                lv_obj_set_style_border_width(top, 0, 0);
-                lv_obj_set_style_shadow_width(top, 0, 0);
-                lv_obj_set_style_pad_all(top, 0, 0);
-                lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
-                lv_obj_clear_flag(top, LV_OBJ_FLAG_CLICKABLE);
-                lv_obj_add_flag(top, LV_OBJ_FLAG_EVENT_BUBBLE);
-                // 两枚挂环 (从顶条向上突出)
+                // 顶部深色横条 (卡头, 用 tile 底色反衬)
+                lv_obj_t* head = lv_obj_create(card);
+                lv_obj_set_size(head, CW - 12, 20);
+                lv_obj_set_pos(head, 6, 5);
+                lv_obj_set_style_bg_color(head, lv_color_hex(0x14201A), 0);
+                lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
+                lv_obj_set_style_radius(head, 6, 0);
+                lv_obj_set_style_border_width(head, 0, 0);
+                lv_obj_set_style_shadow_width(head, 0, 0);
+                lv_obj_set_style_pad_all(head, 0, 0);
+                lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_clear_flag(head, LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_add_flag(head, LV_OBJ_FLAG_EVENT_BUBBLE);
+                // 挂环×2 (accent 环, 突出卡顶)
                 for (int r = 0; r < 2; r++) {
                     lv_obj_t* ring = lv_obj_create(tile);
-                    lv_obj_set_size(ring, 16, 16);
-                    lv_obj_set_pos(ring, cx + (r ? CW - 34 : 18), cy - 8);
+                    lv_obj_set_size(ring, 18, 18);
+                    lv_obj_set_pos(ring, cx + (r ? CW - 32 : 14), cy + 2);
                     lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
-                    lv_obj_set_style_radius(ring, 8, 0);
+                    lv_obj_set_style_radius(ring, 9, 0);
                     lv_obj_set_style_border_width(ring, 5, 0);
                     lv_obj_set_style_border_color(ring, lv_color_hex(C_ACCENT), 0);
                     lv_obj_set_style_shadow_width(ring, 0, 0);
@@ -390,32 +390,22 @@ void AppSettings::_buildToolsPage()
                     lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
                     lv_obj_add_flag(ring, LV_OBJ_FLAG_EVENT_BUBBLE);
                 }
-                // 内容区: 左边细竖笔 (数字"1"), 右边三根横线 (31 的横/竖意象→简洁横线组)
-                lv_obj_t* dig1 = lv_obj_create(card);
-                lv_obj_set_size(dig1, 6, 34);
-                lv_obj_set_pos(dig1, 22, 40);
-                lv_obj_set_style_bg_color(dig1, lv_color_hex(C_ACCENT), 0);
-                lv_obj_set_style_bg_opa(dig1, LV_OPA_COVER, 0);
-                lv_obj_set_style_radius(dig1, 3, 0);
-                lv_obj_set_style_border_width(dig1, 0, 0);
-                lv_obj_set_style_shadow_width(dig1, 0, 0);
-                lv_obj_set_style_pad_all(dig1, 0, 0);
-                lv_obj_clear_flag(dig1, LV_OBJ_FLAG_SCROLLABLE);
-                lv_obj_clear_flag(dig1, LV_OBJ_FLAG_CLICKABLE);
-                lv_obj_add_flag(dig1, LV_OBJ_FLAG_EVENT_BUBBLE);
-                for (int row = 0; row < 3; row++) {
-                    lv_obj_t* bar = lv_obj_create(card);
-                    lv_obj_set_size(bar, 32, 7);
-                    lv_obj_set_pos(bar, 44, 38 + row * 14);
-                    lv_obj_set_style_bg_color(bar, lv_color_hex(C_ACCENT), 0);
-                    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-                    lv_obj_set_style_radius(bar, 3, 0);
-                    lv_obj_set_style_border_width(bar, 0, 0);
-                    lv_obj_set_style_shadow_width(bar, 0, 0);
-                    lv_obj_set_style_pad_all(bar, 0, 0);
-                    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
-                    lv_obj_add_flag(bar, LV_OBJ_FLAG_EVENT_BUBBLE);
+                // 内部日期格块 4×2 (tile 底色小方块 = 月历数字意象)
+                for (int r = 0; r < 2; r++) {
+                    for (int c = 0; c < 4; c++) {
+                        lv_obj_t* dot = lv_obj_create(card);
+                        lv_obj_set_size(dot, 16, 12);
+                        lv_obj_set_pos(dot, 8 + c * 20, 32 + r * 20);
+                        lv_obj_set_style_bg_color(dot, lv_color_hex(0x14201A), 0);
+                        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+                        lv_obj_set_style_radius(dot, 3, 0);
+                        lv_obj_set_style_border_width(dot, 0, 0);
+                        lv_obj_set_style_shadow_width(dot, 0, 0);
+                        lv_obj_set_style_pad_all(dot, 0, 0);
+                        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+                        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+                        lv_obj_add_flag(dot, LV_OBJ_FLAG_EVENT_BUBBLE);
+                    }
                 }
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, cx + CW + ICON_GAP, 0);
             } else if (kind == 2) {
