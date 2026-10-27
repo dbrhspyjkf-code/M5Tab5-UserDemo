@@ -73,6 +73,10 @@ static const lv_font_t* stock_row_font()
     return &font;
 }
 
+// 分时/日K 画布尺寸: 弹窗 1240x690 (pad 20), 顶部 56 留给标题/切换 tab,
+// 底部留关闭钮 (2026-10-27 用户要求放大, 原 944x420)
+static constexpr int CHART_W = 1200, CHART_H = 530;
+
 // 单调毫秒时钟 (两平台通用)
 static int64_t mono_ms()
 {
@@ -580,6 +584,11 @@ void AppStocks::_installSwipeGesture()
                     lv_indev_get_point(dev, &p);
                     ctx->press_x = p.x; ctx->press_y = p.y;
                     ctx->app->_touch_start = p;   // 供 _showDetail 区分翻页与点击
+                    // 列表滚动位同样取按下瞬间的: 上拨本身会把列表滚离顶部,
+                    // 抬起时再读就永远"不在顶部"了 (2026-10-27 实锤: >12 卡
+                    // 列表可滚后上拨退出失效).
+                    ctx->app->_scroll_y_at_press = ctx->app->_stocks_scroll
+                        ? lv_obj_get_scroll_y(ctx->app->_stocks_scroll) : 0;
                     return;
                 }
                 if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
@@ -599,11 +608,11 @@ void AppStocks::_installSwipeGesture()
                     }
                     // 上拨退出兜底 (滚动容器会吞 GESTURE): 在滚动顶部,
                     // 纵向快速上甩 (>120px, 纵向为主, 时序短) → 退出.
-                    // at_top 按当前页判: 指数页无滚动列表, 不被自选股列表的
-                    // 滚动位误拦 (2026-10-27 实锤: 列表滚过之后指数页上拨失效).
+                    // at_top 按当前页 + 按下瞬间的滚动位判: 上拨本身会把列表
+                    // 滚离顶部, 抬起时再读永远不在顶部 (>12 卡实锤).
                     const bool at_top = ctx->app->_page == 1 ||
                         !ctx->app->_stocks_scroll ||
-                        lv_obj_get_scroll_y(ctx->app->_stocks_scroll) <= 2;
+                        ctx->app->_scroll_y_at_press <= 2;
                     if (at_top && dy < -120 && abs(dy) > abs(dx) * 2) {
                         auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
                         lv_async_call([](void* u) {
@@ -623,11 +632,11 @@ void AppStocks::_installSwipeGesture()
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 const lv_dir_t dir = lv_indev_get_gesture_dir(dev);
                 if (dir == LV_DIR_TOP) {
-                    // 滚动容器在顶部时上拨才退出; 已向下滚过 (y>0) 则本次
-                    // 上拨归滚动 (把页面拨回顶部), 不误退.
+                    // 滚动容器在顶部时上拨才退出; 已向下滚过则本次上拨归滚动
+                    // (把页面拨回顶部), 不误退. 滚动位取按下瞬间的 (理由同上).
                     // 只在自选股页 (page 0) 看列表滚动位; 指数页无可滚列表.
                     if (ctx->app->_page == 0 && ctx->app->_stocks_scroll &&
-                        lv_obj_get_scroll_y(ctx->app->_stocks_scroll) > 2) {
+                        ctx->app->_scroll_y_at_press > 2) {
                         return;   // 让 LVGL 继续把本手势交给滚动
                     }
                     // Defer: don't tear down _scr synchronously from inside indev dispatch.
@@ -688,7 +697,7 @@ void AppStocks::_showDetail(int row_idx)
     _closeDetail();
 
     _detail_modal = lv_obj_create(_scr);
-    lv_obj_set_size(_detail_modal, 1000, 620);
+    lv_obj_set_size(_detail_modal, 1240, 690);
     lv_obj_center(_detail_modal);
     lv_obj_set_style_bg_color(_detail_modal, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_border_color(_detail_modal, lv_color_hex(theme::cur().accent), 0);
@@ -698,24 +707,58 @@ void AppStocks::_showDetail(int row_idx)
     lv_obj_clear_flag(_detail_modal, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* title = lv_label_create(_detail_modal);
-    lv_label_set_text_fmt(title, "%s  %s   %.2f  %+.2f%%", s.name.c_str(),
-                          s.code.c_str(), s.price, s.chg);
+    {
+        // LVGL 内置 printf (CONFIG_LV_USE_BUILTIN_SPRINTF) 不支持 %f,
+        // text_fmt 里的浮点会渲染成 "f f%" (2026-10-27 实锤) ——
+        // 浮点格式化一律先 snprintf 再 set_text.
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "%s  %s   %.2f  %+.2f%%",
+                      s.name.c_str(), s.code.c_str(), s.price, s.chg);
+        lv_label_set_text(title, buf);
+    }
     lv_obj_set_style_text_font(title, zh_font_lg(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 4, 2);
 
-    // canvas: 944x420 ARGB8888 (堆缓冲, worker 绘制在 UI 线程做)
-        // 1.5MB 大块: 设备端 SPIRAM_USE_MALLOC=y, malloc 自动落 PSRAM;
+    // 分时 / 日K 切换 tab (CHECKABLE: 选中态 accent 底白字)
+    const char* tab_names[2] = {"分时", "日K"};
+    for (int i = 1; i >= 0; i--) {   // 右起建, TOP_RIGHT 逐个左移
+        lv_obj_t* btn = lv_button_create(_detail_modal);
+        lv_obj_set_size(btn, 110, 44);
+        lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -4 - (1 - i) * 118, 2);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x33363A), 0);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(theme::cur().accent), LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(btn, lv_color_hex(C_DIM()), 0);            // 继承给 label
+        lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), LV_STATE_CHECKED);
+        lv_obj_set_style_radius(btn, 10, 0);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_CHECKABLE);
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_user_data(btn, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+            auto* self = static_cast<AppStocks*>(lv_event_get_user_data(e));
+            lv_obj_t* tab = lv_event_get_current_target_obj(e);
+            self->_onChartTab((int)(intptr_t)lv_obj_get_user_data(tab), tab);
+        }, LV_EVENT_CLICKED, this);
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, tab_names[i]);
+        lv_obj_set_style_text_font(lbl, zh_font_sm(), 0);
+        lv_obj_center(lbl);
+        _chart_tab_btn[i] = btn;
+        if (i == _chart_mode) lv_obj_add_state(btn, LV_STATE_CHECKED);
+    }
+
+    // canvas: 1200x530 ARGB8888 (堆缓冲, worker 绘制在 UI 线程做)
+    // 2.4MB 大块: 设备端 SPIRAM_USE_MALLOC=y, malloc 自动落 PSRAM;
     // 勿用 heap_caps_malloc(MALLOC_CAP_SPIRAM) —— SPIRAM_USE_CAPS_ALLOC
     // 未开时该 cap 分配必返回 NULL (2026-10-27 实锤: 分时图不显示根因).
-    _chart_pixels = malloc(944 * 420 * 4);
+    _chart_pixels = malloc(CHART_W * CHART_H * 4);
     if (_chart_pixels) {
-        memset(_chart_pixels, 0, 944 * 420 * 4);
+        memset(_chart_pixels, 0, CHART_W * CHART_H * 4);
     } else {
-        mclog::tagWarn(TAG, "chart canvas alloc failed (1.5MB)");
+        mclog::tagWarn(TAG, "chart canvas alloc failed (2.4MB)");
     }
     _chart_canvas = lv_canvas_create(_detail_modal);
-    lv_canvas_set_buffer(_chart_canvas, _chart_pixels, 944, 420, LV_COLOR_FORMAT_ARGB8888);
+    lv_canvas_set_buffer(_chart_canvas, _chart_pixels, CHART_W, CHART_H, LV_COLOR_FORMAT_ARGB8888);
     lv_obj_align(_chart_canvas, LV_ALIGN_TOP_LEFT, 0, 56);
 
     _chart_status = lv_label_create(_detail_modal);
@@ -723,12 +766,6 @@ void AppStocks::_showDetail(int row_idx)
     lv_obj_set_style_text_font(_chart_status, zh_font_sm(), 0);
     lv_obj_set_style_text_color(_chart_status, lv_color_hex(C_DIM()), 0);
     lv_obj_center(_chart_status);
-
-    lv_obj_t* hint = lv_label_create(_detail_modal);
-    lv_label_set_text(hint, "分时 / 日K");
-    lv_obj_set_style_text_font(hint, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(hint, lv_color_hex(C_DIM()), 0);
-    lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -4, 8);
 
     lv_obj_t* close_btn = lv_button_create(_detail_modal);
     lv_obj_set_size(close_btn, 150, 54);
@@ -775,6 +812,7 @@ void AppStocks::_closeDetail()
         _detail_modal = nullptr;
     }
     _chart_canvas = _chart_status = nullptr;
+    for (lv_obj_t*& b : _chart_tab_btn) b = nullptr;
     if (_chart_pixels) {           // canvas 缓冲是堆分配, 弹窗关了就还
         free(_chart_pixels);
         _chart_pixels = nullptr;
@@ -924,8 +962,17 @@ void AppStocks::_applyCharts()
         lv_obj_add_flag(_chart_status, LV_OBJ_FLAG_HIDDEN);
         _chart_status = nullptr;
     }
+    _drawChartCanvas(c);
+}
 
-    constexpr int W = 944, H = 420;
+// 无锁绘制 (调用方须已在 UI 线程持有 LVGL 锁; _onChartTab 从点击回调直接调,
+// LvglLockGuard 走 lvgl_port_lock 非递归, 重入必死锁). 按 _chart_mode 选
+// 分时/日K, 请求的序列缺数据时回退到另一序列 (worker ok=true 保证非空).
+void AppStocks::_drawChartCanvas(const ChartData& c)
+{
+    if (!_chart_canvas || !_chart_pixels) return;
+
+    constexpr int W = CHART_W, H = CHART_H;
     void* pix = _chart_pixels;
     const uint32_t COL_BG    = 0x0A1610;   // 图区底
     const uint32_t COL_GRID  = 0x24402F;
@@ -933,11 +980,16 @@ void AppStocks::_applyCharts()
     const uint32_t COL_DOWN  = 0x2ECC71;   // 跌绿
     const uint32_t COL_AXIS  = 0x6E9486;
 
-    // ── 有分时画分时, 否则画日K; 两者都有画分时(左 55%) + 日K(右 45%) ──
-    // 简化: 先分时整幅; 无分时再日K整幅 (弹窗只有一个 canvas)
+    const bool have_min = !c.minute_prices.empty();
+    const bool have_day = !c.day_close.empty();
+    bool draw_minute = have_min;
+    if (_chart_mode == 1 && have_day) draw_minute = false;
+    if (_chart_mode == 0 && !have_min && have_day) draw_minute = false;
+
+    // ── 分时整幅 / 日K整幅, 由 tab 切换 (_chart_mode), 缺数据回退另一序列 ──
     px_fill(pix, W, H, COL_BG);
 
-    if (!c.minute_prices.empty()) {
+    if (draw_minute) {
         // 分时: 昨收基准 = 第一根分钟价之前的均线……腾讯接口无昨收字段,
         // 用全天均价近似: 以开盘(第一值)为基准线即可表达强弱.
         const float base = c.minute_prices.front();
@@ -970,7 +1022,7 @@ void AppStocks::_applyCharts()
             px_line(pix, W, H, px_, py_, x, y, line_col);
             px_ = x; py_ = y;
         }
-    } else if (!c.day_close.empty()) {
+    } else if (have_day) {
         // 日K: 最近 60 根蜡烛
         const int n = (int)c.day_close.size();
         float hi = -1e9f, lo = 1e9f;
@@ -998,6 +1050,27 @@ void AppStocks::_applyCharts()
     }
 
     lv_obj_invalidate(_chart_canvas);
+}
+
+// 分时/日K tab 点击 (UI 线程, 已持 LVGL 锁): 换模式 + 同步两钮选中态 + 重绘.
+// CHECKABLE 会把点中的钮自动翻转, 点已选中的要把状态翻回选中.
+void AppStocks::_onChartTab(int mode, lv_obj_t* btn)
+{
+    if (!btn) return;
+    if (mode == _chart_mode) {
+        lv_obj_add_state(btn, LV_STATE_CHECKED);
+        return;
+    }
+    _chart_mode = mode;
+    for (lv_obj_t* b : _chart_tab_btn)
+        if (b) lv_obj_clear_state(b, LV_STATE_CHECKED);
+    lv_obj_add_state(btn, LV_STATE_CHECKED);
+    ChartData c;
+    {
+        std::lock_guard<std::mutex> lk(_chart_mu);
+        c = _chart;
+    }
+    _drawChartCanvas(c);
 }
 
 

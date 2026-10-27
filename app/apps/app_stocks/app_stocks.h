@@ -145,8 +145,9 @@ private:
     ChartData      _chart;                   // guarded by _chart_mu
     std::mutex     _chart_mu;
     std::atomic<bool> _chart_in_flight{false};
-    lv_obj_t*      _chart_canvas  {nullptr};  // 944x420 ARGB8888
-    lv_obj_t*      _chart_tab     {nullptr};  // 当前页 ("分时"/"日K")
+    lv_obj_t*      _chart_canvas  {nullptr};  // 1200x530 ARGB8888
+    lv_obj_t*      _chart_tab_btn[2]{nullptr, nullptr};  // 分时/日K 切换按钮
+    int            _chart_mode   = 0;         // 0=分时 1=日K
     lv_obj_t*      _chart_status  {nullptr};
     void*          _chart_pixels  {nullptr};  // canvas 像素堆缓冲 (chart 绘制专用)
     std::atomic<bool> _chart_ready{false}; // worker 完成 → onRunning 消费
@@ -162,7 +163,8 @@ private:
     std::shared_ptr<bool> _alive = std::make_shared<bool>(true);
     lv_indev_t* _gesture_indev{nullptr};
     void*       _gesture_ctx{nullptr};  // opaque SwipeCtx*, defined in app_stocks.cpp
-    lv_point_t  _touch_start{0, 0};     // PRESSING 起点, 区分翻页手势与卡片点击
+    lv_point_t  _touch_start{0, 0};     // PRESSED 起点, 区分翻页手势与卡片点击
+    int32_t     _scroll_y_at_press = 0; // PRESSED 时列表滚动位 (上拨退出的"在顶部"判定)
 
     // ── LED handles (ESP only) ─────────────────────────────────────────
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -193,6 +195,8 @@ private:
     void _showDetail(int row);
     void _closeDetail();
     void _applyCharts();   // worker 完成 → UI 线程绘制 (onRunning 检查 _chart_ready)
+    void _drawChartCanvas(const ChartData& c);  // 无锁绘制 (UI 线程已持 LVGL 锁)
+    void _onChartTab(int mode, lv_obj_t* btn);  // 分时/日K 切换
     void _chartFetchWorker(std::string code, std::shared_ptr<bool> alive);
     void _trySpawnChartWorker(const std::string& code);  // 已在飞则跳过; 派生失败还旗标
     void _fetchStocksAsync();
