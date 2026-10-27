@@ -7,6 +7,7 @@
 #include <string>
 #include <atomic>
 #include <mutex>
+#include <functional>
 #include <memory>
 
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -198,8 +199,11 @@ private:
     void _applyCharts();   // worker 完成 → UI 线程绘制 (onRunning 检查 _chart_ready)
     void _drawChartCanvas(const ChartData& c);  // 无锁绘制 (UI 线程已持 LVGL 锁)
     void _onChartTab(int mode, lv_obj_t* btn);  // 分时/日K 切换
-    void _chartFetchWorker(std::string code, std::shared_ptr<bool> alive);
-    void _trySpawnChartWorker(const std::string& code);  // 已在飞则跳过; 派生失败还旗标
+    void _chartFetchWorker(std::string ifzq_code, std::shared_ptr<bool> alive);
+    void _trySpawnChartWorker(const std::string& ifzq_code);  // 已在飞则跳过; 派生失败还旗标
+    void _openChart(const std::string& title, const std::string& ifzq_code);  // 全屏走势图
+    void _openIndexChart(int i);                // 指数卡片 → 走势图 (长按)
+    void _flashCardThen(lv_obj_t* card, std::function<void()> open);  // 闪烁 160ms 后 open
     void _fetchStocksAsync();
     void _doFetch();
     void _parseStocksJson(const std::string& body);
