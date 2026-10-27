@@ -98,6 +98,12 @@ void AppHome::onOpen()
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     // Stable storage for button user_data pointers — must not reallocate after reserve
+    // 长按阈值 500ms (每日一句卡长按换句, 与股票卡片一致; 全局 indev 设置)
+    for (lv_indev_t* inv = lv_indev_get_next(nullptr); inv;
+         inv = lv_indev_get_next(inv))
+        if (lv_indev_get_type(inv) == LV_INDEV_TYPE_POINTER)
+            lv_indev_set_long_press_time(inv, 500);
+
     _btn_data.clear();
     _btn_data.reserve(_apps.size());
 
@@ -150,7 +156,7 @@ void AppHome::onOpen()
     // This card is the single accent block of the whole home screen.
     lv_obj_t* hero = lv_obj_create(_scr);
     lv_obj_set_pos(hero, 12, 12);
-    lv_obj_set_size(hero, 400, 564);  // 底边 576 = 右列第 4 卡底, 对齐
+    lv_obj_set_size(hero, 400, 608);  // 12+608+12(到按钮)+76(按钮)+12(底)=720
     lv_obj_set_style_bg_color(hero, lv_color_hex(theme::cur().hero), 0);
     lv_obj_set_style_bg_opa(hero, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(hero, 26, 0);
@@ -220,7 +226,7 @@ void AppHome::onOpen()
 
     // Thin divider + icon row along the card bottom (light ink on deep green).
     lv_obj_t* div = lv_obj_create(hero);
-    lv_obj_set_pos(div, 32, 468);
+    lv_obj_set_pos(div, 32, 512);   // 距底 94 (随卡加高同步)
     lv_obj_set_size(div, 336, 2);
     lv_obj_set_style_bg_color(div, lv_color_hex(theme::cur().press), 0);
     lv_obj_set_style_bg_opa(div, LV_OPA_60, 0);
@@ -229,7 +235,7 @@ void AppHome::onOpen()
     lv_obj_clear_flag(div, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
     lv_obj_t* irow = lv_obj_create(hero);
-    lv_obj_set_pos(irow, 24, 492);
+    lv_obj_set_pos(irow, 24, 536);
     lv_obj_set_size(irow, 352, 44);
     lv_obj_set_style_bg_opa(irow, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(irow, 0, 0);
@@ -277,7 +283,7 @@ void AppHome::onOpen()
     lv_obj_set_pos(_dash_scroll, 424, 12);
     // 高度恰好容纳 01-04 四卡 (96*3+240+gap36=564), 底部止于 y=604,
     // 不压底部按钮区 (y=616 起); OPi 第 5 卡下拉查看 (2026-10-27 用户指定)
-    lv_obj_set_size(_dash_scroll, 844, 564);   // 宽 = 1280-424-12
+    lv_obj_set_size(_dash_scroll, 844, 608);   // 宽 = 1280-424-12
     lv_obj_set_style_bg_opa(_dash_scroll, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_dash_scroll, 0, 0);
     lv_obj_set_style_pad_all(_dash_scroll, 0, 0);
@@ -314,36 +320,43 @@ void AppHome::onOpen()
         const uint32_t IDX  = theme::cur().text_dim;   // dim green index
         const uint32_t NAME = theme::cur().text_soft;   // soft text
         const uint32_t VAL  = theme::cur().text_hi;   // bright value
-        lv_obj_t* c = row_card(0, 96, theme::cur().card[0], theme::cur().border);
+        lv_obj_t* c = row_card(0, 110, theme::cur().card[0], theme::cur().border);
         mk_lbl(c, &lv_font_montserrat_28, IDX,  "01", LV_ALIGN_LEFT_MID,  26, 0);
         mk_lbl(c, zh_font_md(),          NAME, "GLM 用量",   LV_ALIGN_LEFT_MID,  84, 0);
         // 两行: 上=Pro 5H/7D 剩余%, 下=重置时间 (2026-10-27 用户要求)
         _dash_glm  = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 14);
         _dash_glm2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
 
-        c = row_card(108, 96, theme::cur().card[1], theme::cur().border);
+        c = row_card(122, 110, theme::cur().card[1], theme::cur().border);
         mk_lbl(c, &lv_font_montserrat_28, IDX,  "02", LV_ALIGN_LEFT_MID,  26, 0);
         mk_lbl(c, zh_font_md(),          NAME, "DeepSeek 余额", LV_ALIGN_LEFT_MID, 84, 0);
         _dash_ds = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_RIGHT_MID, -28, 0);
 
-        c = row_card(216, 96, theme::cur().card[2], theme::cur().border);
+        c = row_card(244, 110, theme::cur().card[2], theme::cur().border);
         mk_lbl(c, &lv_font_montserrat_28, IDX,  "03", LV_ALIGN_LEFT_MID,  26, 0);
         mk_lbl(c, zh_font_md(),          NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 84, 0);
         _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 16);
         _dash_ag2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
     }
-    {   // 04 每日一句英文宽卡 (hermes /daily/sentence?offset=N, 点击换下一句)
-        lv_obj_t* card = row_card(324, 240, theme::cur().card[3], theme::cur().border);
+    {   // 04 每日一句英文宽卡 (hermes /daily/sentence?offset=N, 长按换下一句)
+        lv_obj_t* card = row_card(366, 242, theme::cur().card[3], theme::cur().border);
+        // 垂直均匀分布: 标题顶 / 英文中 / 中文底 (行数变化间距恒定)
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                              LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_left(card, 24, 0);
+        lv_obj_set_style_pad_right(card, 24, 0);
+        lv_obj_set_style_pad_top(card, 14, 0);
+        lv_obj_set_style_pad_bottom(card, 16, 0);
         mk_lbl(card, zh_font_md(), theme::cur().text_dim, "每日一句",
-               LV_ALIGN_TOP_LEFT, 24, 16);
+               LV_ALIGN_DEFAULT, 0, 0);
         _dash_sent_en = lv_label_create(card);
         lv_label_set_text(_dash_sent_en, "--");
         lv_obj_set_style_text_font(_dash_sent_en, zh_font_lg(), 0);
         lv_obj_set_style_text_color(_dash_sent_en, lv_color_hex(theme::cur().text_hi), 0);
-        lv_obj_set_style_text_line_space(_dash_sent_en, 10, 0);   // 行距均匀
+        lv_obj_set_style_text_line_space(_dash_sent_en, 10, 0);
         lv_label_set_long_mode(_dash_sent_en, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(_dash_sent_en, 844 - 48);
-        lv_obj_align(_dash_sent_en, LV_ALIGN_TOP_LEFT, 24, 52);
         _dash_sent_cn = lv_label_create(card);
         lv_label_set_text(_dash_sent_cn, "");
         lv_obj_set_style_text_font(_dash_sent_cn, zh_font_md(), 0);
@@ -351,19 +364,17 @@ void AppHome::onOpen()
         lv_obj_set_style_text_line_space(_dash_sent_cn, 6, 0);
         lv_label_set_long_mode(_dash_sent_cn, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(_dash_sent_cn, 844 - 48);
-        // 中文紧跟英文实际底部 (行数变化间距也均匀), 固定 y 会忽远忽近
-        lv_obj_align_to(_dash_sent_cn, _dash_sent_en, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 14);
-        // 点击: 卡片闪一下 → offset+1 拉下一句
+        // 长按 (与股票卡片同款 500ms): outline 闪一下 → 换下一句
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))
                 ->_nextSentence(lv_event_get_current_target_obj(e));
-        }, LV_EVENT_CLICKED, this);
+        }, LV_EVENT_LONG_PRESSED, this);
     }
     {   // 05 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
         // (2026-10-27 沉底: 右列改 5 卡滚动后放最下, 上拉查看)
-        lv_obj_t* card = row_card(576, 240, theme::cur().card[3], theme::cur().border);
+        lv_obj_t* card = row_card(620, 240, theme::cur().card[3], theme::cur().border);
 
         _opi_dot = lv_obj_create(card);
         lv_obj_set_size(_opi_dot, 12, 12);
