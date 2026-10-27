@@ -557,16 +557,16 @@ void AppStocks::_applyIndices()
             continue;
         }
         const bool up = q[i].chg_pct > 0.005f, down = q[i].chg_pct < -0.005f;
-        // 卡底随涨跌幅度渐变, 只在红/绿色系内部 (浅端=暗红/暗绿, 不混中性底,
-        // 否则低涨幅发褐); 涨幅王满红/跌幅王满绿. 彩底白字.
+        // 卡底随涨跌幅度渐变, 只在红/绿色系内部; 幅度方向与首版相反 (同自选股):
+        // 涨幅王暗红, 涨幅最小的满红; 跌幅王暗绿, 跌幅最少的满绿. 彩底白字.
         constexpr uint32_t UP_DARK   = 0x8A2B20;
         constexpr uint32_t DOWN_DARK = 0x1F6B4E;
         uint32_t bg = C_HEADER();
         if (up || down) {
             const float max_up   = max_chg > 0 ? max_chg : 0;
             const float max_down = min_chg < 0 ? -min_chg : 0;
-            const float t = up ? (max_up > 0 ? q[i].chg_pct / max_up : 1)
-                               : (max_down > 0 ? -q[i].chg_pct / max_down : 1);
+            const float t = up ? (max_up > 0 ? 1 - q[i].chg_pct / max_up : 1)
+                               : (max_down > 0 ? 1 - (-q[i].chg_pct / max_down) : 1);
             bg = lerp_color(up ? UP_DARK : DOWN_DARK, up ? C_UP() : C_DOWN(), t);
         }
         const uint32_t fg  = (up || down) ? 0xFFFFFF : C_TEXT();
@@ -1234,20 +1234,19 @@ void AppStocks::_refreshUiFromItems()
         lv_obj_set_user_data(card, (void*)(intptr_t)order[i]);  // 点击 → 原始下标
 
         // 中国 A 股惯例: 涨=红 跌=绿, 彩底白字.
-        // 颜色随涨跌幅度渐变 (2026-10-27 用户指定): 涨幅最大的卡用满红
-        // C_UP, 跌幅最大的卡用满绿 C_DOWN, 其余按 |chg|/极值 过渡.
-        // 渐变只在红/绿色系内部进行 (浅端 = 暗红/暗绿, 而非中性底),
-        // 保证任何档位肉眼都明确是红或绿 (中性底会把红混成褐色).
+        // 颜色随涨跌幅度渐变 (2026-10-27 用户指定, 幅度方向与首版相反):
+        // 涨幅最大的卡用暗红, 涨幅最小的卡用满红; 跌方同理 (满绿给跌得最少的).
+        // 渐变只在红/绿色系内部进行 (浅端 = 满红/满绿, 深端 = 暗红/暗绿).
         const bool up   = st.chg > 0.01f;
         const bool down = st.chg < -0.01f;
-        constexpr uint32_t UP_DARK   = 0x8A2B20;  // 渐变浅端: 暗红
-        constexpr uint32_t DOWN_DARK = 0x1F6B4E;  // 渐变浅端: 暗绿
+        constexpr uint32_t UP_DARK   = 0x8A2B20;  // 渐变深端: 暗红 (给涨得最多的)
+        constexpr uint32_t DOWN_DARK = 0x1F6B4E;  // 渐变深端: 暗绿 (给跌得最多的)
         uint32_t bg = C_HEADER();
         if (up || down) {
             const float max_up   = max_chg > 0 ? max_chg : 0;
             const float max_down = min_chg < 0 ? -min_chg : 0;
-            const float t = up ? (max_up > 0 ? st.chg / max_up : 1)
-                               : (max_down > 0 ? -st.chg / max_down : 1);
+            const float t = up ? (max_up > 0 ? 1 - st.chg / max_up : 1)
+                               : (max_down > 0 ? 1 - (-st.chg / max_down) : 1);
             bg = lerp_color(up ? UP_DARK : DOWN_DARK, up ? C_UP() : C_DOWN(), t);
         }
         const uint32_t fg  = (up || down) ? 0xFFFFFF : C_TEXT();
