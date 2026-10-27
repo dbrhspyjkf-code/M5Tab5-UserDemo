@@ -25,6 +25,7 @@
 #include "app_player/app_player.h"
 #include "app_timer/app_timer.h"
 #include "app_calendar/app_calendar.h"
+#include <cstdlib>
 #include "app_idle_screen/app_idle_screen.h"
 #include "xiaozhi_ctl.h"
 /* Header files locator (Don't remove) */
@@ -195,6 +196,12 @@ inline void on_install_apps()
     home->addApp("收音机", ra_id);
     home->addApp("播放器", pl_id);
     home->addApp("计时器", ti_id);
+#ifdef PLATFORM_BUILD_DESKTOP
+    // 桌面调试: TAB5_OPEN_CALENDAR=1 启动即打开万年历
+    if (const char* e = getenv("TAB5_OPEN_CALENDAR")) {
+        if (e[0] == '1') mooncake::GetMooncake().openApp(cal_id);
+    }
+#endif
     /* Install app locator (Don't remove) */
 
     // ── Voice input WorkerAbility (always-on, not a user-launchable app) ──

@@ -380,16 +380,33 @@ void AppCalendar::_yearDd_cb(lv_event_t* e)
     lv_obj_add_event_cb(self->_year_dd, [](lv_event_t* ev) {
         auto* s2 = static_cast<AppCalendar*>(lv_event_get_user_data(ev));
         lv_obj_t* dd = lv_event_get_current_target_obj(ev);
-        if (lv_event_get_code(ev) == LV_EVENT_VALUE_CHANGED) {
+        const lv_event_code_t code = lv_event_get_code(ev);
+        if (code == LV_EVENT_VALUE_CHANGED) {
             char buf[16] = {0};
             lv_dropdown_get_selected_str(dd, buf, sizeof(buf));
             s2->_year = atoi(buf);
             s2->_refreshMonth();
         }
-        // 选择或关闭后销毁下拉
+        // 选中或点外部关闭后才销毁; 其余事件(打开瞬间的
+        // FOCUSED/PRESSED 等)绝不处理, 否则下拉闪现即逝
+        if (code == LV_EVENT_VALUE_CHANGED || code == LV_EVENT_READY ||
+            code == LV_EVENT_CANCEL) {
+            if (s2->_year_dd == dd) s2->_year_dd = nullptr;
+            lv_obj_delete_async(dd);
+        }
+    }, LV_EVENT_VALUE_CHANGED, self);
+    lv_obj_add_event_cb(self->_year_dd, [](lv_event_t* ev) {
+        auto* s2 = static_cast<AppCalendar*>(lv_event_get_user_data(ev));
+        lv_obj_t* dd = lv_event_get_current_target_obj(ev);
         if (s2->_year_dd == dd) s2->_year_dd = nullptr;
         lv_obj_delete_async(dd);
-    }, LV_EVENT_ALL, self);
+    }, LV_EVENT_READY, self);
+    lv_obj_add_event_cb(self->_year_dd, [](lv_event_t* ev) {
+        auto* s2 = static_cast<AppCalendar*>(lv_event_get_user_data(ev));
+        lv_obj_t* dd = lv_event_get_current_target_obj(ev);
+        if (s2->_year_dd == dd) s2->_year_dd = nullptr;
+        lv_obj_delete_async(dd);
+    }, LV_EVENT_CANCEL, self);
 }
 
 // 点击"月"标签: 弹 1-12 月下拉
@@ -413,13 +430,29 @@ void AppCalendar::_monthDd_cb(lv_event_t* e)
     lv_obj_add_event_cb(self->_month_dd, [](lv_event_t* ev) {
         auto* s2 = static_cast<AppCalendar*>(lv_event_get_user_data(ev));
         lv_obj_t* dd = lv_event_get_current_target_obj(ev);
-        if (lv_event_get_code(ev) == LV_EVENT_VALUE_CHANGED) {
+        const lv_event_code_t code = lv_event_get_code(ev);
+        if (code == LV_EVENT_VALUE_CHANGED) {
             s2->_month = lv_dropdown_get_selected(dd) + 1;
             s2->_refreshMonth();
         }
+        if (code == LV_EVENT_VALUE_CHANGED || code == LV_EVENT_READY ||
+            code == LV_EVENT_CANCEL) {
+            if (s2->_month_dd == dd) s2->_month_dd = nullptr;
+            lv_obj_delete_async(dd);
+        }
+    }, LV_EVENT_VALUE_CHANGED, self);
+    lv_obj_add_event_cb(self->_month_dd, [](lv_event_t* ev) {
+        auto* s2 = static_cast<AppCalendar*>(lv_event_get_user_data(ev));
+        lv_obj_t* dd = lv_event_get_current_target_obj(ev);
         if (s2->_month_dd == dd) s2->_month_dd = nullptr;
         lv_obj_delete_async(dd);
-    }, LV_EVENT_ALL, self);
+    }, LV_EVENT_READY, self);
+    lv_obj_add_event_cb(self->_month_dd, [](lv_event_t* ev) {
+        auto* s2 = static_cast<AppCalendar*>(lv_event_get_user_data(ev));
+        lv_obj_t* dd = lv_event_get_current_target_obj(ev);
+        if (s2->_month_dd == dd) s2->_month_dd = nullptr;
+        lv_obj_delete_async(dd);
+    }, LV_EVENT_CANCEL, self);
 }
 
 void AppCalendar::_dayClick_cb(lv_event_t* e)
