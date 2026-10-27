@@ -252,7 +252,7 @@ void AppSettings::_buildToolsPage()
     // (2026-10-27 用户要求参考智能家居布局、少留白、上下对齐).
     // img==nullptr 走图形分支 (不依赖字体): kind==0 LED 点阵 (灯阵) /
     // kind==1 信封 (邮件) / kind==2 NFC 圆环 (RFID).
-    constexpr int TW = 392, TH = 214, GAP_X = 20, GAP_Y = 18, MARGIN = 32;
+    constexpr int TW = 296, TH = 206, GAP_X = 16, GAP_Y = 16, MARGIN = 24;  // 4 列 × 3 行 (2026-10-27 用户指定一行 4 个)
     auto make_tile = [&](int col, int row, const lv_image_dsc_t* img, int img_w,
                          const char* label, lv_event_cb_t cb,
                          int img_scale = 256, int icon_x = 12,
@@ -410,15 +410,12 @@ void AppSettings::_buildToolsPage()
     make_tile(0, 0, &calc_icon, 130, "计算器",  _toolBtn_cb);
     make_tile(1, 0, &fx_icon,   150, "汇率",    _toolFx_cb,   384);  // 384 = 256 × 1.5x → 150×150
     make_tile(2, 0, &unit_icon, 130, "单位换算", _toolUnit_cb);
-
-    // 第 2 行: 灯阵 (Unit-Puzzle 8x8 WS2812 矩阵测试 App)
-    //   图标走 make_tile 的 nullptr 分支, 画 3x3 LED 缩略圆点
-    make_tile(0, 1, nullptr, 130, "灯  阵", _toolPuzzle_cb);
+    make_tile(3, 0, nullptr, 130, "灯  阵", _toolPuzzle_cb);
 
     // 第 2 行第 2 列: LoRa 聊天 (Unit C6L SX1262, PORT.A UART)
     //   图标: 4 根逐渐升高的信号柱
     {
-        const int x = MARGIN + 1 * (TW + GAP_X), y_pos = 20 + 1 * (TH + GAP_Y);
+        const int x = MARGIN + 0 * (TW + GAP_X), y_pos = 20 + 1 * (TH + GAP_Y);
         lv_obj_t* tile = lv_obj_create(_tools_page);
         lv_obj_set_size(tile, TW, TH);
         lv_obj_align(tile, LV_ALIGN_TOP_LEFT, x, y_pos);
@@ -455,20 +452,18 @@ void AppSettings::_buildToolsPage()
     }
 
     // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表), kind=1 信封分支
-    make_tile(0, 2, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 1);
+    make_tile(2, 1, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 1);
 
     // 第 3 行第 2 列: 自选股 (走 hermes :8766/api/stocks/portfolio, mx-selfselect 后端)
-    make_tile(1, 2, &stocks_icon, 130, "自选股", _toolStocks_cb);
+    make_tile(3, 1, &stocks_icon, 130, "自选股", _toolStocks_cb);
 
     // 第 3 行第 3 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
-    make_tile(2, 2, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb);
-
-    // 第 4 行第 1 列: 万年历 (lunar_calendar.h 公历↔农历, 1900-2100)
-    make_tile(0, 3, nullptr, 130, "万年历", _toolCalendar_cb);
+        make_tile(0, 2, &reachy_icon, 130, "YRobot 控制台", _toolReachy_cb);
+    make_tile(1, 2, nullptr, 130, "万年历", _toolCalendar_cb);
 
     // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
     //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
-    make_tile(2, 1, nullptr, 130, "RFID", _toolRfid_cb, 256, 12, -1, 2);
+    make_tile(1, 1, nullptr, 130, "RFID", _toolRfid_cb, 256, 12, -1, 2);
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)
