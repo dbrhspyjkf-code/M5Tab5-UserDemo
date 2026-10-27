@@ -590,7 +590,12 @@ void AppCalendar::_installSwipeGesture()
                 if (!alive || !*alive) return;
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 const lv_event_code_t code = lv_event_get_code(e);
-                if (code == LV_EVENT_PRESSING) {
+                // 起点在 PRESSED 记一次: **LV_EVENT_PRESSING 不会派发给 indev 级
+                // 回调** (lv_indev.c send_event 白名单只转发 PRESSED/RELEASED/
+                // CLICKED 等; PRESSING 只发给对象) —— 用 PRESSING 记起点永远
+                // 收不到, press 坐标保持堆垃圾, 抬起时 dy=-9 亿必触发退出
+                // (2026-10-27 "点万年历任何位置都退出" 实锤, 与 stocks 18e90eb 同源).
+                if (code == LV_EVENT_PRESSED) {
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
                     ctx->press_x = p.x;
