@@ -105,8 +105,8 @@ void AppHome::onOpen()
     const int n = (int)_apps.size();
     static constexpr int BTN_H      = 76;
     static constexpr int BTN_GAP    = 30;
-    static constexpr int SIDE_PAD   = 60;   // left/right margin
-    static constexpr int BOTTOM_PAD = 28;   // gap from the bottom edge
+    static constexpr int SIDE_PAD   = 12;   // = 卡间距 (2026-10-27 用户: 四边只留行距)
+    static constexpr int BOTTOM_PAD = 12;
 
     int avail_w = 1280 - 2 * SIDE_PAD - (n - 1) * BTN_GAP;
     int btn_w   = n > 0 ? avail_w / n : avail_w;
@@ -149,8 +149,8 @@ void AppHome::onOpen()
     // caption on top, wifi/mail/gear/battery icons in a row at the bottom.
     // This card is the single accent block of the whole home screen.
     lv_obj_t* hero = lv_obj_create(_scr);
-    lv_obj_set_pos(hero, 56, 40);
-    lv_obj_set_size(hero, 400, 564);  // 底边 604 = OPi 卡底, 对齐
+    lv_obj_set_pos(hero, 12, 12);
+    lv_obj_set_size(hero, 400, 564);  // 底边 576 = 右列第 4 卡底, 对齐
     lv_obj_set_style_bg_color(hero, lv_color_hex(theme::cur().hero), 0);
     lv_obj_set_style_bg_opa(hero, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(hero, 26, 0);
@@ -274,10 +274,10 @@ void AppHome::onOpen()
     // card is a 3x2 module grid with threshold-colored bars.
     // 右列滚动容器 (2026-10-27 用户要求: 5 张卡可上下拉动, OPi 沉底靠滚动查看)
     _dash_scroll = lv_obj_create(_scr);
-    lv_obj_set_pos(_dash_scroll, 468, 40);
+    lv_obj_set_pos(_dash_scroll, 424, 12);
     // 高度恰好容纳 01-04 四卡 (96*3+240+gap36=564), 底部止于 y=604,
     // 不压底部按钮区 (y=616 起); OPi 第 5 卡下拉查看 (2026-10-27 用户指定)
-    lv_obj_set_size(_dash_scroll, 756, 564);
+    lv_obj_set_size(_dash_scroll, 844, 564);   // 宽 = 1280-424-12
     lv_obj_set_style_bg_opa(_dash_scroll, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_dash_scroll, 0, 0);
     lv_obj_set_style_pad_all(_dash_scroll, 0, 0);
@@ -288,7 +288,7 @@ void AppHome::onOpen()
     auto row_card = [&](int y, int h, uint32_t bg, uint32_t border) {
         lv_obj_t* card = lv_obj_create(_dash_scroll);
         lv_obj_set_pos(card, 0, y);
-        lv_obj_set_size(card, 756, h);
+        lv_obj_set_size(card, 844, h);
         lv_obj_set_style_bg_color(card, lv_color_hex(bg), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(card, 1, 0);
@@ -342,7 +342,7 @@ void AppHome::onOpen()
         lv_obj_set_style_text_color(_dash_sent_en, lv_color_hex(theme::cur().text_hi), 0);
         lv_obj_set_style_text_line_space(_dash_sent_en, 10, 0);   // 行距均匀
         lv_label_set_long_mode(_dash_sent_en, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(_dash_sent_en, 756 - 48);
+        lv_obj_set_width(_dash_sent_en, 844 - 48);
         lv_obj_align(_dash_sent_en, LV_ALIGN_TOP_LEFT, 24, 52);
         _dash_sent_cn = lv_label_create(card);
         lv_label_set_text(_dash_sent_cn, "");
@@ -350,7 +350,7 @@ void AppHome::onOpen()
         lv_obj_set_style_text_color(_dash_sent_cn, lv_color_hex(theme::cur().text_dim), 0);
         lv_obj_set_style_text_line_space(_dash_sent_cn, 6, 0);
         lv_label_set_long_mode(_dash_sent_cn, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(_dash_sent_cn, 756 - 48);
+        lv_obj_set_width(_dash_sent_cn, 844 - 48);
         // 中文紧跟英文实际底部 (行数变化间距也均匀), 固定 y 会忽远忽近
         lv_obj_align_to(_dash_sent_cn, _dash_sent_en, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 14);
         // 点击: 卡片闪一下 → offset+1 拉下一句
@@ -381,7 +381,7 @@ void AppHome::onOpen()
         _opi_uptime = mk_lbl(card, zh_font_md(), theme::cur().text_dim, "--", LV_ALIGN_TOP_RIGHT, -24, 16);
 
         static const char* const MOD_LABELS[5] = {"负载", "CPU", "内存", "交换", "磁盘"};
-        static const int CELL_X[3] = {24, 268, 512};
+        static const int CELL_X[3] = {24, 312, 600};   // 844 卡内均布 (68 间隙)
         static const int CELL_W    = 220;
         auto mod_at = [&](int i) -> OpiModule& {
             OpiModule& m = _opi_mod[i];
