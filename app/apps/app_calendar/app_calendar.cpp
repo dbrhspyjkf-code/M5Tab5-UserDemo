@@ -55,7 +55,10 @@ AppCalendar::AppCalendar()
 void AppCalendar::onOpen()
 {
     mclog::tagInfo(TAG, "on open");
-    if (_scr) return;   // 防重入 (工具页往返, onOpen 会再次触发)
+    if (_scr) {
+        lv_screen_load(_scr);   // 复用留存屏 (_requestClose 不删屏)
+        return;
+    }
     _alive = std::make_shared<bool>(true);
 
     // 默认落在今天
