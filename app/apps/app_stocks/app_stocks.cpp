@@ -551,7 +551,10 @@ void AppStocks::_installSwipeGesture()
                 auto* ctx = static_cast<SwipeCtx*>(lv_event_get_user_data(e));
                 auto alive = ctx->alive.lock();
                 if (!alive || !*alive) return;
-                if (lv_event_get_code(e) == LV_EVENT_PRESSING) {
+                if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
+                    // 起点只在按下瞬间记一次: PRESSING 每个 tick 都发, 若在
+                    // PRESSING 里刷新起点, 到抬起时起点已被刷成释放前最后位置,
+                    // 位移恒≈0 (2026-10-27 实锤: 翻页位移判别因此失效).
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
                     ctx->press_x = p.x; ctx->press_y = p.y;
