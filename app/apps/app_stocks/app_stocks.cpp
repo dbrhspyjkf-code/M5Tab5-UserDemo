@@ -32,6 +32,7 @@ static const char* TAG = "stocks";
 #include <cbin_font.h>
 #include "../utils/assets/assets_partition.h"
 extern const uint8_t font_puhui_common_30_4_bin_start[]
+
     asm("_binary_font_puhui_common_30_4_bin_start");
 static const lv_font_t* zh_font_lg()
 {
@@ -53,6 +54,18 @@ static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
 #endif
 
 extern "C" const lv_font_t font_stocks_36;
+// 颜色线性插值: t=0 → a, t=1 → b (指数卡/自选股卡渐变共用)
+static uint32_t lerp_color(uint32_t a, uint32_t b, float t)
+{
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    const int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
+    const int br = (b >> 16) & 0xFF, bg_ = (b >> 8) & 0xFF, bb = b & 0xFF;
+    return ((uint32_t)(ar + (br - ar) * t) << 16) |
+           ((uint32_t)(ag + (bg_ - ag) * t) << 8) |
+           (uint32_t)(ab + (bb - ab) * t);
+}
+
 static const lv_font_t* stock_row_font()
 {
     static lv_font_t font = []() {
@@ -412,6 +425,13 @@ void AppStocks::_applyIndices()
         std::lock_guard<std::mutex> lk(_index_mu);
         for (int i = 0; i < 9; i++) q[i] = _index_quotes[i];
     }
+    // 渐变端点: 本页可见指数中的最大涨幅/最大跌幅 (同自选股卡片设计)
+    float max_chg = 0, min_chg = 0;
+    for (int i = 0; i < 9; i++) {
+        if (!q[i].ok) continue;
+        max_chg = q[i].chg_pct > max_chg ? q[i].chg_pct : max_chg;
+        min_chg = q[i].chg_pct < min_chg ? q[i].chg_pct : min_chg;
+    }
     for (int i = 0; i < 9; i++) {
         if (!_index_cards[i]) continue;
         if (!q[i].ok) {
@@ -420,18 +440,33 @@ void AppStocks::_applyIndices()
             continue;
         }
         const bool up = q[i].chg_pct > 0.005f, down = q[i].chg_pct < -0.005f;
-        // A 股惯例: 涨红跌绿 (与 _chgColor 一致)
-        const uint32_t col = up ? C_UP() : down ? C_DOWN() : C_TEXT();
+        // 卡底随涨跌幅度渐变, 只在红/绿色系内部 (浅端=暗红/暗绿, 不混中性底,
+        // 否则低涨幅发褐); 涨幅王满红/跌幅王满绿. 彩底白字.
+        constexpr uint32_t UP_DARK   = 0x8A2B20;
+        constexpr uint32_t DOWN_DARK = 0x1F6B4E;
+        uint32_t bg = C_HEADER();
+        if (up || down) {
+            const float max_up   = max_chg > 0 ? max_chg : 0;
+            const float max_down = min_chg < 0 ? -min_chg : 0;
+            const float t = up ? (max_up > 0 ? q[i].chg_pct / max_up : 1)
+                               : (max_down > 0 ? -q[i].chg_pct / max_down : 1);
+            bg = lerp_color(up ? UP_DARK : DOWN_DARK, up ? C_UP() : C_DOWN(), t);
+        }
+        const uint32_t fg  = (up || down) ? 0xFFFFFF : C_TEXT();
+        const uint32_t fg2 = (up || down) ? 0xFFFFFF : C_DIM();
+        lv_obj_set_style_bg_color(_index_cards[i], lv_color_hex(bg), 0);
+        lv_obj_set_style_text_color(_index_name[i],  lv_color_hex(fg2), 0);
+        lv_obj_set_style_text_color(_index_price[i], lv_color_hex(fg), 0);
         char buf[32];
         snprintf(buf, sizeof(buf), "%.2f", q[i].price);
         lv_label_set_text(_index_price[i], buf);
-        lv_obj_set_style_text_color(_index_price[i], lv_color_hex(C_TEXT()), 0);
-        snprintf(buf, sizeof(buf), "%s%.2f", up ? "+" : "", q[i].chg_amt);
+        // %+.2f 自带符号: 涨 +x.xx / 跌 -x.xx, 无需前缀
+        snprintf(buf, sizeof(buf), "%+.2f", q[i].chg_amt);
         lv_label_set_text(_index_amt[i], buf);
-        snprintf(buf, sizeof(buf), "%s%.2f%%", up ? "+" : "", q[i].chg_pct);
+        snprintf(buf, sizeof(buf), "%+.2f%%", q[i].chg_pct);
         lv_label_set_text(_index_pct[i], buf);
-        lv_obj_set_style_text_color(_index_amt[i], lv_color_hex(col), 0);
-        lv_obj_set_style_text_color(_index_pct[i],  lv_color_hex(col), 0);
+        lv_obj_set_style_text_color(_index_amt[i], lv_color_hex(fg), 0);
+        lv_obj_set_style_text_color(_index_pct[i],  lv_color_hex(fg2), 0);
     }
 }
 
@@ -862,18 +897,6 @@ void AppStocks::_applyCharts()
 }
 
 
-
-// 颜色线性插值: t=0 → a, t=1 → b
-static uint32_t lerp_color(uint32_t a, uint32_t b, float t)
-{
-    if (t < 0) t = 0;
-    if (t > 1) t = 1;
-    const int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
-    const int br = (b >> 16) & 0xFF, bg_ = (b >> 8) & 0xFF, bb = b & 0xFF;
-    return ((uint32_t)(ar + (br - ar) * t) << 16) |
-           ((uint32_t)(ag + (bg_ - ag) * t) << 8) |
-           (uint32_t)(ab + (bb - ab) * t);
-}
 
 void AppStocks::_refreshUiFromItems()
 {
