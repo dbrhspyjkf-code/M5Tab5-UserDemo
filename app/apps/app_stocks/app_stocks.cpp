@@ -786,7 +786,7 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
                                                   (uint32_t)title.size(),
                                                   zh_font_lg(), 0);
         const int mx = 16 + title_w + 24;
-        const int mw = 1280 - 660 - mx;   // 右侧留 ~660px 给 分时/日K/关闭/＋/－
+        const int mw = 1280 - 500 - mx;   // 右侧留 ~500px 给 分时/日K/关闭
         _chart_marquee = lv_label_create(_detail_modal);
         lv_label_set_long_mode(_chart_marquee, LV_LABEL_LONG_SCROLL_CIRCULAR);
         lv_obj_set_width(_chart_marquee, mw > 60 ? mw : 60);
@@ -844,14 +844,15 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
     lv_obj_align(_chart_status, LV_ALIGN_TOP_MID, 0, 64 + CHART_H / 2 - 10);
 
     // 日K 缩放: ＋/－ 调整可视窗口根数 (放大=窗口小看细节, y 轴随窗口
-    // 自适应; 缩小=窗口大看全貌). 任何视图下点都自动切到日K.
+    // 自适应; 缩小=窗口大看全貌). 位置在图表区域左下角 (用户指定),
+    // 大按钮+间距防误触. 任何视图下点都自动切到日K.
     {
-        auto mk_zoom = [&](const char* txt, int dx_off, int delta) {
+        auto mk_zoom = [&](const char* txt, int x, int delta) {
             lv_obj_t* b = lv_button_create(_detail_modal);
-            lv_obj_set_size(b, 64, 48);
-            lv_obj_align(b, LV_ALIGN_TOP_RIGHT, dx_off, 10);
+            lv_obj_set_size(b, 88, 64);
+            lv_obj_set_pos(b, x, 720 - 64 - 24);   // 图表左下角, 距底 24px
             lv_obj_set_style_bg_color(b, lv_color_hex(0x33363A), 0);
-            lv_obj_set_style_radius(b, 10, 0);
+            lv_obj_set_style_radius(b, 14, 0);
             lv_obj_add_event_cb(b, [](lv_event_t* e) {
                 auto* self = static_cast<AppStocks*>(lv_event_get_user_data(e));
                 self->_zoomKline((int)(intptr_t)lv_obj_get_user_data(
@@ -860,12 +861,12 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
             lv_obj_set_user_data(b, (void*)(intptr_t)delta);
             lv_obj_t* l = lv_label_create(b);
             lv_label_set_text(l, txt);
-            lv_obj_set_style_text_font(l, &lv_font_montserrat_28, 0);
+            lv_obj_set_style_text_font(l, &lv_font_montserrat_36, 0);
             lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
             lv_obj_center(l);
         };
-        mk_zoom("-", -568, -40);   // 缩小窗口 = 放大细节
-        mk_zoom("+", -496, +40);   // 扩大窗口 = 缩小看全貌
+        mk_zoom("-", 28, -40);      // 缩小窗口 = 放大细节
+        mk_zoom("+", 28 + 88 + 44, +40);   // 扩大窗口 = 缩小看全貌 (隔 44px)
     }
 
     // 日K 窗口内最高/最低价 (右上角, _drawChartCanvas 填内容; 须在 canvas 之后)
