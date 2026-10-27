@@ -377,6 +377,7 @@ void AppCalendar::_yearDd_cb(lv_event_t* e)
     lv_obj_set_style_text_font(self->_year_dd, zh30(), 0);
     lv_obj_set_style_text_color(self->_year_dd, lv_color_hex(cText()), 0);
     lv_obj_set_style_bg_color(self->_year_dd, lv_color_hex(cHeader()), 0);
+    lv_dropdown_set_symbol(self->_year_dd, nullptr);   // 默认 FA 箭头 U+F078, zh 字体无字形
     // 打开列表
     lv_dropdown_open(self->_year_dd);
     lv_obj_add_event_cb(self->_year_dd, [](lv_event_t* ev) {
@@ -426,6 +427,7 @@ void AppCalendar::_monthDd_cb(lv_event_t* e)
     lv_obj_set_style_text_font(self->_month_dd, zh30(), 0);
     lv_obj_set_style_text_color(self->_month_dd, lv_color_hex(cText()), 0);
     lv_obj_set_style_bg_color(self->_month_dd, lv_color_hex(cHeader()), 0);
+    lv_dropdown_set_symbol(self->_month_dd, nullptr);
     lv_dropdown_open(self->_month_dd);
     lv_obj_add_event_cb(self->_month_dd, [](lv_event_t* ev) {
         auto* s2 = static_cast<AppCalendar*>(lv_event_get_user_data(ev));
