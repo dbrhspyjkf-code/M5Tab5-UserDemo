@@ -85,12 +85,13 @@ void AppCalendar::onClose()
     if (_scr) {
         lv_obj_t* scr = _scr;
         _scr = nullptr;
+        // async 回调执行时工具页 (close_cb 里 openApp) 的 onOpen 已跑完,
+        // act_scr 已是工具页 → 直接删万年历屏即可。切勿再加"临时屏双保险":
+        // load(tmp) 会把 act_scr 从工具页抢走, 随后 delete(tmp) 又变删活动屏
+        // → 渲染踩空崩溃 (2026-10-27 13:52 实锤: warn 晚 close 0.8s 正是
+        // delete_async(tmp) 的执行时刻)。
         lv_async_call([](void* p) {
-            lv_obj_t* scr = static_cast<lv_obj_t*>(p);
-            lv_obj_t* tmp = lv_obj_create(NULL);
-            lv_screen_load(tmp);        // 保险: 若此时它仍是活动屏先切走
-            lv_obj_delete(scr);         // 此刻非活动, 同步删安全
-            lv_obj_delete_async(tmp);
+            lv_obj_delete(static_cast<lv_obj_t*>(p));
         }, scr);
     }
     _title = _grid = _detail_lbl = nullptr;
