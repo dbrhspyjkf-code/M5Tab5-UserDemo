@@ -40,7 +40,7 @@ static const std::string TAG = "calendar";
 static constexpr int COLS = 7;                  // 周日~周六
 static constexpr int ROWS = 6;                  // 最多 6 行
 static constexpr int CELL_W = 176;              // (1280-2*24)/7, 铺满 (2026-10-27)
-static constexpr int CELL_H = 84;               // 6 行, 底部留详情行
+static constexpr int CELL_H = 90;               // 6 行 × 90 = 540 (2026-10-27 加高)
 static constexpr int GRID_W = COLS * CELL_W;
 static constexpr int GRID_X = (1280 - GRID_W) / 2;   // = 24
 
@@ -133,7 +133,7 @@ void AppCalendar::_buildUi()
     auto mk_arrow = [&](int x, const char* txt, lv_event_cb_t cb) {
         lv_obj_t* b = lv_button_create(_scr);
         lv_obj_set_size(b, 84, 64);
-        lv_obj_set_pos(b, x, 28);
+        lv_obj_set_pos(b, x, 14);
         lv_obj_set_style_bg_color(b, lv_color_hex(cHeader()), 0);
         lv_obj_set_style_radius(b, 14, 0);
         lv_obj_set_style_shadow_width(b, 0, 0);
@@ -155,14 +155,14 @@ void AppCalendar::_buildUi()
     _year_lbl = lv_label_create(_scr);
     lv_obj_set_style_text_font(_year_lbl, zh30(), 0);
     lv_obj_set_style_text_color(_year_lbl, lv_color_hex(cText()), 0);
-    lv_obj_set_pos(_year_lbl, 436, 42);
+    lv_obj_set_pos(_year_lbl, 436, 26);
     lv_obj_add_flag(_year_lbl, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(_year_lbl, _yearDd_cb, LV_EVENT_CLICKED, this);
 
     _month_lbl = lv_label_create(_scr);
     lv_obj_set_style_text_font(_month_lbl, zh30(), 0);
     lv_obj_set_style_text_color(_month_lbl, lv_color_hex(cText()), 0);
-    lv_obj_set_pos(_month_lbl, 660, 42);
+    lv_obj_set_pos(_month_lbl, 660, 26);
     lv_obj_add_flag(_month_lbl, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(_month_lbl, _monthDd_cb, LV_EVENT_CLICKED, this);
 
@@ -172,13 +172,13 @@ void AppCalendar::_buildUi()
         lv_label_set_text(w, kWd[i]);
         lv_obj_set_style_text_font(w, zh30(), 0);
         lv_obj_set_style_text_color(w, lv_color_hex(i == 0 || i == 6 ? cDanger() : cDim()), 0);
-        lv_obj_set_pos(w, GRID_X + i * CELL_W + CELL_W / 2 - 12, 116);
+        lv_obj_set_pos(w, GRID_X + i * CELL_W + CELL_W / 2 - 12, 102);
     }
 
     // ── 日期网格 (6 行 × 7 列, 每 cell 上下两行: 公历日 + 农历) ──
     _grid = lv_obj_create(_scr);
     lv_obj_set_size(_grid, GRID_W, ROWS * CELL_H);
-    lv_obj_set_pos(_grid, GRID_X, 164);
+    lv_obj_set_pos(_grid, GRID_X, 150);
     lv_obj_set_style_bg_opa(_grid, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_grid, 0, 0);
     lv_obj_set_style_pad_all(_grid, 0, 0);
@@ -384,7 +384,10 @@ void finalize_dropdown(AppCalendar* self, lv_obj_t* scr, lv_obj_t* dd)
     if (list) {
         lv_obj_set_style_text_font(list, zh30(), 0);   // 列表数字放大到 30px
         lv_obj_set_style_text_align(list, LV_TEXT_ALIGN_CENTER, 0);  // 选项居中
+        lv_obj_set_style_pad_left(list, 0, 0);
+        lv_obj_set_style_pad_right(list, 0, 0);
         lv_obj_set_style_pad_ver(list, 8, 0);
+        lv_obj_set_size(list, 240, 560);               // 显示更多选项
     }
     lv_obj_t* shield = lv_obj_create(scr);
     lv_obj_set_size(shield, 1280, 720);
@@ -427,6 +430,7 @@ void AppCalendar::_yearDd_cb(lv_event_t* e)
     lv_obj_set_style_text_color(self->_year_dd, lv_color_hex(cText()), 0);
     lv_obj_set_style_bg_color(self->_year_dd, lv_color_hex(cHeader()), 0);
     lv_dropdown_set_symbol(self->_year_dd, nullptr);   // 默认 FA 箭头 U+F078, zh 字体无字形
+    lv_obj_set_style_text_align(self->_year_dd, LV_TEXT_ALIGN_CENTER, 0);
     // 打开列表
     lv_dropdown_open(self->_year_dd);
     finalize_dropdown(self, self->_scr, self->_year_dd);
@@ -478,6 +482,7 @@ void AppCalendar::_monthDd_cb(lv_event_t* e)
     lv_obj_set_style_text_color(self->_month_dd, lv_color_hex(cText()), 0);
     lv_obj_set_style_bg_color(self->_month_dd, lv_color_hex(cHeader()), 0);
     lv_dropdown_set_symbol(self->_month_dd, nullptr);
+    lv_obj_set_style_text_align(self->_month_dd, LV_TEXT_ALIGN_CENTER, 0);
     lv_dropdown_open(self->_month_dd);
     finalize_dropdown(self, self->_scr, self->_month_dd);
     lv_obj_add_event_cb(self->_month_dd, [](lv_event_t* ev) {
