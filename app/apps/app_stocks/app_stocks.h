@@ -141,6 +141,7 @@ private:
         bool ok = false;
         std::vector<float> minute_prices;    // 分时: 全天分钟价, [0]=昨收基准
         std::vector<float> day_open, day_close, day_high, day_low;  // 日K: 最近 N=120 根
+        std::vector<float> day_volume;       // 日K成交量 (与 day_close 对齐)
         std::vector<std::string> day_date;
         std::string metrics;                 // 指标跑马灯 (成交额/换手/量比/PE)
     };

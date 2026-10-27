@@ -843,18 +843,18 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
     lv_obj_align(_chart_status, LV_ALIGN_TOP_MID, 0, 64 + CHART_H / 2 - 10);
 
     // 均线图例 (颜色与 _drawChartCanvas 的 ma_col 对应, 仅日K 视图显示),
-    // 位置在图表右下角 (用户指定). 必须建在 canvas 之后: 画布不透明且
+    // 位置在图表左上角横排 (用户指定). 必须建在 canvas 之后: 画布不透明且
     // LVGL 后建者在上, 先建会被整个盖住 (2026-10-27 实锤: 图例不可见根因).
     {
         const uint32_t leg_col[3] = {0xF1C40F, 0xE91E63, 0x3498DB};  // 黄/品红/蓝
         const char* leg_txt[3] = {"MA5", "MA10", "MA20"};
-        const int leg_dx[3] = {-146, -78, -12};   // 右→左: MA20 最靠右 (间距防重叠)
+        const int leg_lx[3] = {16, 86, 158};      // 左上角横排
         for (int k = 0; k < 3; k++) {
             lv_obj_t* leg = lv_label_create(_detail_modal);
             lv_label_set_text(leg, leg_txt[k]);
             lv_obj_set_style_text_font(leg, zh_font_sm(), 0);
             lv_obj_set_style_text_color(leg, lv_color_hex(leg_col[k]), 0);
-            lv_obj_align(leg, LV_ALIGN_BOTTOM_RIGHT, leg_dx[k], -8);
+            lv_obj_align(leg, LV_ALIGN_TOP_LEFT, leg_lx[k], 68);
             lv_obj_add_flag(leg, LV_OBJ_FLAG_HIDDEN);   // 默认分时视图
             _chart_ma_leg[k] = leg;
         }
@@ -1003,6 +1003,9 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
                         local.day_close.push_back(std::stof(row[2].get<std::string>()));
                         local.day_high.push_back(std::stof(row[3].get<std::string>()));
                         local.day_low.push_back(std::stof(row[4].get<std::string>()));
+                        // [5] 成交量 (缺省 0, 供副图柱状)
+                        local.day_volume.push_back(
+                            row.size() > 5 ? std::stof(row[5].get<std::string>()) : 0.f);
                     }
                 }
             } catch (...) {}
@@ -1153,7 +1156,7 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
             px_ = x; py_ = y;
         }
     } else if (have_day) {
-        // 日K: 最近 120 根蜡烛 + MA5/10/20 均线
+        // 日K: 最近 120 根蜡烛 + MA5/10/20 均线 + 底部成交量副图
         const int n = (int)c.day_close.size();
         float hi = -1e9f, lo = 1e9f;
         for (int i = 0; i < n; i++) {
@@ -1161,10 +1164,19 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
             lo = c.day_low[i]  < lo ? c.day_low[i]  : lo;
         }
         const float pad = (hi - lo) * 0.06f; hi += pad; lo -= pad;
-        const int L = 8, R = W - 8, T = 8, B = H - 8;   // 铺满: 仅留 8px 呼吸边
-        auto y_of = [&](float v) { return (int)((B - T) * (hi - v) / (hi - lo)) + T; };
+        // 布局: 价格区在上 (T..PB), 成交量副图在下 (VT..VB), 中间留 12px 分隔
+        const int L = 8, R = W - 8, T = 8;
+        const int VB = H - 8;                    // 副图底
+        const int VH = (H - 2 * 8) * 22 / 100;   // 副图高 ~22%
+        const int VT = VB - VH;                  // 副图顶
+        const int PB = VT - 12;                  // 价格区底
+        auto y_of = [&](float v) { return (int)((PB - T) * (hi - v) / (hi - lo)) + T; };
         px_rect(pix, W, H, L, T, R, T, COL_GRID);
-        px_rect(pix, W, H, L, B, R, B, COL_GRID);
+        px_rect(pix, W, H, L, PB, R, PB, COL_GRID);      // 价格区/副图分界
+        px_rect(pix, W, H, L, VB, R, VB, COL_GRID);
+        float vmax = 0;
+        for (int i = 0; i < n; i++)
+            vmax = c.day_volume[i] > vmax ? c.day_volume[i] : vmax;
         const int step = (R - L) / n;
         const int body_w = step * 3 / 5 > 3 ? step * 3 / 5 : 3;
         for (int i = 0; i < n; i++) {
@@ -1176,6 +1188,11 @@ void AppStocks::_drawChartCanvas(const ChartData& c)
             if (yo > yc) { int t = yo; yo = yc; yc = t; }
             px_line(pix, W, H, x, yh, x, yl, col);          // 影线
             px_rect(pix, W, H, x - body_w / 2, yo, x + body_w / 2, yc > yo ? yc : yo + 1, col);
+            // 成交量柱 (与蜡烛同色, 副图内归一化)
+            if (vmax > 0 && c.day_volume[i] > 0) {
+                const int bh = (int)((VH - 6) * c.day_volume[i] / vmax);
+                px_rect(pix, W, H, x - body_w / 2, VB - bh, x + body_w / 2, VB, col);
+            }
         }
         // MA5/10/20 均线 (收盘价简单均值, 滑窗; 前 p-1 根无值不画).
         // 收盘价必然落在 [lo,hi] 内 (high/low 包络), 无越界.
