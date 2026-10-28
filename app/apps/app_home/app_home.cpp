@@ -307,37 +307,58 @@ void AppHome::onOpen()
         lv_obj_align(l, a, x, y);
         return l;
     };
+    // 卡片文字统一放大 1.25x (2026-10-28 用户指定: 与 DeepSeek 数值同尺寸)。
+    // LVGL 默认 pivot=对象中心; 左上角锚定的标签必须锁 pivot, 否则放大后跑位。
+    auto big = [](lv_obj_t* l) { lv_obj_set_style_transform_scale(l, 320, 0); };
+    auto big_tl = [](lv_obj_t* l) {   // 顶格标签: 基准左上角, 向右下长
+        lv_obj_set_style_transform_scale(l, 320, 0);
+        lv_obj_set_style_transform_pivot_x(l, 0, 0);
+        lv_obj_set_style_transform_pivot_y(l, 0, 0);
+    };
+    auto big_left = [](lv_obj_t* l) {   // LEFT_MID 名称: 只锁左缘, 垂直居中不变
+        lv_obj_set_style_transform_scale(l, 320, 0);
+        lv_obj_set_style_transform_pivot_x(l, 0, 0);
+    };
+    auto big_right = [](lv_obj_t* l) {   // 右对齐标签: 锁右缘向左长 (右缘永不越界)
+        lv_obj_set_style_transform_scale(l, 320, 0);
+        lv_obj_set_style_transform_pivot_x(l, LV_PCT(100), 0);
+    };
     {   // 01 GLM 用量 / 02 DeepSeek 余额 / 03 提醒 / 日程
         // 卡底从上到下逐级加深（渐变），边框同步走
         const uint32_t IDX  = theme::cur().text_dim;   // dim green index
         const uint32_t NAME = theme::cur().text_soft;   // soft text
         const uint32_t VAL  = theme::cur().text_hi;   // bright value
         lv_obj_t* c = row_card(0, 110, theme::cur().card[0], theme::cur().border);
-        mk_lbl(c, zh_font_lg(),          NAME, "GLM 用量",   LV_ALIGN_LEFT_MID,  26, 0);
-        // 左右分区 (2026-10-28 用户定稿): 左=GLM (5H/7D 剩余% + 重置时间,
-        // 在名称右侧 x=280 起, 不与名称重叠), 右=DeepSeek 余额 (小标+数值).
-        _dash_glm  = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_LEFT, 280, 12);   // 30px
-        _dash_glm2 = mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 280, 50);
-        mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "DeepSeek 余额",
-               LV_ALIGN_TOP_RIGHT, -28, 20);
-        _dash_ds   = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 46);
-        lv_obj_set_style_transform_scale(_dash_ds, 320, 0);   // 与 GLM 主行一致放大
+        big_left(mk_lbl(c, zh_font_lg(), NAME, "GLM 用量", LV_ALIGN_LEFT_MID, 26, 0));
+        // 左右分区: 左=GLM (5H/7D 剩余% + 重置时间), 右=DeepSeek 余额 (小标+数值)。
+        // 全卡 1.25x 后数据列 x280 会顶到右栏, 左移 x200 腾位 (名称放大后到 ~178)。
+        _dash_glm  = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_LEFT, 200, 12);
+        _dash_glm2 = mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 200, 54);
+        big_tl(_dash_glm);
+        big_tl(_dash_glm2);
+        big_right(mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "DeepSeek 余额",
+                         LV_ALIGN_TOP_RIGHT, -28, 12));
+        _dash_ds   = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 50);
+        big_right(_dash_ds);
 
         c = row_card(122, 110, theme::cur().card[2], theme::cur().border);
-        mk_lbl(c, zh_font_lg(),          NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 26, 0);
-        // 内容居中 (2026-10-28 用户: 太靠右)
+        big_left(mk_lbl(c, zh_font_lg(), NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 26, 0));
+        // 内容居中 (2026-10-28 用户: 太靠右); 放大后中心 pivot 保持居中不跑位
         _dash_ag1 = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_MID, 0, 14);
         lv_obj_set_width(_dash_ag1, 844 - 200);
         lv_label_set_long_mode(_dash_ag1, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_align(_dash_ag1, LV_TEXT_ALIGN_CENTER, 0);
+        big(_dash_ag1);
         _dash_ag2 = mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "", LV_ALIGN_TOP_MID, 0, 56);
         lv_obj_set_width(_dash_ag2, 844 - 200);
         lv_label_set_long_mode(_dash_ag2, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_align(_dash_ag2, LV_TEXT_ALIGN_CENTER, 0);
+        big(_dash_ag2);
     }
     {   // 04 每日一句英文宽卡 (hermes /daily/sentence?offset=N, 长按换下一句)
-        lv_obj_t* card = row_card(244, 110, theme::cur().card[3], theme::cur().border);   // 与 03 卡同高
-        // 垂直均匀分布: 标题顶 / 英文中 / 中文底 (行数变化间距恒定)
+        // 加高 110→140 容纳 1.25x 文字; OPi 卡相应 240→212, 右列仍填满 608
+        lv_obj_t* card = row_card(244, 140, theme::cur().card[3], theme::cur().border);
+        // 垂直均匀分布: 英文中 / 中文底 (行数变化间距恒定)
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_EVENLY,
                               LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
@@ -345,20 +366,23 @@ void AppHome::onOpen()
         lv_obj_set_style_pad_right(card, 24, 0);
         lv_obj_set_style_pad_top(card, 8, 0);
         lv_obj_set_style_pad_bottom(card, 8, 0);
+        // 换行按 1.25x 缩小 (636), 缩放后视觉宽 ≈795 恰好铺回卡内
         _dash_sent_en = lv_label_create(card);
         lv_label_set_text(_dash_sent_en, "--");
         lv_obj_set_style_text_font(_dash_sent_en, zh_font_lg(), 0);
+        big_left(_dash_sent_en);
         lv_obj_set_style_text_color(_dash_sent_en, lv_color_hex(theme::cur().text_hi), 0);
         lv_obj_set_style_text_line_space(_dash_sent_en, 10, 0);
         lv_label_set_long_mode(_dash_sent_en, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(_dash_sent_en, 844 - 48);
+        lv_obj_set_width(_dash_sent_en, 636);
         _dash_sent_cn = lv_label_create(card);
         lv_label_set_text(_dash_sent_cn, "");
         lv_obj_set_style_text_font(_dash_sent_cn, zh_font_lg(), 0);
+        big_left(_dash_sent_cn);
         lv_obj_set_style_text_color(_dash_sent_cn, lv_color_hex(theme::cur().text_dim), 0);
         lv_obj_set_style_text_line_space(_dash_sent_cn, 6, 0);
         lv_label_set_long_mode(_dash_sent_cn, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(_dash_sent_cn, 844 - 48);
+        lv_obj_set_width(_dash_sent_cn, 636);
         // 长按 (与股票卡片同款 500ms): outline 闪一下 → 换下一句
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
@@ -368,12 +392,12 @@ void AppHome::onOpen()
     }
     {   // 05 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
-        // (2026-10-27 沉底: 右列改 5 卡滚动后放最下, 上拉查看)
-        lv_obj_t* card = row_card(366, 240, theme::cur().card[3], theme::cur().border);
+        // 04 卡加高后本卡 240→212 (y396), 网格行距收紧, 右列仍填满 608
+        lv_obj_t* card = row_card(396, 212, theme::cur().card[3], theme::cur().border);
 
         _opi_dot = lv_obj_create(card);
         lv_obj_set_size(_opi_dot, 12, 12);
-        lv_obj_set_pos(_opi_dot, 24, 26);
+        lv_obj_set_pos(_opi_dot, 24, 22);
         lv_obj_set_style_radius(_opi_dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(theme::cur().ok), 0);
         lv_obj_set_style_bg_opa(_opi_dot, LV_OPA_COVER, 0);
@@ -382,21 +406,24 @@ void AppHome::onOpen()
         lv_obj_set_style_shadow_width(_opi_dot, 8, 0);
         lv_obj_clear_flag(_opi_dot, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
-        mk_lbl(card, zh_font_lg(), theme::cur().text_hi, "OPi", LV_ALIGN_TOP_LEFT, 46, 16);
-        _opi_ip     = mk_lbl(card, zh_font_lg(), theme::cur().text_dim, "--", LV_ALIGN_TOP_LEFT, 118, 16);
+        big_tl(mk_lbl(card, zh_font_lg(), theme::cur().text_hi, "OPi", LV_ALIGN_TOP_LEFT, 46, 16));
+        _opi_ip     = mk_lbl(card, zh_font_lg(), theme::cur().text_dim, "--", LV_ALIGN_TOP_LEFT, 132, 16);
         _opi_uptime = mk_lbl(card, zh_font_lg(), theme::cur().text_dim, "--", LV_ALIGN_TOP_RIGHT, -24, 16);
+        big_tl(_opi_ip);
+        big_right(_opi_uptime);
 
         static const char* const MOD_LABELS[5] = {"负载", "CPU", "内存", "交换", "磁盘"};
         static const int CELL_X[3] = {24, 312, 600};   // 844 卡内均布 (68 间隙)
         static const int CELL_W    = 220;
         auto mod_at = [&](int i) -> OpiModule& {
             OpiModule& m = _opi_mod[i];
-            int x = CELL_X[i % 3], y = (i / 3) == 0 ? 70 : 148;
+            int x = CELL_X[i % 3], y = (i / 3) == 0 ? 66 : 134;
             lv_obj_t* lbl = lv_label_create(card);
             lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);
             lv_obj_set_style_text_color(lbl, lv_color_hex(theme::cur().text_dim), 0);
             lv_label_set_text(lbl, MOD_LABELS[i]);
             lv_obj_set_pos(lbl, x, y + 2);
+            big_tl(lbl);
             m.val = lv_label_create(card);
             lv_obj_set_style_text_font(m.val, zh_font_lg(), 0);
             lv_obj_set_style_text_color(m.val, lv_color_hex(theme::cur().text_hi), 0);
@@ -404,6 +431,7 @@ void AppHome::onOpen()
             lv_obj_set_pos(m.val, x, y + 2);
             lv_obj_set_width(m.val, CELL_W);
             lv_obj_set_style_text_align(m.val, LV_TEXT_ALIGN_RIGHT, 0);
+            big_right(m.val);
             m.bar = lv_bar_create(card);
             lv_obj_set_size(m.bar, CELL_W, 10);
             lv_obj_set_pos(m.bar, x, y + 44);
@@ -418,27 +446,25 @@ void AppHome::onOpen()
         };
         for (int i = 0; i < 5; i++) mod_at(i);
 
-        // 温度格（第 6 格）: 数值按阈值变色, 条的位置显示风扇状态
+        // 温度格（第 6 格）: 数值按阈值变色; 风扇状态换行放到条的槽位
+        // (一行放不下 1.25x 的「温度 48.7℃ 被动散热」, 2026-10-28 随全卡放大调整)
         lv_obj_t* tl = lv_label_create(card);
         lv_obj_set_style_text_font(tl, zh_font_lg(), 0);
         lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_dim), 0);
         lv_label_set_text(tl, "温度");
-        lv_obj_set_pos(tl, CELL_X[2], 148 + 2);
-        // 一行排布: 温度 → 空格 → 数值 → 空格 → 风扇状态 (2026-10-28 用户指定)
-        // (tl 已在上方创建)
-        lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_dim), 0);
-        lv_label_set_text(tl, "温度");
-        lv_obj_set_pos(tl, CELL_X[2], 148 + 2);
+        lv_obj_set_pos(tl, CELL_X[2], 134 + 2);
+        big_tl(tl);
         _opi_temp = lv_label_create(card);
         lv_obj_set_style_text_font(_opi_temp, zh_font_lg(), 0);
         lv_obj_set_style_text_color(_opi_temp, lv_color_hex(theme::cur().ok), 0);
         lv_label_set_text(_opi_temp, "--℃");
-        lv_obj_set_pos(_opi_temp, CELL_X[2] + 68, 148 + 2);   // 紧跟"温度"标签
+        lv_obj_set_pos(_opi_temp, CELL_X[2] + 84, 134 + 2);   // 紧跟放大的"温度"标签
+        big_tl(_opi_temp);
         _opi_fan = lv_label_create(card);
         lv_obj_set_style_text_font(_opi_fan, zh_font_sm(), 0);
         lv_obj_set_style_text_color(_opi_fan, lv_color_hex(theme::cur().text_dim), 0);
         lv_label_set_text(_opi_fan, "");
-        lv_obj_set_pos(_opi_fan, CELL_X[2] + 146, 148 + 8);   // 数值右侧 (20px 小字)
+        lv_obj_set_pos(_opi_fan, CELL_X[2], 134 + 46);   // 第二行 (原条槽位, 20px 小字)
     }
     _last_dash_ms = 0;  // force first fetch on next onRunning tick
     _last_status_ms = 0;
