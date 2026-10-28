@@ -20,7 +20,9 @@
 // AppSettings::fetchEmail() and read by both the email sub-page and the
 // AppHome status-bar icon. Lives at file scope so the static keyword isn't
 // required on each declaration; definitions are in app_settings.cpp.
-struct EmailItem { std::string from, subject, date, folder; };
+struct EmailItem {
+    std::string from, subject, date, preview, folder;
+};
 
 class AppSettings : public mooncake::AppAbility {
 public:
@@ -122,8 +124,8 @@ private:
     // ── Email (邮件) ────────────────────────────────────────────────────────────
     lv_obj_t*   _email_page   = nullptr;
     lv_obj_t*   _email_title  = nullptr;  // "邮件 (N 封未读)" — top title
-    lv_obj_t*   _email_status = nullptr;  // "加载中…" / "拉取失败" / empty marker
-    lv_obj_t*   _email_list   = nullptr;  // lv_list 主体
+    lv_obj_t*   _email_hint   = nullptr;  // 列表区居中提示 (加载中/失败/无未读) — 顶部状态条已删
+    lv_obj_t*   _email_list   = nullptr;  // 未读邮件卡片列 (3 行 1 列, 参考股票卡)
 
     void _buildToolsPage();
     void _openCalculator();

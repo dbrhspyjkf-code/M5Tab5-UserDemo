@@ -122,7 +122,7 @@ extern const lv_font_t font_calc_expr;  // 30px expression line
 // ── Palette ─────────────────────────────────────────────────────────────────
 // 配色: 主题快照(onOpen 时从全局主题取, 见 utils/theme/theme.h);
 // 计算器数字/功能键的中性灰保留(任何主题下都读作"中性")。
-static uint32_t C_BG, C_ACCENT, C_CARD, C_CARD_PR, C_TEXT,
+static uint32_t C_BG, C_ACCENT, C_CARD, C_CARD_PR, C_TEXT, C_DIM,
                 CALC_BG, CALC_NUM, CALC_FUNC, CALC_OP, CALC_TXT, CALC_EXPR,
                 C_SHADOW;
 
@@ -133,6 +133,7 @@ static void snap_theme()
     C_ACCENT = T.accent;
     C_CARD = T.card[1];     C_CARD_PR = T.card[0];
     C_TEXT = T.text_hi;     C_SHADOW = T.border;
+    C_DIM = T.text_dim;
     CALC_BG = 0x000000;
     CALC_NUM = 0x3A3A3C;    CALC_FUNC = 0x545456;
     CALC_OP = T.accent;     // 运算键随主题强调色
@@ -258,7 +259,7 @@ void AppSettings::onClose()
     _calc_expr_lbl = _calc_res_lbl = nullptr;
     _fx_from_dd = _fx_to_dd = _fx_amt_lbl = _fx_res_lbl = _fx_rate_lbl = nullptr;
     _unit_cat_dd = _unit_from_dd = _unit_to_dd = _unit_amt_lbl = _unit_res_lbl = _unit_eq_lbl = nullptr;
-    _email_page = _email_title = _email_status = _email_list = nullptr;
+    _email_page = _email_title = _email_hint = _email_list = nullptr;
     // 不清零 email_unread_total: 本 app 只展示邮件列表, 没有"标记已读"功能,
     // 退出不代表邮件已读. 未读数是服务器真实状态 (由轮询刷新), 退出后状态栏
     // 信封图标 / 灯阵 NEW EMAIL 应继续按真实未读显示.
@@ -1687,19 +1688,12 @@ void AppSettings::_openEmail()
     lv_obj_set_style_pad_all(_email_page, 0, 0);
     lv_obj_clear_flag(_email_page, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 顶部 title — "邮件" 或 "邮件 (N 封未读)"
+    // 顶部 title — "邮件" 或 "邮件 (N 封未读)" (顶部状态条已删, 2026-10-28 用户要求)
     _email_title = lv_label_create(_email_page);
     lv_label_set_text(_email_title, "邮件");
     lv_obj_set_style_text_color(_email_title, lv_color_hex(C_ACCENT), 0);
     lv_obj_set_style_text_font(_email_title, zh_font_30(), 0);
     lv_obj_align(_email_title, LV_ALIGN_TOP_MID, 0, 28);
-
-    // status line — 加载中 / 拉取失败 / 空 提示
-    _email_status = lv_label_create(_email_page);
-    lv_label_set_text(_email_status, "加载中…");
-    lv_obj_set_style_text_color(_email_status, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_style_text_font(_email_status, zh_font_30(), 0);
-    lv_obj_align(_email_status, LV_ALIGN_TOP_MID, 0, 76);
 
     // 刷新按钮 (右上角) — 点击重新拉取, _emailFetch 内部有 in-flight 保护
     lv_obj_t* refresh = lv_btn_create(_email_page);
@@ -1715,19 +1709,28 @@ void AppSettings::_openEmail()
     lv_obj_set_style_text_color(refresh_lbl, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(refresh_lbl);
 
-    // 列表区 (手画 lv_obj 容器, 不用 lv_list — lv_list 内部 scroll/clip 渲染会
-    // 触发 1200x16 RGBA8888 layer buffer (76.8KB) 反复分配, LVGL 死循环, 卡 LVGL lock)
+    // 未读邮件卡片列 (3 行 1 列, 参考股票卡; 不用 lv_list — 其内部 scroll/clip
+    // 渲染会触发 1200x16 RGBA8888 layer buffer (76.8KB) 反复分配, LVGL 死循环)
     _email_list = lv_obj_create(_email_page);
-    lv_obj_set_size(_email_list, 1200, 540);
-    lv_obj_align(_email_list, LV_ALIGN_TOP_MID, 0, 130);
-    lv_obj_set_style_bg_color(_email_list, lv_color_hex(C_CARD), 0);
+    lv_obj_set_size(_email_list, 1200, 570);
+    lv_obj_align(_email_list, LV_ALIGN_TOP_MID, 0, 96);
+    lv_obj_set_style_bg_color(_email_list, lv_color_hex(C_BG), 0);
     lv_obj_set_style_bg_opa(_email_list, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(_email_list, 0, 0);
-    lv_obj_set_style_radius(_email_list, 16, 0);
-    lv_obj_set_style_pad_all(_email_list, 12, 0);
+    lv_obj_set_style_radius(_email_list, 0, 0);
+    lv_obj_set_style_pad_all(_email_list, 0, 0);
     lv_obj_set_scroll_dir(_email_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(_email_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_flow(_email_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(_email_list, 8, 0);
+    lv_obj_set_style_pad_row(_email_list, 12, 0);
+
+    // 列表内居中提示 (加载中 / 失败 / 无未读) — 挂 page 上悬浮列表区中心
+    // (挂 _email_list 会被 flex 布局顶走; 有卡片时隐藏)
+    _email_hint = lv_label_create(_email_page);
+    lv_label_set_text(_email_hint, "加载中…");
+    lv_obj_set_style_text_color(_email_hint, lv_color_hex(C_DIM), 0);
+    lv_obj_set_style_text_font(_email_hint, zh_font_30(), 0);
+    lv_obj_align(_email_hint, LV_ALIGN_TOP_MID, 0, 370);
 
     // 已有缓存列表先渲染 (状态条轮询成功过的数据直接显示, 不空等)
     if (!email_list.empty() && _email_list) _emailRefresh();
@@ -1744,7 +1747,7 @@ void AppSettings::_closeEmail()
 {
     if (_email_page) {
         lv_obj_delete(_email_page);
-        _email_page = _email_title = _email_status = _email_list = nullptr;
+        _email_page = _email_title = _email_hint = _email_list = nullptr;
     }
     if (_tools_page) lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1793,13 +1796,28 @@ void AppSettings::fetchEmail()
                         std::string name = f.value("name", std::string("?"));
                         if (is_draft(name)) continue;  // 跳过草稿箱
                         total += f.value("unread", 0);
-                        // 单条数据只 latest 一封, 用 preview 字段当 subject
-                        email_list.push_back(EmailItem{
-                            f.value("latest_from", std::string("?")),
-                            f.value("latest_subject", std::string("(无主题)")),
-                            std::string(),  // 8768 不暴露 date
-                            name,
-                        });
+                        // 每封未读拍平成一条卡片数据 (发件人/时间/主题/内容),
+                        // 服务器倒序=最新在前; messages 缺字段时回退 latest_*
+                        if (f.contains("messages") && f["messages"].is_array()) {
+                            for (const auto& m : f["messages"]) {
+                                if (!m.is_object()) continue;
+                                email_list.push_back(EmailItem{
+                                    m.value("from", std::string("?")),
+                                    m.value("subject", std::string("(无主题)")),
+                                    m.value("date", std::string()),
+                                    m.value("preview", std::string()),
+                                    name,
+                                });
+                            }
+                        } else {
+                            email_list.push_back(EmailItem{
+                                f.value("latest_from", std::string("?")),
+                                f.value("latest_subject", std::string("(无主题)")),
+                                std::string(),
+                                f.value("latest_preview", std::string()),
+                                name,
+                            });
+                        }
                     }
                     email_unread_total.store(total);
                     email_updated.store(true);
@@ -1854,7 +1872,8 @@ void AppSettings::_emailRefresh()
 
     if (copy.empty()) {
         lv_label_set_text(_email_title, "邮件");
-        lv_label_set_text(_email_status, "没有未读邮件");
+        lv_label_set_text(_email_hint, "没有未读邮件");
+        lv_obj_clear_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
@@ -1862,34 +1881,47 @@ void AppSettings::_emailRefresh()
     char buf[64];
     snprintf(buf, sizeof(buf), "邮件 (%d 封未读)", total);
     lv_label_set_text(_email_title, buf);
-    lv_label_set_text(_email_status, "");
+    lv_obj_add_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
 
+    // 未读卡片: 整宽 3 行 1 列 (股票卡同款皮肤: 深色底 / radius 18 / 无边框),
+    // 每张 = 发件人+时间 / 主题 / 内容预览
     for (const auto& m : copy) {
-        // 一行: "[folder] from — subject" (手画 row, 不用 lv_list_add_button)
-        char row_text[320];
-        snprintf(row_text, sizeof(row_text), "[%s] %s — %s",
-                 m.folder.c_str(), m.from.c_str(), m.subject.c_str());
-        lv_obj_t* row = lv_obj_create(_email_list);
-        lv_obj_set_size(row, LV_PCT(100), 56);
-        lv_obj_set_style_bg_color(row, lv_color_hex(C_CARD_PR), 0);
-        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(row, 10, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_t* lbl = lv_label_create(row);
-        lv_label_set_text(lbl, row_text);
-        lv_obj_set_style_text_font(lbl, zh_font_30(), 0);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(C_TEXT), 0);
-        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 16, 0);
-        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+        lv_obj_t* card = lv_obj_create(_email_list);
+        lv_obj_set_size(card, LV_PCT(100), 158);
+        lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD_PR), 0);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(card, 18, 0);
+        lv_obj_set_style_border_width(card, 0, 0);
+        lv_obj_set_style_shadow_width(card, 0, 0);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+        auto mk_line = [&](const char* txt, uint32_t color, int y) {
+            lv_obj_t* l = lv_label_create(card);
+            lv_label_set_text(l, txt);
+            lv_obj_set_style_text_font(l, zh_font_30(), 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+            lv_obj_align(l, LV_ALIGN_TOP_LEFT, 24, y);
+            lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+            lv_obj_set_width(l, 1200 - 48);
+            return l;
+        };
+        mk_line(m.from.c_str(), C_TEXT, 14);                       // 发件人 (左上)
+        if (!m.date.empty()) {
+            lv_obj_t* t = mk_line(m.date.c_str(), C_DIM, 14);      // 时间 (右上)
+            lv_obj_align(t, LV_ALIGN_TOP_RIGHT, -24, 14);
+            lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_RIGHT, 0);
+        }
+        mk_line(m.subject.c_str(), C_TEXT, 58);                    // 主题
+        mk_line(m.preview.c_str(), C_DIM, 102);                    // 内容预览
     }
 }
 
 void AppSettings::_emailShowError()
 {
-    if (!_email_status) return;
+    if (!_email_hint) return;
     mclog::tagWarn(_tag, "email page: 拉取失败 ({})", email_error_msg);
-    lv_label_set_text(_email_status,
+    lv_label_set_text(_email_hint,
         ("拉取失败: " + email_error_msg).c_str());
+    lv_obj_clear_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
 }
