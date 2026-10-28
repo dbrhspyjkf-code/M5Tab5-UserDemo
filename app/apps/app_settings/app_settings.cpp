@@ -970,12 +970,7 @@ void AppSettings::_openFx()
     lv_obj_set_style_pad_all(_fx_page, 0, 0);
     lv_obj_clear_flag(_fx_page, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Title.
-    lv_obj_t* title = lv_label_create(_fx_page);
-    lv_label_set_text(title, "汇率");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_text_font(title, zh_font_30(), 0);
+    // 顶部标题已去掉 (2026-10-28 用户要求, 同工具页去「工具」标题), 内容整体上移.
 
     // Currency code options for the dropdowns (ASCII → renders in montserrat).
     std::string opts;
@@ -1019,14 +1014,15 @@ void AppSettings::_openFx()
         return c;
     };
 
-    make_conv_card(120, true);
-    make_conv_card(340, false);
+    make_conv_card(90, true);
+    make_conv_card(330, false);
 
     // Swap button centered in the gap between the two cards.
-    // FROM card: 120..(120+CARD_H); TO card starts at 340 → gap centre = 290.
+    // FROM card: 90..(90+CARD_H); TO card starts at 330 → gap centre = 270,
+    // 上下各留 16px (2026-10-28 用户: 不要紧挨着).
     lv_obj_t* swap = lv_obj_create(_fx_page);
     lv_obj_set_size(swap, 88, 88);   // 64→88: 圆和图标都放大 (2026-10-28 用户)
-    lv_obj_set_pos(swap, CARD_X + CARD_W / 2 - 44, 290 - 44);
+    lv_obj_set_pos(swap, CARD_X + CARD_W / 2 - 44, 270 - 44);
     lv_obj_set_style_bg_color(swap, lv_color_hex(C_ACCENT), 0);
     lv_obj_set_style_radius(swap, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(swap, 3, 0);
@@ -1043,7 +1039,7 @@ void AppSettings::_openFx()
     // Rate line.
     _fx_rate_lbl = lv_label_create(_fx_page);
     lv_label_set_text(_fx_rate_lbl, "");
-    lv_obj_set_pos(_fx_rate_lbl, CARD_X + 6, 480);
+    lv_obj_set_pos(_fx_rate_lbl, CARD_X + 6, 470);
     lv_obj_set_style_text_color(_fx_rate_lbl, lv_color_hex(C_TEXT), 0);
     lv_obj_set_style_text_font(_fx_rate_lbl, zh_font_30(), 0);
 
@@ -1053,7 +1049,7 @@ void AppSettings::_openFx()
     // AC bar above the keypad.
     lv_obj_t* ac = lv_obj_create(_fx_page);
     lv_obj_set_size(ac, KW, 60);
-    lv_obj_set_pos(ac, KX, 70);
+    lv_obj_set_pos(ac, KX, 40);
     lv_obj_set_style_bg_color(ac, lv_color_hex(CALC_FUNC), 0);
     lv_obj_set_style_radius(ac, 16, 0);
     lv_obj_set_style_border_width(ac, 0, 0);
@@ -1075,7 +1071,7 @@ void AppSettings::_openFx()
         {{"1","1",false},{"2","2",false},{"3","3",false}},
         {{".",".",false},{"0","0",false},{LV_SYMBOL_BACKSPACE,"DEL",true}},
     };
-    const int ktop = 150;
+    const int ktop = 120;
     const int bw = (KW - (COLS - 1) * GAP) / COLS;
     const int bh = (720 - ktop - 30 - (ROWS - 1) * GAP) / ROWS;
     for (int r = 0; r < ROWS; r++) {
@@ -1347,12 +1343,7 @@ void AppSettings::_openUnit()
     lv_obj_set_style_pad_all(_unit_page, 0, 0);
     lv_obj_clear_flag(_unit_page, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Title.
-    lv_obj_t* title = lv_label_create(_unit_page);
-    lv_label_set_text(title, "单位换算");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_text_font(title, zh_font_30(), 0);
+    // 顶部标题已去掉 (2026-10-28 用户要求, 同工具页), 内容整体上移.
 
     // Category dropdown — left-aligned so it doesn't overlap the AC bar.
     std::string cat_opts;
@@ -1362,8 +1353,9 @@ void AppSettings::_openUnit()
     }
     _unit_cat_dd = lv_dropdown_create(_unit_page);
     lv_obj_set_size(_unit_cat_dd, 420, 60);
-    lv_obj_set_pos(_unit_cat_dd, 40, 76);
+    lv_obj_set_pos(_unit_cat_dd, 40, 46);
     lv_dropdown_set_options(_unit_cat_dd, cat_opts.c_str());
+    lv_dropdown_set_symbol(_unit_cat_dd, nullptr);   // 默认 FA 箭头 zh 字体无字形 (万年历同款坑)
     lv_obj_set_style_text_font(_unit_cat_dd, zh_font_30(), 0);
     lv_dropdown_set_selected(_unit_cat_dd, 0);
     _unit_cat_idx = 0;
@@ -1422,14 +1414,15 @@ void AppSettings::_openUnit()
         return c;
     };
 
-    make_card(180, true);
-    make_card(400, false);
+    make_card(150, true);
+    make_card(390, false);
 
     // Swap button. FROM card bottom = 180+120=300, TO card top = 400.
     // Gap centre = (300+400)/2 = 350.  64 px button centred at y=318.
     lv_obj_t* swap = lv_obj_create(_unit_page);
     lv_obj_set_size(swap, 88, 88);
-    lv_obj_set_pos(swap, CARD_X + CARD_W / 2 - 44, 306);
+    // Swap 上下各留 16px (FROM 卡底 270 / TO 卡顶 390, 间隙中点 330).
+    lv_obj_set_pos(swap, CARD_X + CARD_W / 2 - 44, 286);
     lv_obj_set_style_bg_color(swap, lv_color_hex(C_ACCENT), 0);
     lv_obj_set_style_radius(swap, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(swap, 3, 0);
@@ -1446,7 +1439,7 @@ void AppSettings::_openUnit()
     // Equivalence line.
     _unit_eq_lbl = lv_label_create(_unit_page);
     lv_label_set_text(_unit_eq_lbl, "");
-    lv_obj_set_pos(_unit_eq_lbl, CARD_X + 6, 555);
+    lv_obj_set_pos(_unit_eq_lbl, CARD_X + 6, 545);
     lv_obj_set_style_text_color(_unit_eq_lbl, lv_color_hex(C_TEXT), 0);
     lv_obj_set_style_text_font(_unit_eq_lbl, zh_font_30(), 0);
 
@@ -1455,7 +1448,7 @@ void AppSettings::_openUnit()
 
     lv_obj_t* ac = lv_obj_create(_unit_page);
     lv_obj_set_size(ac, KEY_W, 60);
-    lv_obj_set_pos(ac, KEY_X, 76);
+    lv_obj_set_pos(ac, KEY_X, 46);
     lv_obj_set_style_bg_color(ac, lv_color_hex(CALC_FUNC), 0);
     lv_obj_set_style_radius(ac, 16, 0);
     lv_obj_set_style_border_width(ac, 0, 0);
@@ -1477,7 +1470,7 @@ void AppSettings::_openUnit()
         {{"1","1",false},{"2","2",false},{"3","3",false}},
         {{".",".",false},{"0","0",false},{LV_SYMBOL_BACKSPACE,"DEL",true}},
     };
-    const int ktop = 150;
+    const int ktop = 120;
     const int bw = (KEY_W - (COLS - 1) * GAP) / COLS;
     const int bh = (720 - ktop - 30 - (ROWS - 1) * GAP) / ROWS;
     for (int r = 0; r < ROWS; r++) {
