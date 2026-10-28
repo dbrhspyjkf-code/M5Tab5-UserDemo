@@ -121,6 +121,7 @@ void AppHome::onOpen()
         lv_obj_set_align(lbl, LV_ALIGN_CENTER);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);  // 30px
+        lv_obj_set_style_transform_scale(lbl, 294, 0);   // ≈1.15x: 按钮文字再大一点 (用户指定)
         // Subtle dark text shadow for legibility over the bright gradient.
         lv_obj_set_style_text_opa(lbl, LV_OPA_COVER, 0);
 
@@ -143,11 +144,7 @@ void AppHome::onOpen()
     lv_obj_set_style_pad_all(hero, 0, 0);
     lv_obj_clear_flag(hero, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
-    lv_obj_t* hero_tag = lv_label_create(hero);
-    lv_label_set_text(hero_tag, "M5TAB5 驾驶舱");
-    lv_obj_set_style_text_font(hero_tag, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(hero_tag, lv_color_hex(theme::cur().text_dim), 0);
-    lv_obj_set_pos(hero_tag, 24, 18);
+
 
     _status_time = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_time, &lv_font_montserrat_44, 0);
@@ -579,6 +576,9 @@ void AppHome::onRunning()
             lv_label_set_text(_ipo_lbl, _ipo_txt.c_str());
             if (_ipo_txt.empty()) lv_obj_add_flag(_ipo_lbl, LV_OBJ_FLAG_HIDDEN);
             else lv_obj_clear_flag(_ipo_lbl, LV_OBJ_FLAG_HIDDEN);
+            // 行数变化后重新贴回分隔线上方 (UI 线程; worker 里做会栈溢出崩溃)
+            lv_obj_update_layout(_ipo_lbl);
+            lv_obj_align_to(_ipo_lbl, _hero_div, LV_ALIGN_OUT_TOP_MID, 0, -6);
         }
         if (_dash_sent_en && _dash_sent_en_txt.compare(lv_label_get_text(_dash_sent_en)) != 0)
             lv_label_set_text(_dash_sent_en, _dash_sent_en_txt.c_str());
@@ -786,11 +786,6 @@ void AppHome::_fetch_dashboard()
         _dash_glm2_txt = glm_sub;
         if (!sent_en.empty()) { _dash_sent_en_txt = sent_en; _dash_sent_cn_txt = sent_cn; }
         _ipo_txt = ipo_txt;   // 空串=无新股, UI 隐藏
-        // 行数变化后重新贴回分隔线上方 (UI 线程执行)
-        if (_ipo_lbl && _hero_div) {
-            lv_obj_update_layout(_ipo_lbl);
-            lv_obj_align_to(_ipo_lbl, _hero_div, LV_ALIGN_OUT_TOP_MID, 0, -6);
-        }
         mclog::tagInfo(_tag, "[dbg] ipo='{}'", ipo_txt.c_str());
         _dash_ds_txt  = ds_txt;
         _dash_ag1_txt = ag1.empty() ? "今日无提醒/行程" : ag1;
