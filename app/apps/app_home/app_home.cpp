@@ -121,7 +121,7 @@ void AppHome::onOpen()
         lv_obj_set_align(lbl, LV_ALIGN_CENTER);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);  // 30px
-        lv_obj_set_style_transform_scale(lbl, 294, 0);   // ≈1.15x: 按钮文字再大一点 (用户指定)
+        lv_obj_set_style_transform_scale(lbl, 320, 0);   // ≈1.25x: 按钮文字再大一点 (用户指定)
         // Subtle dark text shadow for legibility over the bright gradient.
         lv_obj_set_style_text_opa(lbl, LV_OPA_COVER, 0);
 
@@ -316,16 +316,16 @@ void AppHome::onOpen()
         mk_lbl(c, zh_font_md(),          NAME, "GLM 用量",   LV_ALIGN_LEFT_MID,  26, 0);
         // 左右分区 (2026-10-28 用户定稿): 左=GLM (5H/7D 剩余% + 重置时间,
         // 在名称右侧 x=280 起, 不与名称重叠), 右=DeepSeek 余额 (小标+数值).
-        _dash_glm  = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_LEFT, 280, 16);
+        _dash_glm  = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_LEFT, 280, 12);
         _dash_glm2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 280, 56);
         mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "DeepSeek 余额",
                LV_ALIGN_TOP_RIGHT, -28, 20);
-        _dash_ds   = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 50);
+        _dash_ds   = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 46);
 
         c = row_card(122, 110, theme::cur().card[2], theme::cur().border);
         mk_lbl(c, zh_font_md(),          NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 26, 0);
         // 内容居中 (2026-10-28 用户: 太靠右)
-        _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_MID, 0, 16);
+        _dash_ag1 = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_MID, 0, 14);
         lv_obj_set_width(_dash_ag1, 844 - 200);
         lv_label_set_long_mode(_dash_ag1, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_align(_dash_ag1, LV_TEXT_ALIGN_CENTER, 0);
