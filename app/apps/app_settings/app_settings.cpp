@@ -1887,14 +1887,25 @@ void AppSettings::_emailRefresh()
             lv_obj_set_width(l, 1200 - 48);
             return l;
         };
-        mk_line(m.from.c_str(), C_TEXT, 22);                       // 发件人 (左上)
+        mk_line(m.from.c_str(), C_TEXT, 18);                       // 发件人 (左上)
         if (!m.date.empty()) {
-            lv_obj_t* t = mk_line(m.date.c_str(), C_DIM, 22);      // 时间 (右上)
-            lv_obj_align(t, LV_ALIGN_TOP_RIGHT, -24, 22);
+            lv_obj_t* t = mk_line(m.date.c_str(), C_DIM, 18);      // 时间 (右上)
+            lv_obj_align(t, LV_ALIGN_TOP_RIGHT, -24, 18);
             lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_RIGHT, 0);
         }
-        mk_line(m.subject.c_str(), C_TEXT, 88);                    // 主题
-        mk_line(m.preview.c_str(), C_DIM, 154);                    // 内容预览
+        mk_line(m.subject.c_str(), C_TEXT, 64);                    // 主题
+        // 内容: 3 行换行区 (y110 起到卡底; 服务器预览 800 字符, 显示 ~230 字母)
+        {
+            lv_obj_t* p = lv_label_create(card);
+            lv_label_set_text(p, m.preview.c_str());
+            lv_obj_set_style_text_font(p, zh_font_30(), 0);
+            lv_obj_set_style_text_color(p, lv_color_hex(C_DIM), 0);
+            lv_obj_set_style_text_line_space(p, 2, 0);
+            lv_label_set_long_mode(p, LV_LABEL_LONG_WRAP);
+            lv_obj_set_pos(p, 24, 110);
+            lv_obj_set_width(p, 1200 - 48);
+            lv_obj_set_height(p, 108);
+        }
     }
 }
 
