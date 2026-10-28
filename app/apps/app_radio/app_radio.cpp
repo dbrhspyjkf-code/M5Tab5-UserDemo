@@ -605,6 +605,10 @@ void AppRadio::onOpen()
     lv_obj_set_pos(_vol_lbl, 480, 605);
     lv_label_set_text_fmt(_vol_lbl, "%d%%", vol);
 
+    // 手势 alive 旗标重建 (app_stocks 同款): onClose 里 *_alive=false 后,
+    // 旧 shared_ptr 永久作废 —— 不重建的话第二次进收音机上拨手势在 alive
+    // 检查处静默失效 (2026-10-29 实锤: 后台播放重进后无法上拨回主页)
+    _alive = std::make_shared<bool>(true);
     _installSwipeGesture();
     lv_screen_load(_scr);
 

@@ -296,6 +296,9 @@ void AppPlayer::onOpen()
     lv_obj_add_flag(_hint_lbl, LV_OBJ_FLAG_HIDDEN);
 
     _switchPage(_page);
+    // 手势 alive 旗标重建 (app_stocks 同款, 2026-10-29): onClose 置 false 后
+    // 不重建则第二次进入上拨手势静默失效 (收音机实锤的同款 bug)
+    _alive = std::make_shared<bool>(true);
     _installSwipeGesture();
     lv_screen_load_anim(_scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
 }

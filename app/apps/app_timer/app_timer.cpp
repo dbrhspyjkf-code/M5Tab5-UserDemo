@@ -183,6 +183,9 @@ void AppTimer::onOpen()
     lv_obj_align(_reset_btn, LV_ALIGN_BOTTOM_MID, -120, -40);  // 计时中靠左
     _reset_lbl = mk_center_label(_reset_btn, zh_font_lg(), C_TEXT, "重置");
 
+    // 手势 alive 旗标重建 (app_stocks 同款, 2026-10-29): onClose 置 false 后
+    // 不重建则第二次进入上拨手势静默失效 (收音机实锤的同款 bug)
+    _alive = std::make_shared<bool>(true);
     _installSwipeGesture();
     _refresh();
     lv_screen_load(_scr);   // 与收音机一致(anim 版手势路径未验证)
