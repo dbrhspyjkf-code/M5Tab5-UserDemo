@@ -19,66 +19,23 @@
 
 static const std::string _tag = "app-home";
 
-// Full-coverage Chinese font (same as the Claude/HA apps) — GB2312 common
-// ~3500 glyphs, so dialog labels never render as tofu boxes. Replaces the old
-// subset font_zh_36 (~135 chars, which boxed e.g. 其/他). On device it's a cbin
-// blob used in-place from flash; on the desktop sim we fall back to the linked
-// 20px C-array font.
-#ifndef PLATFORM_BUILD_DESKTOP
-#include <cbin_font.h>
-extern const uint8_t font_puhui_common_30_4_bin_start[]
-    asm("_binary_font_puhui_common_30_4_bin_start");
-static const lv_font_t* zh_font_lg()
-{
-    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
-    return f;
-}
-// 20px 小字（OPi 详情卡的模块文字）— 放在 res 分区 (pack_assets.py)
-static const lv_font_t* zh_font_sm()
-{
-    static lv_font_t* f = []() -> lv_font_t* {
-        const uint8_t* p = assets_part::find("font_zh_20");
-        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
-    }();
-    return f;
-}
-// 24px 中间号（仪表卡正文, 介于 20 与 30 之间）— 同在 res 分区
-static const lv_font_t* zh_font_md()
-{
-    static lv_font_t* f = []() -> lv_font_t* {
-        const uint8_t* p = assets_part::find("font_zh_24");
-        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
-    }();
-    return f;
-}
+// 全量中文字体 (GB2312 常用+生僻), 对话/标签不再出豆腐块.
+// 设备: lg=内嵌 30px cbin (XIP), md/sm=res 分区 24px/20px cbin;
+// 桌面: 直接 fopen 仓库内 24px 全量字体 bin 用 cbin_font_create 解析
+// (puhui_20 子集缺股票生僻字, 2026-10-28 实锤).
+#ifdef PLATFORM_BUILD_DESKTOP
+#include "../../../platforms/tab5/managed_components/78__xiaozhi-fonts/include/cbin_font.h"
 #else
-extern "C" const lv_font_t font_puhui_20_4;
-static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
-static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
-// 桌面: 加载与设备相同的 24px 全量字体 (puhei-common 0x20-0xFFFF 生成, 仓库
-// 内 bin)。puhui_20 子集缺股票生僻字 (钶锶等), 2026-10-28 实锤
-static const lv_font_t* zh_font_md()
-{
-    static lv_font_t* f = []() -> lv_font_t* {
-        FILE* fp = fopen("app/assets/fonts/font_puhui_common_24_4.bin", "rb");
-        if (!fp) return const_cast<lv_font_t*>(&font_puhui_20_4);
-        fseek(fp, 0, SEEK_END);
-        long sz = ftell(fp);
-        fseek(fp, 0, SEEK_SET);
-        auto* buf = static_cast<uint8_t*>(malloc(sz));
-        if (!buf) { fclose(fp); return const_cast<lv_font_t*>(&font_puhui_20_4); }
-        if (fread(buf, 1, sz, fp) != (size_t)sz) {
-            free(buf); fclose(fp);
-            return const_cast<lv_font_t*>(&font_puhui_20_4);
-        }
-        fclose(fp);
-        auto* font = cbin_font_create(buf);
-        return font ? font : const_cast<lv_font_t*>(&font_puhui_20_4);
-    }();
-    return f;
-}
+#include <cbin_font.h>
 #endif
+extern "C" const lv_font_t font_puhui_20_4;   // 桌面回退字体 (20px 子集)
 
+// 桌面本想加载与设备相同的 24px 全量字体, 但桌面 cbin_font.c 解析该 bin
+// 直接段错误 (原因未查明, 2026-10-28) — 回退 puhui_20 子集: 模拟器里股票
+// 名生僻字 (钶锶等) 显示为空白, 仅影响模拟器观感, 设备端 24px 全量正常.
+static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
+static const lv_font_t* zh_font_md() { return &font_puhui_20_4; }
+static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
 AppHome::AppHome()
 {
     setAppInfo().name = "AppHome";
@@ -247,13 +204,15 @@ void AppHome::onOpen()
 
     // Thin divider + icon row along the card bottom (light ink on deep green).
     lv_obj_t* div = lv_obj_create(hero);
-    // 新股申购 (hermes /stocks/ipo, 有申购才显示; 2026-10-28 用户要求)
+    // 新股申购 (hermes /stocks/ipo; 2026-10-28 用户要求: 第一行"新股申购",
+    // 之后每股一行, 最多 3 条; 无申购隐藏)
     _ipo_lbl = lv_label_create(hero);
     lv_obj_set_style_text_font(_ipo_lbl, zh_font_md(), 0);
     lv_obj_set_style_text_color(_ipo_lbl, lv_color_hex(theme::cur().accent), 0);
-    lv_label_set_long_mode(_ipo_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_line_space(_ipo_lbl, 8, 0);
+    lv_label_set_long_mode(_ipo_lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(_ipo_lbl, 400 - 48);
-    lv_obj_set_pos(_ipo_lbl, 24, 474);
+    lv_obj_set_pos(_ipo_lbl, 24, 366);
     lv_label_set_text(_ipo_lbl, "");
     lv_obj_add_flag(_ipo_lbl, LV_OBJ_FLAG_HIDDEN);
 
@@ -363,8 +322,15 @@ void AppHome::onOpen()
 
         c = row_card(122, 110, theme::cur().card[2], theme::cur().border);
         mk_lbl(c, zh_font_md(),          NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 26, 0);
-        _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 16);
-        _dash_ag2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
+        // 内容居中 (2026-10-28 用户: 太靠右)
+        _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_MID, 0, 16);
+        lv_obj_set_width(_dash_ag1, 844 - 200);
+        lv_label_set_long_mode(_dash_ag1, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(_dash_ag1, LV_TEXT_ALIGN_CENTER, 0);
+        _dash_ag2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_MID, 0, 56);
+        lv_obj_set_width(_dash_ag2, 844 - 200);
+        lv_label_set_long_mode(_dash_ag2, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(_dash_ag2, LV_TEXT_ALIGN_CENTER, 0);
     }
     {   // 04 每日一句英文宽卡 (hermes /daily/sentence?offset=N, 长按换下一句)
         lv_obj_t* card = row_card(244, 110, theme::cur().card[3], theme::cur().border);   // 与 03 卡同高
@@ -746,16 +712,19 @@ void AppHome::_fetch_dashboard()
             ds_txt = j.value("total_balance", std::string("?")) + " 元";
         }
         if (auto j = pick(GetHAL()->httpGet(base + "/stocks/ipo").body); !j.is_null()) {
-            // 新股申购 (近 5 条, today 标记今日): 拼 "名称 日期" 列表
-            std::string ipo;
+            // 新股申购 (2026-10-28 用户定稿): 首行"新股申购", 之后每股一行,
+            // 最多 3 条 (hero 空间限制)
+            std::string ipo = "新股申购";
+            int shown = 0;
             if (j.contains("items") && j["items"].is_array())
                 for (auto& it : j["items"]) {
-                    if (!ipo.empty()) ipo += "  ";
-                    ipo += it.value("name", std::string()) + " "
+                    if (shown >= 3) break;
+                    ipo += "\n" + it.value("name", std::string()) + " "
                          + it.value("date", std::string());
                     if (it.value("today", false)) ipo += "(今)";
+                    shown++;
                 }
-            ipo_txt = ipo.empty() ? "" : "新股: " + ipo;
+            ipo_txt = shown ? ipo : "";
         }
         if (auto j = pick(GetHAL()->httpGet(base + "/daily/sentence?offset="
                                           + std::to_string(_sent_offset)).body); !j.is_null()) {
