@@ -55,7 +55,28 @@ static const lv_font_t* zh_font_md()
 extern "C" const lv_font_t font_puhui_20_4;
 static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
-static const lv_font_t* zh_font_md() { return &font_puhui_20_4; }
+// 桌面: 加载与设备相同的 24px 全量字体 (puhei-common 0x20-0xFFFF 生成, 仓库
+// 内 bin)。puhui_20 子集缺股票生僻字 (钶锶等), 2026-10-28 实锤
+static const lv_font_t* zh_font_md()
+{
+    static lv_font_t* f = []() -> lv_font_t* {
+        FILE* fp = fopen("app/assets/fonts/font_puhui_common_24_4.bin", "rb");
+        if (!fp) return const_cast<lv_font_t*>(&font_puhui_20_4);
+        fseek(fp, 0, SEEK_END);
+        long sz = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+        auto* buf = static_cast<uint8_t*>(malloc(sz));
+        if (!buf) { fclose(fp); return const_cast<lv_font_t*>(&font_puhui_20_4); }
+        if (fread(buf, 1, sz, fp) != (size_t)sz) {
+            free(buf); fclose(fp);
+            return const_cast<lv_font_t*>(&font_puhui_20_4);
+        }
+        fclose(fp);
+        auto* font = cbin_font_create(buf);
+        return font ? font : const_cast<lv_font_t*>(&font_puhui_20_4);
+    }();
+    return f;
+}
 #endif
 
 AppHome::AppHome()
@@ -781,6 +802,7 @@ void AppHome::_fetch_dashboard()
         _dash_glm2_txt = glm_sub;
         if (!sent_en.empty()) { _dash_sent_en_txt = sent_en; _dash_sent_cn_txt = sent_cn; }
         _ipo_txt = ipo_txt;   // 空串=无新股, UI 隐藏
+        mclog::tagInfo(_tag, "[dbg] ipo='{}'", ipo_txt.c_str());
         _dash_ds_txt  = ds_txt;
         _dash_ag1_txt = ag1.empty() ? "今日无提醒/行程" : ag1;
         _dash_ag2_txt = ag2;

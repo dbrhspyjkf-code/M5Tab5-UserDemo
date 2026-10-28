@@ -54,6 +54,7 @@ file(GLOB_RECURSE APP_LAYER_SRCS
 )
 list(APPEND APP_LAYER_SRCS
     "${TAB5_PROJECT_ROOT}/platforms/tab5/managed_components/78__xiaozhi-fonts/src/font_puhui_20_4.c"
+    "${TAB5_PROJECT_ROOT}/platforms/tab5/managed_components/78__xiaozhi-fonts/src/cbin_font.c"
 )
 set(APP_LAYER_INCS
     "${TAB5_PROJECT_ROOT}/app/"
@@ -69,6 +70,8 @@ file(GLOB_RECURSE APP_DESKTOP_BUILD_SRCS
     "${CMAKE_CURRENT_LIST_DIR}/*.c"
 )
 list(FILTER APP_DESKTOP_BUILD_SRCS EXCLUDE REGEX "build.*/.*")
+include_directories("${TAB5_PROJECT_ROOT}/platforms/tab5/managed_components/78__xiaozhi-fonts/include")
+
 add_executable(app_desktop_build ${APP_DESKTOP_BUILD_SRCS} ${APP_LAYER_SRCS})
 target_include_directories(app_desktop_build PUBLIC ${APP_LAYER_INCS})
 target_link_libraries(app_desktop_build PUBLIC
