@@ -156,13 +156,15 @@ void AppHome::onOpen()
     lv_obj_set_style_text_font(_status_date, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_status_date, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_date, "");
-    lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 180);
+    lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 176);
+    lv_obj_set_style_transform_scale(_status_date, 320, 0);   // 1.25x 与右列卡片一致 (时钟不动, 2026-10-28 用户指定)
 
     _status_lunar = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_lunar, zh_font_md(), 0);
     lv_obj_set_style_text_color(_status_lunar, lv_color_hex(theme::cur().text_soft), 0);
     lv_label_set_text(_status_lunar, "");
-    lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 230);
+    lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 228);
+    lv_obj_set_style_transform_scale(_status_lunar, 320, 0);
 
     // Weather row (tap → detailed weather dialog): temperature (latin font,
     // has °) + condition (zh font), centered in dark ink.
@@ -175,17 +177,19 @@ void AppHome::onOpen()
     lv_obj_set_flex_flow(wbox, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(wbox, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(wbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 286);
+    lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 282);
 
     _status_wtemp = lv_label_create(wbox);
     lv_obj_set_style_text_font(_status_wtemp, &lv_font_montserrat_30, 0);
     lv_obj_set_style_text_color(_status_wtemp, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_wtemp, "");
+    lv_obj_set_style_transform_scale(_status_wtemp, 320, 0);
 
     _status_wcond = lv_label_create(wbox);
     lv_obj_set_style_text_font(_status_wcond, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_status_wcond, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_wcond, "");
+    lv_obj_set_style_transform_scale(_status_wcond, 320, 0);
 
     // Helper: make a hero-card item tappable. tag routes the click:
     // 1 = battery → power dialog, 2 = wifi → network dialog,
@@ -206,10 +210,11 @@ void AppHome::onOpen()
     _ipo_lbl = lv_label_create(hero);
     lv_obj_set_style_text_font(_ipo_lbl, zh_font_md(), 0);
     lv_obj_set_style_text_color(_ipo_lbl, lv_color_hex(theme::cur().accent), 0);
-    lv_obj_set_style_text_line_space(_ipo_lbl, 8, 0);
+    lv_obj_set_style_text_line_space(_ipo_lbl, 4, 0);   // 1.25x 后收紧, 防满额 4 行顶到天气行
     lv_obj_set_style_text_align(_ipo_lbl, LV_TEXT_ALIGN_CENTER, 0);   // 居中 (用户指定)
     lv_label_set_long_mode(_ipo_lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(_ipo_lbl, 400 - 24);
+    lv_obj_set_style_transform_scale(_ipo_lbl, 320, 0);   // 1.25x 与全主页平齐
     // 相对分隔线定位: 最后一条股票行贴在横线上方, 行数变化向上生长 (用户指定).
     // 建屏时屏未加载, 需 update_layout 先算出真实坐标, align_to 才不跑偏.
     lv_obj_update_layout(_ipo_lbl);
@@ -446,8 +451,7 @@ void AppHome::onOpen()
         };
         for (int i = 0; i < 5; i++) mod_at(i);
 
-        // 温度格（第 6 格）: 数值按阈值变色; 风扇状态换行放到条的槽位
-        // (一行放不下 1.25x 的「温度 48.7℃ 被动散热」, 2026-10-28 随全卡放大调整)
+        // 温度格（第 6 格）: 数值按阈值变色 (风扇状态 2026-10-28 用户要求去掉)
         lv_obj_t* tl = lv_label_create(card);
         lv_obj_set_style_text_font(tl, zh_font_lg(), 0);
         lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_dim), 0);
@@ -460,11 +464,6 @@ void AppHome::onOpen()
         lv_label_set_text(_opi_temp, "--℃");
         lv_obj_set_pos(_opi_temp, CELL_X[2] + 84, 134 + 2);   // 紧跟放大的"温度"标签
         big_tl(_opi_temp);
-        _opi_fan = lv_label_create(card);
-        lv_obj_set_style_text_font(_opi_fan, zh_font_sm(), 0);
-        lv_obj_set_style_text_color(_opi_fan, lv_color_hex(theme::cur().text_dim), 0);
-        lv_label_set_text(_opi_fan, "");
-        lv_obj_set_pos(_opi_fan, CELL_X[2], 134 + 46);   // 第二行 (原条槽位, 20px 小字)
     }
     _last_dash_ms = 0;  // force first fetch on next onRunning tick
     _last_status_ms = 0;
@@ -845,7 +844,6 @@ void AppHome::_updateOpiWidgets()
         lv_label_set_text(_opi_uptime, "--");
         lv_label_set_text(_opi_ip, "--");
         lv_label_set_text(_opi_temp, "--");
-        lv_label_set_text(_opi_fan, "");
         lv_obj_set_style_bg_color(_opi_dot, lv_color_hex(theme::cur().danger), 0);
         lv_obj_set_style_shadow_color(_opi_dot, lv_color_hex(theme::cur().danger), 0);
         return;
@@ -877,13 +875,10 @@ void AppHome::_updateOpiWidgets()
     lv_label_set_text(_opi_mod[4].val, v);
     set_bar(_opi_mod[4].bar, _opi.disk_pct, 70, 85);
 
-    // 温度格: 数值按阈值变色, 风扇状态放在条的位置
+    // 温度格: 数值按阈值变色 (风扇状态已去掉, 2026-10-28 用户要求)
     snprintf(v, sizeof(v), "%.0f℃", _opi.temp);
     lv_label_set_text(_opi_temp, v);
     lv_obj_set_style_text_color(_opi_temp, lv_color_hex(tier(_opi.temp, 60, 75)), 0);
-    if (_opi.fan_rpm >= 0) snprintf(v, sizeof(v), "风扇%d", _opi.fan_rpm);
-    else                   snprintf(v, sizeof(v), "被动散热");
-    lv_label_set_text(_opi_fan, v);
 }
 
 void AppHome::onClose()
@@ -907,7 +902,6 @@ void AppHome::onClose()
     _status_batt  = nullptr;
     _status_tools = nullptr;
     _status_email = nullptr;
-    _opi_fan      = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
     _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
     _btn_data.clear();

@@ -111,7 +111,6 @@ private:
     lv_obj_t*  _opi_uptime = nullptr;
     lv_obj_t*  _opi_ip     = nullptr;
     lv_obj_t*  _opi_temp   = nullptr;  // "48℃"
-    lv_obj_t*  _opi_fan    = nullptr;  // "风扇 1200" / "被动散热"（温度格）
     lv_obj_t*  _opi_dot    = nullptr;  // header 状态点
 
     struct OpiData {

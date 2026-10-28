@@ -152,6 +152,9 @@ void HalEsp32::init()
                                  .buff_spiram = true,
                                  .sw_rotate   = true,
                              }};
+    // 主页卡片文字用 transform_scale 缩放 → LVGL 层渲染 + SW 变换调用栈深,
+    // 默认 7168 栈实测溢出 (Stack protection fault 循环重启), 加大到 32K
+    cfg.lvgl_port_cfg.task_stack = 32768;
     lvDisp = bsp_display_start_with_config(&cfg);
     lv_display_set_rotation(lvDisp, LV_DISPLAY_ROTATION_90);
     bsp_display_backlight_on();
