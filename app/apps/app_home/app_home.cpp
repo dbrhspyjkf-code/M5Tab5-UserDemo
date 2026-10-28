@@ -38,23 +38,6 @@ static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_md() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
 
-// 天气正文最长行的未缩放像素宽 (天气弹窗卡宽自适应的基准, 2026-10-28)
-static int32_t wx_max_line_w(const std::string& s)
-{
-    const lv_font_t* f = zh_font_lg();
-    int32_t max_w = 0;
-    size_t pos = 0;
-    while (pos < s.size()) {
-        size_t nl = s.find('\n', pos);
-        size_t len = (nl == std::string::npos) ? s.size() - pos : nl - pos;
-        int32_t w = lv_txt_get_width(s.c_str() + pos, (uint32_t)len, f, 0);
-        if (w > max_w) max_w = w;
-        if (nl == std::string::npos) break;
-        pos = nl + 1;
-    }
-    return max_w;
-}
-
 AppHome::AppHome()
 {
     setAppInfo().name = "AppHome";
@@ -377,7 +360,7 @@ void AppHome::onOpen()
         _dash_glm2 = mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 200, 54);
         big_tl(_dash_glm);
         big_tl(_dash_glm2);
-        big_right(mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "DeepSeek 余额",
+        big_right(mk_lbl(c, zh_font_lg(), NAME, "DeepSeek 余额",
                          LV_ALIGN_TOP_RIGHT, -28, 12));
         _dash_ds   = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 50);
         big_right(_dash_ds);
@@ -584,38 +567,13 @@ void AppHome::onRunning()
         if (!_weather_cond.empty()) lv_label_set_text(_status_wcond, _weather_cond.c_str());
     }
 
-    // Weather-detail popup: worker finished → update text; card size eases to
-    // the new content (width from the longest line, height ×1.25 + margins).
+    // Weather-detail popup: worker finished → 原地换文字 (卡片固定 840x580,
+    // 2026-10-29 用户要求不再自适应缩放)。
     if (_wx_body && _wx_ready.exchange(false)) {
         std::lock_guard<std::mutex> lk(_weather_mutex);
         if (_wx_text != _wx_shown) {
-            int32_t nom = wx_max_line_w(_wx_text);
-            lv_obj_set_width(_wx_body, nom + 2);
             lv_label_set_text(_wx_body, _wx_text.c_str());
-            lv_obj_update_layout(_wx_body);
             _wx_shown = _wx_text;
-            lv_obj_t* card = lv_obj_get_parent(_wx_body);
-            int32_t h1 = 74 + lv_obj_get_height(_wx_body) * 5 / 4 + 24;
-            int32_t w1 = nom * 5 / 4 + 64;
-            if (w1 < 360) w1 = 360;
-            auto anim_size = [](void* var, int32_t v) { lv_obj_set_size((lv_obj_t*)var, lv_obj_get_width((lv_obj_t*)var), v); };
-            auto anim_w    = [](void* var, int32_t v) { lv_obj_set_size((lv_obj_t*)var, v, lv_obj_get_height((lv_obj_t*)var)); };
-            lv_anim_t a;
-            lv_anim_init(&a);
-            lv_anim_set_var(&a, card);
-            lv_anim_set_exec_cb(&a, anim_size);
-            lv_anim_set_values(&a, lv_obj_get_height(card), h1);
-            lv_anim_set_duration(&a, 300);
-            lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-            lv_anim_start(&a);
-            lv_anim_t b;
-            lv_anim_init(&b);
-            lv_anim_set_var(&b, card);
-            lv_anim_set_exec_cb(&b, anim_w);
-            lv_anim_set_values(&b, lv_obj_get_width(card), w1);
-            lv_anim_set_duration(&b, 300);
-            lv_anim_set_path_cb(&b, lv_anim_path_ease_out);
-            lv_anim_start(&b);
         }
     }
 
@@ -1081,38 +1039,22 @@ lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
 // ─── Weather detail popup (weather tap) ─────────────────────────────────────
 void AppHome::_openWeatherDialog()
 {
-    // 宽高都随实际内容 (2026-10-28 用户要求): 有上次内容 → 量最长行定宽并
-    // 直接按它开卡 (0 等待 0 跳变, 后台静默刷新); 首次 → 紧凑小卡「加载中…」,
-    // 数据到手后宽高 300ms 缓出动画展开
-    bool have_cache = !_wx_shown.empty();
-    int32_t nom_w = have_cache ? wx_max_line_w(_wx_shown) : 0;
-    int32_t card_w = have_cache ? nom_w * 5 / 4 + 64 : 360;
-    if (card_w < 360) card_w = 360;
-    lv_obj_t* card = _openModal((int)card_w, have_cache ? 220 : 160, "天气详情");
+    // 固定尺寸 (2026-10-29 用户要求, 不再随内容自适应): 按最坏内容
+    // (当前天气 3 行 + 未来几天 4 行) 预留。有上次内容直接显示, 首次
+    // 「加载中…」, 数据到手后原地换文字, 卡片永不缩放/展开。
+    // 固定尺寸 (2026-10-29 用户三轮调参: 840x580 → 宽-35% → 高再-5%)。
+    lv_obj_t* card = _openModal(546, 440, "天气详情");
 
-    // 正文: 与卡片文字同款 1.25x; 换行宽 492 (×1.25 视觉 615), 锁左上角。
-    // 丝滑 (2026-10-28): 有上次内容直接按它开卡 (0 等待 0 跳变, 后台静默刷新),
-    // 首次才显示加载中小卡; 数据到手后高度 300ms 缓出动画展开
-    auto mk_body = [&](int32_t lbl_w) {
-        _wx_body = lv_label_create(card);
-        lv_obj_set_pos(_wx_body, 32, 74);
-        lv_obj_set_width(_wx_body, lbl_w);
-        lv_obj_set_style_text_color(_wx_body, lv_color_hex(theme::cur().text_hi), 0);
-        lv_obj_set_style_text_font(_wx_body, zh_font_lg(), 0);
-        lv_obj_set_style_text_line_space(_wx_body, 12, 0);
-        lv_obj_set_style_transform_scale(_wx_body, 320, 0);
-        lv_obj_set_style_transform_pivot_x(_wx_body, 0, 0);
-        lv_obj_set_style_transform_pivot_y(_wx_body, 0, 0);
-    };
-    if (have_cache) {
-        mk_body(nom_w + 2);   // +2 防测量取整导致末行误换行
-        lv_label_set_text(_wx_body, _wx_shown.c_str());
-        lv_obj_update_layout(_wx_body);
-        lv_obj_set_height(card, 74 + lv_obj_get_height(_wx_body) * 5 / 4 + 24);
-    } else {
-        mk_body(492);
-        lv_label_set_text(_wx_body, "加载中…");
-    }
+    _wx_body = lv_label_create(card);
+    lv_obj_set_pos(_wx_body, 32, 74);
+    lv_obj_set_width(_wx_body, 392);   // (546-32-24)/1.25 换算回名义宽
+    lv_obj_set_style_text_color(_wx_body, lv_color_hex(theme::cur().text_hi), 0);
+    lv_obj_set_style_text_font(_wx_body, zh_font_lg(), 0);
+    lv_obj_set_style_text_line_space(_wx_body, 12, 0);
+    lv_obj_set_style_transform_scale(_wx_body, 320, 0);   // 1.25x 与主页卡片平齐
+    lv_obj_set_style_transform_pivot_x(_wx_body, 0, 0);
+    lv_obj_set_style_transform_pivot_y(_wx_body, 0, 0);
+    lv_label_set_text(_wx_body, _wx_shown.empty() ? "加载中…" : _wx_shown.c_str());
 
     _wx_ready = false;
     _fetchWeatherDetail();
