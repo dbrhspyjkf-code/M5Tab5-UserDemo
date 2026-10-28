@@ -71,7 +71,9 @@ private:
     uint32_t  _last_weather_ms = 0;
 
     lv_obj_t* _status_tools   = nullptr;  // gear/quick-settings icon (left of battery)
-    lv_obj_t* _status_email   = nullptr;  // mail icon (left of wifi), only visible when unread>0
+    lv_obj_t* _status_email   = nullptr;
+    uint32_t   _last_blink_ms = 0;    // 邮件图标闪烁相位
+    bool       _mail_blink_on = true;  // mail icon (left of wifi), only visible when unread>0
     OpenEmailCb _open_email;              // tap handler: jump into settings email sub-page
     uint32_t  _last_email_ms  = 0;        // throttle for the 60s email poll
 
@@ -92,6 +94,7 @@ private:
     lv_obj_t*  _dash_sent_en = nullptr;  // 每日一句英文
     lv_obj_t*  _dash_sent_cn = nullptr;  // 每日一句中文
     lv_obj_t*  _ipo_lbl = nullptr;     // 新股申购行 (hero, 无新股隐藏)
+    lv_obj_t*  _hero_div = nullptr;    // hero 分隔线 (新股行对齐锚点)
     lv_obj_t*  _dash_glm = nullptr;
     lv_obj_t*  _dash_glm2 = nullptr;   // GLM 第二行: 重置时间 (5H/7D)
     lv_obj_t*  _dash_ds  = nullptr;

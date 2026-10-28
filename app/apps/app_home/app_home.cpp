@@ -210,9 +210,14 @@ void AppHome::onOpen()
     lv_obj_set_style_text_font(_ipo_lbl, zh_font_md(), 0);
     lv_obj_set_style_text_color(_ipo_lbl, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_text_line_space(_ipo_lbl, 8, 0);
+    lv_obj_set_style_text_align(_ipo_lbl, LV_TEXT_ALIGN_CENTER, 0);   // 居中 (用户指定)
     lv_label_set_long_mode(_ipo_lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(_ipo_lbl, 400 - 48);
-    lv_obj_set_pos(_ipo_lbl, 24, 366);
+    lv_obj_set_width(_ipo_lbl, 400 - 24);
+    // 相对分隔线定位: 最后一条股票行贴在横线上方, 行数变化向上生长 (用户指定).
+    // 建屏时屏未加载, 需 update_layout 先算出真实坐标, align_to 才不跑偏.
+    lv_obj_update_layout(_ipo_lbl);
+    lv_obj_align_to(_ipo_lbl, div, LV_ALIGN_OUT_TOP_MID, 0, -6);
+    _hero_div = div;
     lv_label_set_text(_ipo_lbl, "");
     lv_obj_add_flag(_ipo_lbl, LV_OBJ_FLAG_HIDDEN);
 
@@ -535,6 +540,11 @@ void AppHome::onRunning()
     }
     // Reflect current unread count in the status-bar mail icon: hidden when 0,
     // visible (and turns red for high count) when there's mail to read.
+    // 邮件图标闪烁相位: 每 500ms 翻转 (1 秒一次完整闪动)
+    if (now - _last_blink_ms >= 500) {
+        _last_blink_ms = now;
+        _mail_blink_on = !_mail_blink_on;
+    }
     if (_status_email) {
         int unread = AppSettings::email_unread_total.load();
         bool should_show = (unread > 0);
@@ -547,6 +557,11 @@ void AppHome::onRunning()
             // Light ink on deep green: amber when there's a lot to read.
             uint32_t c = unread >= 10 ? theme::cur().warn : theme::cur().text_hi;
             lv_obj_set_style_text_color(_status_email, lv_color_hex(c), 0);
+            // 1 秒闪动一次 (onRunning 每 500ms 翻转透明度; 2026-10-28 用户要求)
+            lv_obj_set_style_opa(_status_email,
+                                 _mail_blink_on ? LV_OPA_COVER : LV_OPA_30, 0);
+        } else {
+            lv_obj_set_style_opa(_status_email, LV_OPA_COVER, 0);
         }
     }
 
@@ -771,6 +786,11 @@ void AppHome::_fetch_dashboard()
         _dash_glm2_txt = glm_sub;
         if (!sent_en.empty()) { _dash_sent_en_txt = sent_en; _dash_sent_cn_txt = sent_cn; }
         _ipo_txt = ipo_txt;   // 空串=无新股, UI 隐藏
+        // 行数变化后重新贴回分隔线上方 (UI 线程执行)
+        if (_ipo_lbl && _hero_div) {
+            lv_obj_update_layout(_ipo_lbl);
+            lv_obj_align_to(_ipo_lbl, _hero_div, LV_ALIGN_OUT_TOP_MID, 0, -6);
+        }
         mclog::tagInfo(_tag, "[dbg] ipo='{}'", ipo_txt.c_str());
         _dash_ds_txt  = ds_txt;
         _dash_ag1_txt = ag1.empty() ? "今日无提醒/行程" : ag1;
