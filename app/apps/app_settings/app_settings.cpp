@@ -1852,9 +1852,8 @@ void AppSettings::_emailRefresh()
         std::lock_guard<std::mutex> lk(email_list_mutex);
         copy = email_list;
     }
-    // 只显示最新 3 张 (2026-10-28 用户: 邮件页只显示 3 个 CARD; 列表本身
-    // 最新在前, 多余的丢弃不渲染)
-    if (copy.size() > 3) copy.resize(3);
+    // 只显示最新 2 张 (2026-10-28 用户: 改 2 卡看更多内容; 列表最新在前)
+    if (copy.size() > 2) copy.resize(2);
 
     if (copy.empty()) {
         lv_label_set_text(_email_hint, "没有未读邮件");
@@ -1864,11 +1863,11 @@ void AppSettings::_emailRefresh()
 
     lv_obj_add_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
 
-    // 未读卡片: 整宽 3 行 1 列 (股票卡同款皮肤: 深色底 / radius 18 / 无边框),
-    // 每张 = 发件人+时间 / 主题 / 内容预览; 卡高 220: 220*3+间距10*2=680 恰好铺满列表区
+    // 未读卡片: 整宽 2 卡 (股票卡同款皮肤: 深色底 / radius 18 / 无边框),
+    // 每张 = 发件人+时间 / 主题 / 内容 6 行 wrap; 卡高 335: 335*2+10=680 恰铺满
     for (const auto& m : copy) {
         lv_obj_t* card = lv_obj_create(_email_list);
-        lv_obj_set_size(card, LV_PCT(100), 220);
+        lv_obj_set_size(card, LV_PCT(100), 335);
         lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD_PR), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(card, 18, 0);
@@ -1894,7 +1893,7 @@ void AppSettings::_emailRefresh()
             lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_RIGHT, 0);
         }
         mk_line(m.subject.c_str(), C_TEXT, 64);                    // 主题
-        // 内容: 3 行换行区 (y110 起到卡底; 服务器预览 800 字符, 显示 ~230 字母)
+        // 内容: 6 行换行区 (y110 到卡底; 服务器预览 800 字符, 显示 ~460 字母)
         {
             lv_obj_t* p = lv_label_create(card);
             lv_label_set_text(p, m.preview.c_str());
@@ -1904,7 +1903,7 @@ void AppSettings::_emailRefresh()
             lv_label_set_long_mode(p, LV_LABEL_LONG_WRAP);
             lv_obj_set_pos(p, 24, 110);
             lv_obj_set_width(p, 1200 - 48);
-            lv_obj_set_height(p, 108);
+            lv_obj_set_height(p, 222);
         }
     }
 }
