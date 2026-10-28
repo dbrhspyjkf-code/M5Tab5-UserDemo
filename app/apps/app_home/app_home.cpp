@@ -169,7 +169,10 @@ void AppHome::onOpen()
     // Weather row (tap → detailed weather dialog): temperature (latin font,
     // has °) + condition (zh font), centered in dark ink.
     lv_obj_t* wbox = lv_obj_create(hero);
-    lv_obj_set_size(wbox, LV_SIZE_CONTENT, 40);
+    // 宽度给足 (392≈卡宽): SIZE_CONTENT 会按未缩放文字算宽, 容器默认裁剪会截掉
+    // 子标签 1.25x 溢出部分 (「多云」的云被截半); OVERFLOW_VISIBLE 在 9.2 只放宽
+    // 到容器自身 ext draw size (无变换=0) 不管用, 直接给宽到卡缘
+    lv_obj_set_size(wbox, 400 - 8, 40);
     lv_obj_set_style_bg_opa(wbox, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(wbox, 0, 0);
     lv_obj_set_style_pad_all(wbox, 0, 0);
@@ -177,8 +180,6 @@ void AppHome::onOpen()
     lv_obj_set_flex_flow(wbox, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(wbox, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(wbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_add_flag(wbox, LV_OBJ_FLAG_OVERFLOW_VISIBLE);   // SIZE_CONTENT 容器按未缩放算宽,
-        // 会把子标签 1.25x 放大溢出部分裁掉 (「多云」的云被截半), 放行溢出绘制
     lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 282);
 
     _status_wtemp = lv_label_create(wbox);
