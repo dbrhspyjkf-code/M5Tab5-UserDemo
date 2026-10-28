@@ -123,8 +123,7 @@ private:
 
     // ── Email (邮件) ────────────────────────────────────────────────────────────
     lv_obj_t*   _email_page   = nullptr;
-    lv_obj_t*   _email_title  = nullptr;  // "邮件 (N 封未读)" — top title
-    lv_obj_t*   _email_hint   = nullptr;  // 列表区居中提示 (加载中/失败/无未读) — 顶部状态条已删
+    lv_obj_t*   _email_hint   = nullptr;  // 列表区居中提示 (加载中/失败/无未读)
     lv_obj_t*   _email_list   = nullptr;  // 未读邮件卡片列 (3 行 1 列, 参考股票卡)
 
     void _buildToolsPage();
@@ -179,5 +178,4 @@ private:
     static void _toolCalendar_cb(lv_event_t* e); // tools tile → open 万年历
     static void _toolReachy_cb(lv_event_t* e); // tools tile → open Reachy app
     static void _toolRfid_cb(lv_event_t* e);   // tools tile → open RFID 读写器
-    static void _emailRefresh_cb(lv_event_t* e); // 邮件子页刷新按钮 → _emailFetch
 };

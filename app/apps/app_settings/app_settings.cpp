@@ -259,7 +259,7 @@ void AppSettings::onClose()
     _calc_expr_lbl = _calc_res_lbl = nullptr;
     _fx_from_dd = _fx_to_dd = _fx_amt_lbl = _fx_res_lbl = _fx_rate_lbl = nullptr;
     _unit_cat_dd = _unit_from_dd = _unit_to_dd = _unit_amt_lbl = _unit_res_lbl = _unit_eq_lbl = nullptr;
-    _email_page = _email_title = _email_hint = _email_list = nullptr;
+    _email_page = _email_hint = _email_list = nullptr;
     // 不清零 email_unread_total: 本 app 只展示邮件列表, 没有"标记已读"功能,
     // 退出不代表邮件已读. 未读数是服务器真实状态 (由轮询刷新), 退出后状态栏
     // 信封图标 / 灯阵 NEW EMAIL 应继续按真实未读显示.
@@ -667,14 +667,6 @@ void AppSettings::_toolRfid_cb(lv_event_t* e)
     }
 }
 
-void AppSettings::_emailRefresh_cb(lv_event_t* e)
-{
-    // 邮件子页 "刷新" 按钮 → 重新拉取. _emailFetch 内部 exchange(true) 跳过 in-flight.
-    auto* app = static_cast<AppSettings*>(lv_event_get_user_data(e));
-    mclog::tagInfo(_tag, "email refresh button clicked");
-    app->fetchEmail();  // (also static; the explicit instance call keeps the
-                       //  refresh-button event handler readable)
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Calculator
@@ -1688,32 +1680,14 @@ void AppSettings::_openEmail()
     lv_obj_set_style_pad_all(_email_page, 0, 0);
     lv_obj_clear_flag(_email_page, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 顶部 title — "邮件" 或 "邮件 (N 封未读)" (顶部状态条已删, 2026-10-28 用户要求)
-    _email_title = lv_label_create(_email_page);
-    lv_label_set_text(_email_title, "邮件");
-    lv_obj_set_style_text_color(_email_title, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_text_font(_email_title, zh_font_30(), 0);
-    lv_obj_align(_email_title, LV_ALIGN_TOP_MID, 0, 28);
-
-    // 刷新按钮 (右上角) — 点击重新拉取, _emailFetch 内部有 in-flight 保护
-    lv_obj_t* refresh = lv_btn_create(_email_page);
-    lv_obj_set_size(refresh, 100, 50);
-    lv_obj_align(refresh, LV_ALIGN_TOP_RIGHT, -30, 30);
-    lv_obj_set_style_bg_color(refresh, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_radius(refresh, 12, 0);
-    lv_obj_set_style_border_width(refresh, 0, 0);
-    lv_obj_add_event_cb(refresh, _emailRefresh_cb, LV_EVENT_CLICKED, this);
-    lv_obj_t* refresh_lbl = lv_label_create(refresh);
-    lv_label_set_text(refresh_lbl, "刷新");
-    lv_obj_set_style_text_font(refresh_lbl, zh_font_30(), 0);
-    lv_obj_set_style_text_color(refresh_lbl, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_center(refresh_lbl);
+    // 顶部 title / 刷新按钮已整体删除 (2026-10-28 用户要求) — 页面只有卡片列表;
+    // 后台 AppHome 60s 轮询 + onRunning email_updated 自动重建, 无需手动刷新
 
     // 未读邮件卡片列 (3 行 1 列, 参考股票卡; 不用 lv_list — 其内部 scroll/clip
     // 渲染会触发 1200x16 RGBA8888 layer buffer (76.8KB) 反复分配, LVGL 死循环)
     _email_list = lv_obj_create(_email_page);
-    lv_obj_set_size(_email_list, 1200, 570);
-    lv_obj_align(_email_list, LV_ALIGN_TOP_MID, 0, 96);
+    lv_obj_set_size(_email_list, 1200, 680);
+    lv_obj_align(_email_list, LV_ALIGN_TOP_MID, 0, 20);
     lv_obj_set_style_bg_color(_email_list, lv_color_hex(C_BG), 0);
     lv_obj_set_style_bg_opa(_email_list, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(_email_list, 0, 0);
@@ -1730,7 +1704,7 @@ void AppSettings::_openEmail()
     lv_label_set_text(_email_hint, "加载中…");
     lv_obj_set_style_text_color(_email_hint, lv_color_hex(C_DIM), 0);
     lv_obj_set_style_text_font(_email_hint, zh_font_30(), 0);
-    lv_obj_align(_email_hint, LV_ALIGN_TOP_MID, 0, 370);
+    lv_obj_align(_email_hint, LV_ALIGN_TOP_MID, 0, 340);
 
     // 已有缓存列表先渲染 (状态条轮询成功过的数据直接显示, 不空等)
     if (!email_list.empty() && _email_list) _emailRefresh();
@@ -1747,7 +1721,7 @@ void AppSettings::_closeEmail()
 {
     if (_email_page) {
         lv_obj_delete(_email_page);
-        _email_page = _email_title = _email_hint = _email_list = nullptr;
+        _email_page = _email_hint = _email_list = nullptr;
     }
     if (_tools_page) lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1871,16 +1845,11 @@ void AppSettings::_emailRefresh()
     }
 
     if (copy.empty()) {
-        lv_label_set_text(_email_title, "邮件");
         lv_label_set_text(_email_hint, "没有未读邮件");
         lv_obj_clear_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
-    int total = email_unread_total.load();
-    char buf[64];
-    snprintf(buf, sizeof(buf), "邮件 (%d 封未读)", total);
-    lv_label_set_text(_email_title, buf);
     lv_obj_add_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
 
     // 未读卡片: 整宽 3 行 1 列 (股票卡同款皮肤: 深色底 / radius 18 / 无边框),
