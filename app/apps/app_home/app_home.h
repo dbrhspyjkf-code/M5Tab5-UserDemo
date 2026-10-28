@@ -133,6 +133,7 @@ private:
     // into the _wx_body label once _wx_ready flips.
     lv_obj_t*         _wx_body  = nullptr;
     std::string       _wx_text;
+    std::string       _wx_shown;   // 弹窗当前显示的内容 (丝滑: 重开直接上次的, 后台刷新)
     std::atomic<bool> _wx_ready{false};
     void _openWeatherDialog();
     void _fetchWeatherDetail();
