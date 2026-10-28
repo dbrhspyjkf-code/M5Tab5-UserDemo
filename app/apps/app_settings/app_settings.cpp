@@ -1692,10 +1692,11 @@ void AppSettings::_openEmail()
     // 顶部 title / 刷新按钮已整体删除 (2026-10-28 用户要求) — 页面只有卡片列表;
     // 后台 AppHome 60s 轮询 + onRunning email_updated 自动重建, 无需手动刷新
 
-    // 未读邮件卡片列 (3 行 1 列, 参考股票卡; 不用 lv_list — 其内部 scroll/clip
-    // 渲染会触发 1200x16 RGBA8888 layer buffer (76.8KB) 反复分配, LVGL 死循环)
+    // 未读邮件卡片列 (上下拉查看全部未读; 左右边距 20 = 上下边距。
+    // 不用 lv_list — 其内部 scroll/clip 渲染会触发 1200x16 RGBA8888 layer
+    // buffer (76.8KB) 反复分配, LVGL 死循环)
     _email_list = lv_obj_create(_email_page);
-    lv_obj_set_size(_email_list, 1200, 680);
+    lv_obj_set_size(_email_list, 1240, 680);
     lv_obj_align(_email_list, LV_ALIGN_TOP_MID, 0, 20);
     lv_obj_set_style_bg_color(_email_list, lv_color_hex(C_BG), 0);
     lv_obj_set_style_bg_opa(_email_list, LV_OPA_COVER, 0);
@@ -1703,7 +1704,7 @@ void AppSettings::_openEmail()
     lv_obj_set_style_radius(_email_list, 0, 0);
     lv_obj_set_style_pad_all(_email_list, 0, 0);
     lv_obj_set_scroll_dir(_email_list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(_email_list, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scrollbar_mode(_email_list, LV_SCROLLBAR_MODE_ACTIVE);
     lv_obj_set_flex_flow(_email_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(_email_list, 10, 0);   // 220*3 + 10*2 = 680 恰铺满
 
@@ -1852,8 +1853,8 @@ void AppSettings::_emailRefresh()
         std::lock_guard<std::mutex> lk(email_list_mutex);
         copy = email_list;
     }
-    // 只显示最新 2 张 (2026-10-28 用户: 改 2 卡看更多内容; 列表最新在前)
-    if (copy.size() > 2) copy.resize(2);
+    // 渲染全部未读 (服务器每文件夹 ≤10 封), 视口 2 张, 上下拉看更多
+    // (2026-10-28 用户: 有 3 封却只见 2 张要能拉)
 
     if (copy.empty()) {
         lv_label_set_text(_email_hint, "没有未读邮件");
@@ -1883,7 +1884,7 @@ void AppSettings::_emailRefresh()
             lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
             lv_obj_align(l, LV_ALIGN_TOP_LEFT, 24, y);
             lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
-            lv_obj_set_width(l, 1200 - 48);
+            lv_obj_set_width(l, LV_PCT(100));
             return l;
         };
         mk_line(m.from.c_str(), C_TEXT, 18);                       // 发件人 (左上)
@@ -1902,7 +1903,7 @@ void AppSettings::_emailRefresh()
             lv_obj_set_style_text_line_space(p, 2, 0);
             lv_label_set_long_mode(p, LV_LABEL_LONG_WRAP);
             lv_obj_set_pos(p, 24, 110);
-            lv_obj_set_width(p, 1200 - 48);
+            lv_obj_set_width(p, LV_PCT(100));
             lv_obj_set_height(p, 222);
         }
     }
