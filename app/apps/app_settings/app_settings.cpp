@@ -212,6 +212,11 @@ void AppSettings::onOpen()
     _buildToolsPage();
     lv_screen_load(_scr);
     _installSwipeGesture();
+    // 主页邮件图标在 app 未打开时点的: 屏建好了, 补开邮件子页
+    if (_email_open_pending) {
+        _email_open_pending = false;
+        _openEmail();
+    }
 #ifdef PLATFORM_BUILD_DESKTOP
     if (const char* e = getenv("TAB5_OPEN_CALENDAR")) {
         if (e[0] == '1') {
@@ -1661,8 +1666,12 @@ void AppSettings::openEmailPage()
 {
     // Public entry used by the home status-bar mail icon. Same as the user
     // tapping the "邮件" tool tile — build the sub-page and kick off a fetch.
-    // No-op if the app hasn't been opened yet (no _scr).
-    if (!_scr) return;
+    // 首次点击时 app 尚未打开, openApp() 异步切换后 onOpen 才建屏 (_scr 为空,
+    // 直接 _openEmail 会空跑落在工具页) — 挂 pending, onOpen 建屏后补开.
+    if (!_scr) {
+        _email_open_pending = true;
+        return;
+    }
     _openEmail();
 }
 
@@ -1696,7 +1705,7 @@ void AppSettings::_openEmail()
     lv_obj_set_scroll_dir(_email_list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(_email_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_flow(_email_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(_email_list, 12, 0);
+    lv_obj_set_style_pad_row(_email_list, 10, 0);   // 220*3 + 10*2 = 680 恰铺满
 
     // 列表内居中提示 (加载中 / 失败 / 无未读) — 挂 page 上悬浮列表区中心
     // (挂 _email_list 会被 flex 布局顶走; 有卡片时隐藏)
@@ -1843,6 +1852,9 @@ void AppSettings::_emailRefresh()
         std::lock_guard<std::mutex> lk(email_list_mutex);
         copy = email_list;
     }
+    // 只显示最新 3 张 (2026-10-28 用户: 邮件页只显示 3 个 CARD; 列表本身
+    // 最新在前, 多余的丢弃不渲染)
+    if (copy.size() > 3) copy.resize(3);
 
     if (copy.empty()) {
         lv_label_set_text(_email_hint, "没有未读邮件");
@@ -1853,10 +1865,10 @@ void AppSettings::_emailRefresh()
     lv_obj_add_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
 
     // 未读卡片: 整宽 3 行 1 列 (股票卡同款皮肤: 深色底 / radius 18 / 无边框),
-    // 每张 = 发件人+时间 / 主题 / 内容预览
+    // 每张 = 发件人+时间 / 主题 / 内容预览; 卡高 220: 220*3+间距10*2=680 恰好铺满列表区
     for (const auto& m : copy) {
         lv_obj_t* card = lv_obj_create(_email_list);
-        lv_obj_set_size(card, LV_PCT(100), 158);
+        lv_obj_set_size(card, LV_PCT(100), 220);
         lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD_PR), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(card, 18, 0);
@@ -1875,14 +1887,14 @@ void AppSettings::_emailRefresh()
             lv_obj_set_width(l, 1200 - 48);
             return l;
         };
-        mk_line(m.from.c_str(), C_TEXT, 14);                       // 发件人 (左上)
+        mk_line(m.from.c_str(), C_TEXT, 22);                       // 发件人 (左上)
         if (!m.date.empty()) {
-            lv_obj_t* t = mk_line(m.date.c_str(), C_DIM, 14);      // 时间 (右上)
-            lv_obj_align(t, LV_ALIGN_TOP_RIGHT, -24, 14);
+            lv_obj_t* t = mk_line(m.date.c_str(), C_DIM, 22);      // 时间 (右上)
+            lv_obj_align(t, LV_ALIGN_TOP_RIGHT, -24, 22);
             lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_RIGHT, 0);
         }
-        mk_line(m.subject.c_str(), C_TEXT, 58);                    // 主题
-        mk_line(m.preview.c_str(), C_DIM, 102);                    // 内容预览
+        mk_line(m.subject.c_str(), C_TEXT, 88);                    // 主题
+        mk_line(m.preview.c_str(), C_DIM, 154);                    // 内容预览
     }
 }
 

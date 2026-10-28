@@ -122,6 +122,7 @@ private:
     int         _unit_cat_idx = 0;        // current category
 
     // ── Email (邮件) ────────────────────────────────────────────────────────────
+    bool        _email_open_pending = false;  // app 未打开时点了主页邮件图标, onOpen 建屏后补开
     lv_obj_t*   _email_page   = nullptr;
     lv_obj_t*   _email_hint   = nullptr;  // 列表区居中提示 (加载中/失败/无未读)
     lv_obj_t*   _email_list   = nullptr;  // 未读邮件卡片列 (3 行 1 列, 参考股票卡)
