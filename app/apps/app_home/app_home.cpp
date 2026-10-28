@@ -177,10 +177,13 @@ void AppHome::onOpen()
     lv_obj_set_flex_flow(wbox, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(wbox, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(wbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    lv_obj_add_flag(wbox, LV_OBJ_FLAG_OVERFLOW_VISIBLE);   // SIZE_CONTENT 容器按未缩放算宽,
+        // 会把子标签 1.25x 放大溢出部分裁掉 (「多云」的云被截半), 放行溢出绘制
     lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 282);
 
     _status_wtemp = lv_label_create(wbox);
-    lv_obj_set_style_text_font(_status_wtemp, &lv_font_montserrat_30, 0);
+    // 数字用 zh 字体 (与 44.11 元同款): montserrat 同尺寸下笔画粗、视觉偏大 (用户反馈)
+    lv_obj_set_style_text_font(_status_wtemp, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_status_wtemp, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_wtemp, "");
     lv_obj_set_style_transform_scale(_status_wtemp, 320, 0);
@@ -213,8 +216,12 @@ void AppHome::onOpen()
     lv_obj_set_style_text_line_space(_ipo_lbl, 4, 0);   // 1.25x 后收紧, 防满额 4 行顶到天气行
     lv_obj_set_style_text_align(_ipo_lbl, LV_TEXT_ALIGN_CENTER, 0);   // 居中 (用户指定)
     lv_label_set_long_mode(_ipo_lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(_ipo_lbl, 400 - 24);
+    lv_obj_set_width(_ipo_lbl, 312);   // 312*1.25=390: 放大后视觉宽恰好回到卡内 (400-2*5)
     lv_obj_set_style_transform_scale(_ipo_lbl, 320, 0);   // 1.25x 与全主页平齐
+    // 基准锁底边中心: 横向保持卡片居中 (默认中心 pivot 放大后横向超宽跑偏, 用户实锤),
+    // 纵向向上生长、视觉底边贴回分隔线上方
+    lv_obj_set_style_transform_pivot_x(_ipo_lbl, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(_ipo_lbl, LV_PCT(100), 0);
     // 相对分隔线定位: 最后一条股票行贴在横线上方, 行数变化向上生长 (用户指定).
     // 建屏时屏未加载, 需 update_layout 先算出真实坐标, align_to 才不跑偏.
     lv_obj_update_layout(_ipo_lbl);
