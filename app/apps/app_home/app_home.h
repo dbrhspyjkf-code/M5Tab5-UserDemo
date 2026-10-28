@@ -33,6 +33,10 @@ public:
     using OpenEmailCb = std::function<void()>;
     void setOpenEmailHandler(OpenEmailCb cb) { _open_email = std::move(cb); }
 
+    // 收音机后台播放状态 (app_installer 注入): 返回播放中的台名, 未播返回
+    // 空串。主页状态栏据此显示/隐藏音符图标 (点按回收音机页)。
+    void setNowPlayingGetter(std::function<std::string()> g) { _np_getter = std::move(g); }
+
     // Cached weather (refreshed every 15 min by AppHome's own status bar) —
     // read by AppIdleScreen so it doesn't need its own fetch/cache/timer.
     void getWeather(std::string& temp, std::string& cond)
@@ -72,9 +76,11 @@ private:
 
     lv_obj_t* _status_tools   = nullptr;  // gear/quick-settings icon (left of battery)
     lv_obj_t* _status_email   = nullptr;
+    lv_obj_t* _np_lbl         = nullptr;  // 收音机后台播放中 ♪ 图标 (点按回收音机)
     uint32_t   _last_blink_ms = 0;    // 邮件图标闪烁相位
     bool       _mail_blink_on = true;  // mail icon (left of wifi), only visible when unread>0
     OpenEmailCb _open_email;              // tap handler: jump into settings email sub-page
+    std::function<std::string()> _np_getter;  // 收音机播放状态 (installer 注入)
     uint32_t  _last_email_ms  = 0;        // throttle for the 60s email poll
 
     // Weather is fetched asynchronously (home has no HA client of its own), so a
@@ -147,6 +153,8 @@ private:
     lv_obj_t* _qs_vol_lbl = nullptr;  // quick-settings volume %
     lv_obj_t* _qs_brt_lbl = nullptr;  // quick-settings brightness %
     lv_obj_t* _qs_theme_lbl = nullptr; // quick-settings theme-cycle button
+    lv_obj_t* _qs_ss_chk  = nullptr;  // quick-settings 屏保 checkbox (NVS screensaver_en)
+    lv_obj_t* _qs_ss_dd   = nullptr;  // quick-settings 闲置超时下拉 (NVS screensaver_min)
     lv_obj_t* _net_ssid   = nullptr;  // network dialog: SSID textarea
     lv_obj_t* _net_pass   = nullptr;  // network dialog: password textarea
     lv_obj_t* _net_host   = nullptr;  // network dialog: server host textarea (writes both ha_host + svc_host)
@@ -168,6 +176,8 @@ private:
     static void _qsVol_cb(lv_event_t* e);
     static void _qsBrt_cb(lv_event_t* e);
     static void _qsTheme_cb(lv_event_t* e);   // theme::cycle() + rebuild
+    static void _qsSs_chk_cb(lv_event_t* e);  // 屏保开关 → NVS screensaver_en
+    static void _qsSs_dd_cb(lv_event_t* e);   // 闲置超时下拉 → NVS screensaver_min
     void _refreshThemeBtn();                   // 按钮文字 ← 当前主题名
     static void _netTa_cb(lv_event_t* e);
     static void _netKb_cb(lv_event_t* e);

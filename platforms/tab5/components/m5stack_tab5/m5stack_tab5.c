@@ -5,6 +5,7 @@
  */
 
 #include "sdkconfig.h"
+#include <math.h>
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_err.h"
@@ -1142,9 +1143,18 @@ esp_err_t bsp_display_brightness_set(int brightness_percent)
         brightness_percent = 0;
     }
 
-    ESP_LOGI(TAG, "Setting LCD backlight: %d%%", brightness_percent);
-    // uint32_t duty_cycle = (1023 * brightness_percent) / 100; // LEDC resolution set to 10bits, thus: 100% = 1023
-    uint32_t duty_cycle = (4095 * brightness_percent) / 100;  // LEDC resolution set to 12bits, thus: 100% = 4095
+    // 线性占空比在人眼里低段还是很亮（人眼对亮度近似幂律响应），按 gamma 2.2
+    // 做感知校正：10% → ~1.6% 占空比、50% → ~22%、100% 不变。非 0 时留 ~1%
+    // 占空比下限，避免背光驱动在极窄脉冲下无输出。
+    uint32_t duty_cycle;
+    if (brightness_percent == 0) {
+        duty_cycle = 0;
+    } else {
+        double gamma_pct = pow((double)brightness_percent / 100.0, 2.2);
+        duty_cycle = (uint32_t)(41 + (4095 - 41) * gamma_pct);  // LEDC 12bit
+    }
+    ESP_LOGI(TAG, "Setting LCD backlight: %d%% (duty %lu/4095)", brightness_percent,
+             (unsigned long)duty_cycle);
     BSP_ERROR_CHECK_RETURN_ERR(ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CH, duty_cycle));
     BSP_ERROR_CHECK_RETURN_ERR(ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CH));
     return ESP_OK;

@@ -6,6 +6,7 @@
 #include <ctime>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <xiaozhi_ctl.h>
 #include "../app_voice_input/app_voice_input.h"
@@ -282,6 +283,15 @@ void AppHome::onOpen()
     lv_label_set_text(_status_email, LV_SYMBOL_ENVELOPE);
     lv_obj_add_flag(_status_email, LV_OBJ_FLAG_HIDDEN);
     make_tappable(_status_email, 5);
+
+    // 收音机后台播放指示 (2026-10-28): 流任务在播时显示, 点按回收音机页。
+    // 上拨退出收音机不再停流 —— 主页这个音符图标就是回到它的入口。
+    _np_lbl = lv_label_create(irow);
+    lv_obj_set_style_text_font(_np_lbl, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(_np_lbl, lv_color_hex(theme::cur().ok), 0);
+    lv_label_set_text(_np_lbl, LV_SYMBOL_AUDIO);
+    lv_obj_add_flag(_np_lbl, LV_OBJ_FLAG_HIDDEN);
+    make_tappable(_np_lbl, 6);
 
     // Quick-settings gear (volume + brightness).
     _status_tools = lv_label_create(irow);
@@ -644,6 +654,16 @@ void AppHome::onRunning()
         }
     }
 
+    // 收音机后台播放指示: 流任务在播 → 显示音符图标(点按回收音机页)
+    if (_np_lbl) {
+        bool playing = _np_getter && !_np_getter().empty();
+        bool is_shown = !lv_obj_has_flag(_np_lbl, LV_OBJ_FLAG_HIDDEN);
+        if (playing != is_shown) {
+            if (playing) lv_obj_clear_flag(_np_lbl, LV_OBJ_FLAG_HIDDEN);
+            else         lv_obj_add_flag(_np_lbl, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
     // Dashboard cards — poll hermes every 60s. All four endpoints are
     // server-side caches (ms-fast), the worker does the HTTP off the UI loop.
     if (_last_dash_ms == 0 || now - _last_dash_ms > 60 * 1000) {
@@ -957,6 +977,7 @@ void AppHome::onClose()
     _status_batt  = nullptr;
     _status_tools = nullptr;
     _status_email = nullptr;
+    _np_lbl       = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
     _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
     _btn_data.clear();
@@ -1012,6 +1033,7 @@ void AppHome::_closeModal()
     _modal      = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
     _qs_theme_lbl = nullptr;
+    _qs_ss_chk = _qs_ss_dd = nullptr;
     _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
     _wx_body  = nullptr;
 }
@@ -1211,10 +1233,10 @@ void AppHome::_openPowerDialog()
     lv_obj_align(b_cancel, LV_ALIGN_BOTTOM_LEFT, x0 + 2 * (BW + GAP), -32);
 }
 
-// ─── Quick-settings dialog (gear tap): volume + brightness + theme ──────────
+// ─── Quick-settings dialog (gear tap): volume + brightness + screensaver + theme ──
 void AppHome::_openQuickSettings()
 {
-    lv_obj_t* card = _openModal(680, 440, "音量与亮度");
+    lv_obj_t* card = _openModal(680, 440, "设置");
 
     const int LBL_X = 40, SLD_X = 180, SLD_W = 380, SLD_H = 44;
     const int VAL_X = SLD_X + SLD_W + 18;
@@ -1255,6 +1277,52 @@ void AppHome::_openQuickSettings()
     int brt = GetHAL()->getDisplayBrightness();
     mk_row("音量", 86,  0, 100, vol, _qsVol_cb, &_qs_vol_lbl);
     mk_row("亮度", 158, 10, 100, brt, _qsBrt_cb, &_qs_brt_lbl);
+
+    // 屏保行 (2026-10-28 用户需求): 勾选=闲置后进屏保; 不勾=不弹屏保、改为把
+    // 亮度降到 5%。下拉选闲置时间 (2/5/10 分钟), 两种模式共用。NVS 持久化,
+    // AppIdleScreen 每 3s 刷新配置, 改完即生效。
+    lv_obj_t* ss_l = lv_label_create(card);
+    lv_label_set_text(ss_l, "屏保");
+    lv_obj_set_pos(ss_l, LBL_X, 240);
+    lv_obj_set_style_text_color(ss_l, lv_color_hex(T_LBL()), 0);
+    lv_obj_set_style_text_font(ss_l, zh_font_lg(), 0);
+
+    _qs_ss_chk = lv_checkbox_create(card);
+    lv_checkbox_set_text(_qs_ss_chk, "");
+    lv_obj_set_pos(_qs_ss_chk, SLD_X, 236);
+    lv_obj_set_style_text_font(_qs_ss_chk, zh_font_lg(), 0);
+    lv_obj_set_style_bg_color(_qs_ss_chk, lv_color_hex(theme::cur().track), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_qs_ss_chk, lv_color_hex(T_ACCENT()),
+                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    if (GetHAL()->getConfig("screensaver_en", "1") != "0")
+        lv_obj_add_state(_qs_ss_chk, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(_qs_ss_chk, _qsSs_chk_cb, LV_EVENT_VALUE_CHANGED, this);
+
+    _qs_ss_dd = lv_dropdown_create(card);
+    lv_dropdown_set_options(_qs_ss_dd, "2 分钟\n5 分钟\n10 分钟");  // set_options 内部复制, 勿用 _static
+    int mins = atoi(GetHAL()->getConfig("screensaver_min", "5").c_str());
+    lv_dropdown_set_selected(_qs_ss_dd, mins <= 2 ? 0 : (mins <= 5 ? 1 : 2));
+    lv_obj_set_pos(_qs_ss_dd, SLD_X + 72, 232);
+    lv_obj_set_size(_qs_ss_dd, 220, 44);
+    lv_obj_set_style_text_font(_qs_ss_dd, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(_qs_ss_dd, lv_color_hex(T_LBL()), 0);
+    lv_obj_set_style_bg_color(_qs_ss_dd, lv_color_hex(theme::cur().track), 0);
+    lv_dropdown_set_symbol(_qs_ss_dd, nullptr);   // 默认 FA 箭头 zh 字体无字形
+    // 列表对象构造时就已存在 (parent=所在 screen), 当场设字体否则中文变 tofu
+    lv_obj_t* ss_list = lv_dropdown_get_list(_qs_ss_dd);
+    if (ss_list) {
+        lv_obj_set_style_text_font(ss_list, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(ss_list, lv_color_hex(theme::cur().text_hi), 0);
+        lv_obj_set_style_bg_color(ss_list, lv_color_hex(theme::cur().card[1]), 0);
+        lv_obj_set_style_bg_opa(ss_list, LV_OPA_COVER, 0);
+    }
+    lv_obj_add_event_cb(_qs_ss_dd, _qsSs_dd_cb, LV_EVENT_VALUE_CHANGED, this);
+
+    lv_obj_t* hint = lv_label_create(card);
+    lv_label_set_text(hint, "勾选：闲置后显示屏保；不勾：闲置后熄屏");
+    lv_obj_set_pos(hint, LBL_X, 300);
+    lv_obj_set_style_text_color(hint, lv_color_hex(theme::cur().text_dim), 0);
+    lv_obj_set_style_text_font(hint, zh_font_sm(), 0);
 
     // 主题循环切换（松绿→暖橙→海蓝→岩紫…）：立即重建主页，其他 app 下次
     // 打开生效。按钮文字显示当前主题名。
@@ -1319,6 +1387,23 @@ void AppHome::_qsBrt_cb(lv_event_t* e)
     GetHAL()->setDisplayBrightness((uint8_t)v);
     char buf[8]; snprintf(buf, sizeof(buf), "%d%%", v);
     if (self->_qs_brt_lbl) lv_label_set_text(self->_qs_brt_lbl, buf);
+}
+
+void AppHome::_qsSs_chk_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    bool on = lv_obj_has_state(self->_qs_ss_chk, LV_STATE_CHECKED);
+    GetHAL()->setConfig("screensaver_en", on ? "1" : "0");
+}
+
+void AppHome::_qsSs_dd_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    if (!self->_qs_ss_dd) return;
+    static const char* const kMins[] = {"2", "5", "10"};
+    int idx = lv_dropdown_get_selected(self->_qs_ss_dd);
+    if (idx < 0 || idx > 2) idx = 1;
+    GetHAL()->setConfig("screensaver_min", kMins[idx]);
 }
 
 // ─── Network dialog (WiFi tap): WiFi + HA server ────────────────────────────
@@ -1502,6 +1587,11 @@ void AppHome::_statusClick_cb(lv_event_t* e)
     else if (tag == 3) self->_openQuickSettings();
     else if (tag == 4) self->_openWeatherDialog();
     else if (tag == 5 && self->_open_email) self->_open_email();
+    else if (tag == 6) {   // 收音机后台播放中 → 回收音机页
+        for (auto& e : self->_apps) {
+            if (e.name == "收音机") { mooncake::GetMooncake().openApp(e.app_id); break; }
+        }
+    }
 }
 
 void AppHome::_modalBg_cb(lv_event_t* e)

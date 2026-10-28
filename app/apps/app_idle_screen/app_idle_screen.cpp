@@ -4,6 +4,7 @@
 #include "../utils/datetime/lunar_calendar.h"
 #include <hal/hal.h>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 
 // Full-coverage Chinese font (same blob already linked in for the HA/Claude
@@ -53,49 +54,102 @@ void AppIdleScreen::dismiss()
 {
     lv_display_trigger_activity(NULL);
     _hide();
+    _undim();
 }
 
 void AppIdleScreen::onPause()
 {
     _hide();
+    _undim();
 }
 
 void AppIdleScreen::onRunning()
 {
-    // 独占模式抑制(收音机等): 已显示则收起, 不再弹出
+    // 播放抑制(收音机后台播放): 不弹时钟遮盖(会盖住别的 app), 但闲置熄屏
+    // 仍然允许 —— 听歌熄屏更合理也更省电 (2026-10-28 语义调整)
     if (_suppressed) {
         if (_overlay) _hide();
+        _refreshConfig();
+        uint32_t idle_ms = lv_display_get_inactive_time(nullptr);
+        if (idle_ms < _idle_timeout_ms) {
+            _undim();
+            return;
+        }
+        if (!_dimmed) _dim();
         return;
     }
 
     // Don't cover an in-progress voice-input session (recording / result overlay).
     if (AppVoiceInput::isMicActive()) {
         if (_overlay) _hide();
+        _undim();
         return;
     }
+
+    _refreshConfig();
 
     uint32_t idle_ms = lv_display_get_inactive_time(nullptr);
-    if (!_overlay) {
-        if (idle_ms >= IDLE_MS) _show();
+
+    // Any touch resets LVGL's inactivity timer for the whole display —
+    // including a tap on the overlay itself. A small idle_ms here means
+    // "something was touched since we showed it": hide the overlay / restore
+    // brightness. The overlay's own click handler already hides it instantly;
+    // this is just a safety net in case that somehow didn't fire.
+    if (idle_ms < _idle_timeout_ms) {
+        if (_overlay) _hide();
+        _undim();
         return;
     }
 
-    // Any touch resets LVGL's inactivity timer for the whole display —
-    // including a tap on the overlay itself — so a small idle_ms here means
-    // "something was touched since we showed it." The overlay's own click
-    // handler already hides it instantly; this is just a safety net in case
-    // that somehow didn't fire.
-    if (idle_ms < IDLE_MS) {
-        _hide();
-        return;
+    // 闲置超时: 勾选屏保 → 全屏时钟遮盖; 不勾 → 不弹任何界面, 亮度降到 5%
+    if (_ss_enabled) {
+        if (!_overlay) _show();
+        else _updateClock();
+    } else {
+        if (!_dimmed) _dim();
     }
-    _updateClock();
 }
 
 void AppIdleScreen::setSuppressed(bool s)
 {
     _suppressed = s;
     if (s && _overlay) _hide();
+    if (s) _undim();
+}
+
+void AppIdleScreen::_refreshConfig()
+{
+    uint32_t now = GetHAL()->millis();
+    if (_last_cfg_ms != 0 && now - _last_cfg_ms < CFG_MS) return;
+    _last_cfg_ms = now;
+    _ss_enabled  = GetHAL()->getConfig("screensaver_en", "1") != "0";
+    int m = atoi(GetHAL()->getConfig("screensaver_min", "5").c_str());
+    if (m != 2 && m != 5 && m != 10) m = 5;   // 只认设置弹窗里的三档
+    _idle_timeout_ms = (uint32_t)m * 60 * 1000;
+#ifdef PLATFORM_BUILD_DESKTOP
+    // 桌面调试 (同 TAB5_THEME/TAB5_PAGE 模式): TAB5_IDLE_MS=毫秒 强制闲置超时,
+    // TAB5_SS_EN=0 强制关屏保走降亮度分支, 免等 2 分钟
+    if (const char* e = getenv("TAB5_IDLE_MS")) {
+        if (atoi(e) > 0) _idle_timeout_ms = (uint32_t)atoi(e);
+    }
+    if (const char* e = getenv("TAB5_SS_EN")) _ss_enabled = atoi(e) != 0;
+#endif
+}
+
+void AppIdleScreen::_dim()
+{
+    _pre_dim_brt = GetHAL()->getDisplayBrightness();
+    _dimmed = true;
+    // 2026-10-28 真机实测: 背光驱动在低占空比段有视觉下限, 5%(gamma 后
+    // ~1.1% duty)依旧亮 — 闲置降亮直接熄屏(duty 0), 触摸恢复原亮度
+    GetHAL()->setDisplayBrightness(0);
+}
+
+void AppIdleScreen::_undim()
+{
+    if (!_dimmed) return;
+    _dimmed = false;
+    GetHAL()->setDisplayBrightness(_pre_dim_brt);
 }
 
 void AppIdleScreen::_show()
