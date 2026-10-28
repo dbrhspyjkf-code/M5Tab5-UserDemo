@@ -316,9 +316,7 @@ void AppHome::onOpen()
         mk_lbl(c, zh_font_lg(),          NAME, "GLM 用量",   LV_ALIGN_LEFT_MID,  26, 0);
         // 左右分区 (2026-10-28 用户定稿): 左=GLM (5H/7D 剩余% + 重置时间,
         // 在名称右侧 x=280 起, 不与名称重叠), 右=DeepSeek 余额 (小标+数值).
-        _dash_glm  = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_LEFT, 280, 12);
-
-        lv_obj_set_style_transform_scale(_dash_glm, 320, 0);   // dbg 1.25x
+        _dash_glm  = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_LEFT, 280, 12);   // 30px
         _dash_glm2 = mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 280, 50);
         mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "DeepSeek 余额",
                LV_ALIGN_TOP_RIGHT, -28, 20);
