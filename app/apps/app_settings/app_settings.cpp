@@ -362,6 +362,10 @@ void AppSettings::_buildToolsPage()
         lv_obj_set_style_shadow_opa(tile, LV_OPA_30, 0);
         lv_obj_set_style_shadow_ofs_y(tile, 4, 0);
         lv_obj_set_style_bg_color(tile, lv_color_hex(C_CARD_PR), LV_STATE_PRESSED);
+        // 按下"放大"效果: 同底色描边外扩 (LVGL 按住自动置 PRESSED 态, 松开消失;
+        // 与每日一句/股票卡的 outline 闪烁同观感, 2026-10-28 用户要求)
+        lv_obj_set_style_outline_width(tile, 6, LV_STATE_PRESSED);
+        lv_obj_set_style_outline_color(tile, lv_color_hex(C_CARD), LV_STATE_PRESSED);
         lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(tile, cb, LV_EVENT_CLICKED, this);
@@ -566,17 +570,15 @@ void AppSettings::_buildToolsPage()
     // 第 3 行: 邮件 (调 hermes :8766/unread_emails 显示未读列表), kind=1 信封分支
     make_tile(2, 1, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 1);
 
-    // 第 3 行第 2 列: 金融 (原「自选股」, 2026-10-27 用户改名; 含自选股+指数看板)
-    //   走 hermes :8766/api/stocks/portfolio, mx-selfselect 后端
-    //   kind=3 走势分支, 线条随主题强调色 (原 stocks8_icon 静态图已弃用)
-    make_tile(3, 1, nullptr, 130, "金融", _toolStocks_cb, 256, 12, -1, 3);
+    // (2026-10-28: 金融入口移到主页底部按钮, 工具页不再放)
 
     // 第 3 行第 1 列: Reachy 仪表盘 (调 Reachy :8042/api/* 等接口, 5 tab 只读)
     //   kind=9 机器人分支; 2026-10-27 用户要求由「YRobot 控制台」改名「Reachy」,
     //   原 reachy_icon 静态图弃用.
     make_tile(0, 2, nullptr, 130, "Reachy", _toolReachy_cb, 256, 12, -1, 9);
     //   kind=4 日历分支, 线条随主题强调色 (原 calendar_icon 静态图已弃用)
-    make_tile(1, 2, nullptr, 130, "万年历", _toolCalendar_cb, 256, 12, -1, 4);
+    //   2026-10-28: 移到 (3,1) 补金融入口移除后的空位
+    make_tile(3, 1, nullptr, 130, "万年历", _toolCalendar_cb, 256, 12, -1, 4);
 
     // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
     //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
@@ -1025,8 +1027,8 @@ void AppSettings::_openFx()
     // Swap button centered in the gap between the two cards.
     // FROM card: 120..(120+CARD_H); TO card starts at 340 → gap centre = 290.
     lv_obj_t* swap = lv_obj_create(_fx_page);
-    lv_obj_set_size(swap, 64, 64);
-    lv_obj_set_pos(swap, CARD_X + CARD_W / 2 - 32, 290 - 32);
+    lv_obj_set_size(swap, 88, 88);   // 64→88: 圆和图标都放大 (2026-10-28 用户)
+    lv_obj_set_pos(swap, CARD_X + CARD_W / 2 - 44, 290 - 44);
     lv_obj_set_style_bg_color(swap, lv_color_hex(C_ACCENT), 0);
     lv_obj_set_style_radius(swap, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(swap, 3, 0);
@@ -1036,6 +1038,7 @@ void AppSettings::_openFx()
     lv_obj_add_event_cb(swap, _fxSwap_cb, LV_EVENT_CLICKED, this);
     lv_obj_t* swap_lbl = lv_label_create(swap);
     lv_label_set_text(swap_lbl, LV_SYMBOL_LOOP);
+    lv_obj_set_style_text_font(swap_lbl, &lv_font_montserrat_38, 0);
     lv_obj_center(swap_lbl);
     lv_obj_set_style_text_color(swap_lbl, lv_color_hex(0xFFFFFF), 0);
 
@@ -1114,7 +1117,7 @@ void AppSettings::_fxFetch()
 {
     if (g_fx_fetching.exchange(true)) return;  // already in flight
 
-    std::string host = GetHAL()->getConfig("svc_host", "");
+    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");   // 默认与主页一致 (模拟器无 NVS 配置)
     std::string url  = "http://" + host + ":8766/rate";
 
     bool spawned = GetHAL()->tryRunDetached([url]() {
@@ -1427,8 +1430,8 @@ void AppSettings::_openUnit()
     // Swap button. FROM card bottom = 180+120=300, TO card top = 400.
     // Gap centre = (300+400)/2 = 350.  64 px button centred at y=318.
     lv_obj_t* swap = lv_obj_create(_unit_page);
-    lv_obj_set_size(swap, 64, 64);
-    lv_obj_set_pos(swap, CARD_X + CARD_W / 2 - 32, 318);
+    lv_obj_set_size(swap, 88, 88);
+    lv_obj_set_pos(swap, CARD_X + CARD_W / 2 - 44, 306);
     lv_obj_set_style_bg_color(swap, lv_color_hex(C_ACCENT), 0);
     lv_obj_set_style_radius(swap, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(swap, 3, 0);
@@ -1438,6 +1441,7 @@ void AppSettings::_openUnit()
     lv_obj_add_event_cb(swap, _unitSwap_cb, LV_EVENT_CLICKED, this);
     lv_obj_t* swap_lbl = lv_label_create(swap);
     lv_label_set_text(swap_lbl, LV_SYMBOL_LOOP);
+    lv_obj_set_style_text_font(swap_lbl, &lv_font_montserrat_38, 0);
     lv_obj_center(swap_lbl);
     lv_obj_set_style_text_color(swap_lbl, lv_color_hex(0xFFFFFF), 0);
 
@@ -1725,6 +1729,12 @@ void AppSettings::_openEmail()
     lv_obj_set_flex_flow(_email_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(_email_list, 8, 0);
 
+    // 已有缓存列表先渲染 (状态条轮询成功过的数据直接显示, 不空等)
+    if (!email_list.empty() && _email_list) _emailRefresh();
+    // 清残留错误 (旧失败若在子页未开时发生, 打开时不该显示旧错误)
+    email_error.store(false);
+    email_error_msg.clear();
+
     mclog::tagInfo(_tag, "_openEmail: dispatching fetchEmail");
     fetchEmail();
     mclog::tagInfo(_tag, "_openEmail: done");
@@ -1752,7 +1762,7 @@ void AppSettings::fetchEmail()
     // 跟桌面 Übersicht unread-emails.widget 是同一个数据源, 完全同步.
     // 用 svc_host 而不是 ha_host:
     // ha_host 指向 HA 主机, svc_host 才是 hermes + email-status-server 跑的机器.
-    std::string host = GetHAL()->getConfig("svc_host", "");
+    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");   // 默认与主页一致 (模拟器无 NVS 配置)
     std::string url  = "http://" + host + ":8768/api/email/status";
     mclog::tagInfo(_tag, "emailFetch: url={}", url);
 
@@ -1879,6 +1889,7 @@ void AppSettings::_emailRefresh()
 void AppSettings::_emailShowError()
 {
     if (!_email_status) return;
+    mclog::tagWarn(_tag, "email page: 拉取失败 ({})", email_error_msg);
     lv_label_set_text(_email_status,
         ("拉取失败: " + email_error_msg).c_str());
 }
