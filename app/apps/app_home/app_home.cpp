@@ -556,10 +556,15 @@ void AppHome::onRunning()
         if (!_weather_cond.empty()) lv_label_set_text(_status_wcond, _weather_cond.c_str());
     }
 
-    // Weather-detail popup: worker finished → drop the text into its label.
+    // Weather-detail popup: worker finished → drop the text into its label,
+    // then size the card to the actual content (×1.25 scale) and re-center.
     if (_wx_body && _wx_ready.exchange(false)) {
         std::lock_guard<std::mutex> lk(_weather_mutex);
         lv_label_set_text(_wx_body, _wx_text.c_str());
+        lv_obj_update_layout(_wx_body);
+        lv_obj_t* card = lv_obj_get_parent(_wx_body);
+        lv_obj_set_height(card, 74 + lv_obj_get_height(_wx_body) * 5 / 4 + 24);
+        lv_obj_center(card);
     }
 
     // Email — poll the shared cache every 60s. AppSettings::fetchEmail() is
@@ -985,13 +990,16 @@ lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
     lv_obj_add_event_cb(_modal, _modalBg_cb, LV_EVENT_CLICKED, this);
 
     // Centered card. CLICKABLE so taps on it are absorbed (don't reach backdrop).
+    // 卡皮与主页 GLM 卡一致 (2026-10-28 用户要求): card[0] 底 / radius 18 / 1px 边框 70%
     lv_obj_t* card = lv_obj_create(_modal);
     lv_obj_set_size(card, card_w, card_h);
     lv_obj_center(card);
-    lv_obj_set_style_bg_color(card, lv_color_hex(T_BG()), 0);
-    lv_obj_set_style_radius(card, 22, 0);
-    lv_obj_set_style_border_width(card, 2, 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(theme::cur().card[0]), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(card, 18, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
     lv_obj_set_style_border_color(card, lv_color_hex(theme::cur().border), 0);
+    lv_obj_set_style_border_opa(card, LV_OPA_70, 0);
     lv_obj_set_style_pad_all(card, 0, 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
@@ -1001,23 +1009,27 @@ lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
     lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 22);
     lv_obj_set_style_text_color(t, lv_color_hex(T_ACCENT()), 0);
     lv_obj_set_style_text_font(t, zh_font_lg(), 0);
+    lv_obj_set_style_transform_scale(t, 320, 0);   // 1.25x 与主页卡片平齐
     return card;
 }
 
 // ─── Weather detail popup (weather tap) ─────────────────────────────────────
 void AppHome::_openWeatherDialog()
 {
-    lv_obj_t* card = _openModal(680, 500, "天气详情");
-    // Slightly translucent so the home cards show through.
-    lv_obj_set_style_bg_opa(card, LV_OPA_80, 0);
-    lv_obj_center(card);
+    // 高度随实际内容 (2026-10-28 用户要求): 加载中先给小高度, 数据到手后
+    // 在 onRunning 里按正文实测高度 ×1.25 撑卡片并重新居中
+    lv_obj_t* card = _openModal(680, 220, "天气详情");
 
+    // 正文: 与卡片文字同款 1.25x; 换行宽 492 (×1.25 视觉 615 回到卡内), 锁左上角
     _wx_body = lv_label_create(card);
     lv_obj_set_pos(_wx_body, 32, 74);
-    lv_obj_set_width(_wx_body, 616);
-    lv_obj_set_style_text_color(_wx_body, lv_color_hex(T_LBL()), 0);
+    lv_obj_set_width(_wx_body, 492);
+    lv_obj_set_style_text_color(_wx_body, lv_color_hex(theme::cur().text_hi), 0);
     lv_obj_set_style_text_font(_wx_body, zh_font_lg(), 0);
     lv_obj_set_style_text_line_space(_wx_body, 12, 0);
+    lv_obj_set_style_transform_scale(_wx_body, 320, 0);
+    lv_obj_set_style_transform_pivot_x(_wx_body, 0, 0);
+    lv_obj_set_style_transform_pivot_y(_wx_body, 0, 0);
     lv_label_set_text(_wx_body, "加载中…");
 
     _wx_ready = false;
