@@ -68,7 +68,8 @@ static lv_obj_t* mk_round_btn(lv_obj_t* parent, int w, int h, uint32_t bg,
     lv_obj_set_style_bg_color(btn, lv_color_hex(bg), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
     // 按下变色 (同主页按钮, 2026-10-28 用户要求)
-    lv_obj_set_style_bg_color(btn, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
+    // 按下 = 自身底色变暗 30% (固定 theme press 对 C_ON 按钮零变化, 实锤)
+    lv_obj_set_style_bg_color(btn, lv_color_mix(lv_color_hex(0), lv_color_hex(bg), 178), LV_STATE_PRESSED);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_radius(btn, h / 2, 0);
     lv_obj_set_style_pad_all(btn, 0, 0);
@@ -426,9 +427,13 @@ void AppTimer::_installSwipeGesture()
                 if (gcode == LV_EVENT_PRESSED) {
                     lv_point_t gp; lv_indev_get_point(gdev, &gp);
                     s_gpress = gp;
+                    mclog::tagInfo(TAG, "[dbg] PRESSED y={}", gp.y);
                     return;
                 }
                 if (gcode != LV_EVENT_GESTURE) return;
+                mclog::tagInfo(TAG, "[dbg] GESTURE dir={} start_y={} fg={}",
+                               (int)lv_indev_get_gesture_dir(gdev), s_gpress.y,
+                               ctx->app->_scr && lv_screen_active() == ctx->app->_scr);
                 if (lv_indev_get_gesture_dir(gdev) == LV_DIR_TOP) {
                     // 双守卫: 只在本 app 前台 + 屏幕最下缘 (y>650) 起手
                     // (indev 手势广播给所有注册回调, 2026-10-27 实锤)

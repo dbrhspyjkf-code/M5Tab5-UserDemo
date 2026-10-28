@@ -7,13 +7,15 @@
  * I2S 直写，零解码。播放期间必须关 WiFi 省电（Passport 实测：省电开着必断流）。
  *
  * UI 差异：Tab5 是 1280×720 触摸屏 —— 左侧电台列表（点击换台），右侧播放
- * 控制（上一台/播放暂停/下一台 + 音量滑条），上拨手势退出（与其他 app 一致）。
+ * 控制（上一台/播放暂停/下一台 + 音量滑条），上拨回主屏（后台继续播放，
+ * 2026-10-28；主页状态栏 ♪ 图标可回）。彻底停止需在收音机页按暂停。
  */
 #include <mooncake.h>
 #include <lvgl.h>
 #include <atomic>
 #include <memory>
 #include <functional>
+#include <string>
 
 class AppRadio : public mooncake::AppAbility {
 public:
@@ -22,8 +24,14 @@ public:
     // 关闭回调(app_installer 注入: 回主屏), onClose 里先切屏再删对象
     void setCloseCallback(std::function<void()> cb) { _close_cb = std::move(cb); }
 
-    // 独占模式: 打开期间抑制屏保等后台服务(app_installer 注入)
+    // 播放期间抑制屏保时钟遮盖(app_installer 注入)。
+    // 2026-10-28 后台播放: 抑制条件从"app 打开"改为"正在播放"——收音机页
+    // 关掉后流任务继续, 时钟遮盖依旧不弹(熄屏仍允许, 听歌熄屏更合理)。
     void setSuppressor(std::function<void(bool)> cb) { _suppress = std::move(cb); }
+
+    // ── 后台播放状态 (主页状态栏入口用; UI 关掉后流任务仍活着) ──
+    bool streamActive() const;                 // 流任务在播/重连中
+    std::string streamInfo() const;            // 播放中的台名, 未播返回 ""
 
     void onCreate()  override;
     void onOpen()    override;

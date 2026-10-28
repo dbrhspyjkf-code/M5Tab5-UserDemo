@@ -140,7 +140,9 @@ void levels_update(const int16_t* p, int n, const TaskCtx& ctx)
     ctx.lvl_t->store(lvl(e3));
 }
 
-constexpr int kRingSize = 65536;         // 64KB ≈ 2s @ 32KB/s, 吸收网络抖动
+constexpr int kRingSize = 131072;        // 128KB ≈ 4s @ 32KB/s — 后台播放时前台
+                                         // app(股票页 canvas 重绘等)有 CPU 突发,
+                                         // 加大缓冲防 underrun (2026-10-28)
 // 卡顿诊断: EAGAIN 断流次数 / armed 后环空次数, 每 30s 打一次
 static int s_diag_stalls = 0, s_diag_underruns = 0, s_diag_read = 0;
 uint8_t* s_ring = nullptr;
@@ -398,7 +400,9 @@ void AppRadio::onOpen()
     if (_scr) return;   // 防御: 状态异常时重复 onOpen 不叠屏(泄漏)
     mclog::tagInfo(TAG, "on open");
     snap_theme();
-    if (_suppress) _suppress(true);   // 独占模式: 抑制屏保等后台服务
+    // 后台播放(2026-10-28): 抑制时钟遮盖的条件是"在播"而非"页面前台"。
+    // 重开收音机时若流任务还在播, 这里即刻恢复抑制。
+    if (_suppress) _suppress(streamActive());
     _app_closing.store(false);
     _ui_state    = -1;
     _ui_station  = -1;
@@ -557,7 +561,7 @@ void AppRadio::onOpen()
         lv_obj_set_style_bg_color(b, lv_color_hex(C_CARD_ON), 0);
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
         // 按下变色 (同主页按钮, 2026-10-28 用户要求)
-        lv_obj_set_style_bg_color(b, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(b, lv_color_mix(lv_color_hex(0), lv_color_hex(C_CARD_ON), 178), LV_STATE_PRESSED);
         lv_obj_set_style_border_width(b, 2, 0);
         lv_obj_set_style_border_color(b, lv_color_hex(C_ACCENT), 0);
         lv_obj_set_style_border_opa(b, LV_OPA_70, 0);
@@ -676,9 +680,11 @@ void AppRadio::_vu_draw_cb(lv_event_t* e)
 void AppRadio::onClose()
 {
     mclog::tagInfo(TAG, "on close");
-    _want_station.store(-1);
-    _app_closing.store(true);
-    if (_suppress) _suppress(false);  // 独占模式结束
+    // 后台播放(2026-10-28): 关掉 UI 不停流 —— _want_station/_app_closing
+    // 都不动, 流任务继续, atomics 随实例常驻; 重开收音机 onOpen 后 UI 从
+    // 原子量恢复显示当前播放状态。彻底停止 = 在收音机页按暂停 (want=-1)。
+    // 抑制条件跟随播放状态: 在播则时钟遮盖继续压制, 未播则解除。
+    if (_suppress) _suppress(streamActive());
     // 先切回主屏再删对象 —— 删除 active screen 会让 LVGL 悬空(AppHA 同序)
     if (_close_cb) _close_cb();
     *_alive = false;
@@ -786,6 +792,21 @@ void AppRadio::_refreshStateUi()
         lv_label_set_text(_play_icon,
             (_ui_state == 1 || _ui_state == 2) ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
     }
+    // 播放状态变化 → 同步时钟遮盖抑制 (后台播放语义, 见 onClose)
+    if (_suppress) _suppress(streamActive());
+}
+
+bool AppRadio::streamActive() const
+{
+    // want>=0 = 播放或重连中 (连接失败也会自动重试, 视作在播)
+    return _task_running.load() && _want_station.load() >= 0;
+}
+
+std::string AppRadio::streamInfo() const
+{
+    int w = _want_station.load();
+    if (!_task_running.load() || w < 0 || w >= kStationCount) return std::string();
+    return std::string(kStations[w].name);
 }
 
 void AppRadio::_refreshStationUi()

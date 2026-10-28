@@ -152,6 +152,8 @@ inline void on_install_apps()
     timer->setCloseCallback([home]() { home->restoreScreen(); });
     // 独占模式: 收音机打开期间抑制屏保(流媒体 app, 不被时钟遮盖/省轮询)
     radio->setSuppressor([idle](bool s) { idle->setSuppressed(s); });
+    // 后台播放: 主页状态栏音符图标读收音机流状态 (在播→显示, 点按回收音机)
+    home->setNowPlayingGetter([radio]() -> std::string { return radio->streamInfo(); });
 
     // 灯阵入口放到「工具」页第 2 行 (由 AppSettings 持有), 不再占 home 一格.
     settings->setPuzzleAppId(up_id);
@@ -192,10 +194,11 @@ inline void on_install_apps()
     // ── Register apps in the home screen ──
     home->addApp("智能家居", ha_id);
     home->addApp("小  智", xz_id);
-    home->addApp("工  具", set_id);
+    home->addApp("金融", st_id);   // 2026-10-28: 入口从工具页移到主页底部
     home->addApp("收音机", ra_id);
     home->addApp("播放器", pl_id);
     home->addApp("计时器", ti_id);
+    home->addApp("工  具", set_id);   // 2026-10-28: 移到最右 (用户指定)
 #ifdef PLATFORM_BUILD_DESKTOP
     // 桌面调试: TAB5_OPEN_CALENDAR=1 启动即打开万年历
     if (const char* e = getenv("TAB5_OPEN_CALENDAR")) {
