@@ -317,10 +317,13 @@ void AppHome::onOpen()
         // 左右分区 (2026-10-28 用户定稿): 左=GLM (5H/7D 剩余% + 重置时间,
         // 在名称右侧 x=280 起, 不与名称重叠), 右=DeepSeek 余额 (小标+数值).
         _dash_glm  = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_LEFT, 280, 12);
+
+        lv_obj_set_style_transform_scale(_dash_glm, 320, 0);   // dbg 1.25x
         _dash_glm2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 280, 56);
         mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "DeepSeek 余额",
                LV_ALIGN_TOP_RIGHT, -28, 20);
         _dash_ds   = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 46);
+        lv_obj_set_style_transform_scale(_dash_ds, 320, 0);   // 与 GLM 主行一致放大
 
         c = row_card(122, 110, theme::cur().card[2], theme::cur().border);
         mk_lbl(c, zh_font_md(),          NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 26, 0);
