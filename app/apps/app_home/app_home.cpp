@@ -226,6 +226,16 @@ void AppHome::onOpen()
 
     // Thin divider + icon row along the card bottom (light ink on deep green).
     lv_obj_t* div = lv_obj_create(hero);
+    // 新股申购 (hermes /stocks/ipo, 有申购才显示; 2026-10-28 用户要求)
+    _ipo_lbl = lv_label_create(hero);
+    lv_obj_set_style_text_font(_ipo_lbl, zh_font_md(), 0);
+    lv_obj_set_style_text_color(_ipo_lbl, lv_color_hex(theme::cur().accent), 0);
+    lv_label_set_long_mode(_ipo_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(_ipo_lbl, 400 - 48);
+    lv_obj_set_pos(_ipo_lbl, 24, 474);
+    lv_label_set_text(_ipo_lbl, "");
+    lv_obj_add_flag(_ipo_lbl, LV_OBJ_FLAG_HIDDEN);
+
     lv_obj_set_pos(div, 32, 512);   // 距底 94 (随卡加高同步)
     lv_obj_set_size(div, 336, 2);
     lv_obj_set_style_bg_color(div, lv_color_hex(theme::cur().press), 0);
@@ -321,33 +331,30 @@ void AppHome::onOpen()
         const uint32_t NAME = theme::cur().text_soft;   // soft text
         const uint32_t VAL  = theme::cur().text_hi;   // bright value
         lv_obj_t* c = row_card(0, 110, theme::cur().card[0], theme::cur().border);
-        mk_lbl(c, &lv_font_montserrat_28, IDX,  "01", LV_ALIGN_LEFT_MID,  26, 0);
-        mk_lbl(c, zh_font_md(),          NAME, "GLM 用量",   LV_ALIGN_LEFT_MID,  84, 0);
-        // 两行: 上=Pro 5H/7D 剩余%, 下=重置时间 (2026-10-27 用户要求)
-        _dash_glm  = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 14);
-        _dash_glm2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
+        mk_lbl(c, zh_font_md(),          NAME, "GLM 用量",   LV_ALIGN_LEFT_MID,  26, 0);
+        // 左右分区 (2026-10-28 用户定稿): 左=GLM (5H/7D 剩余% + 重置时间,
+        // 在名称右侧 x=280 起, 不与名称重叠), 右=DeepSeek 余额 (小标+数值).
+        _dash_glm  = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_LEFT, 280, 16);
+        _dash_glm2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 280, 56);
+        mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "DeepSeek 余额",
+               LV_ALIGN_TOP_RIGHT, -28, 20);
+        _dash_ds   = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 50);
 
-        c = row_card(122, 110, theme::cur().card[1], theme::cur().border);
-        mk_lbl(c, &lv_font_montserrat_28, IDX,  "02", LV_ALIGN_LEFT_MID,  26, 0);
-        mk_lbl(c, zh_font_md(),          NAME, "DeepSeek 余额", LV_ALIGN_LEFT_MID, 84, 0);
-        _dash_ds = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_RIGHT_MID, -28, 0);
-
-        c = row_card(244, 110, theme::cur().card[2], theme::cur().border);
-        mk_lbl(c, &lv_font_montserrat_28, IDX,  "03", LV_ALIGN_LEFT_MID,  26, 0);
-        mk_lbl(c, zh_font_md(),          NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 84, 0);
+        c = row_card(122, 110, theme::cur().card[2], theme::cur().border);
+        mk_lbl(c, zh_font_md(),          NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 26, 0);
         _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 16);
         _dash_ag2 = mk_lbl(c, zh_font_sm(), theme::cur().text_dim, "", LV_ALIGN_TOP_RIGHT, -28, 52);
     }
     {   // 04 每日一句英文宽卡 (hermes /daily/sentence?offset=N, 长按换下一句)
-        lv_obj_t* card = row_card(366, 242, theme::cur().card[3], theme::cur().border);
+        lv_obj_t* card = row_card(244, 110, theme::cur().card[3], theme::cur().border);   // 与 03 卡同高
         // 垂直均匀分布: 标题顶 / 英文中 / 中文底 (行数变化间距恒定)
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_EVENLY,
                               LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
         lv_obj_set_style_pad_left(card, 24, 0);
         lv_obj_set_style_pad_right(card, 24, 0);
-        lv_obj_set_style_pad_top(card, 14, 0);
-        lv_obj_set_style_pad_bottom(card, 16, 0);
+        lv_obj_set_style_pad_top(card, 12, 0);
+        lv_obj_set_style_pad_bottom(card, 12, 0);
         mk_lbl(card, zh_font_md(), theme::cur().text_dim, "每日一句",
                LV_ALIGN_DEFAULT, 0, 0);
         _dash_sent_en = lv_label_create(card);
@@ -374,7 +381,7 @@ void AppHome::onOpen()
     {   // 05 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
         // (2026-10-27 沉底: 右列改 5 卡滚动后放最下, 上拉查看)
-        lv_obj_t* card = row_card(620, 240, theme::cur().card[3], theme::cur().border);
+        lv_obj_t* card = row_card(366, 240, theme::cur().card[3], theme::cur().border);
 
         _opi_dot = lv_obj_create(card);
         lv_obj_set_size(_opi_dot, 12, 12);
@@ -566,6 +573,11 @@ void AppHome::onRunning()
         std::lock_guard<std::mutex> lk(_dash_mutex);
         if (_dash_glm) lv_label_set_text(_dash_glm, _dash_glm_txt.c_str());
         if (_dash_glm2) lv_label_set_text(_dash_glm2, _dash_glm2_txt.c_str());
+        if (_ipo_lbl && _ipo_txt.compare(lv_label_get_text(_ipo_lbl)) != 0) {
+            lv_label_set_text(_ipo_lbl, _ipo_txt.c_str());
+            if (_ipo_txt.empty()) lv_obj_add_flag(_ipo_lbl, LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_clear_flag(_ipo_lbl, LV_OBJ_FLAG_HIDDEN);
+        }
         if (_dash_sent_en && _dash_sent_en_txt.compare(lv_label_get_text(_dash_sent_en)) != 0)
             lv_label_set_text(_dash_sent_en, _dash_sent_en_txt.c_str());
         if (_dash_sent_cn && _dash_sent_cn_txt.compare(lv_label_get_text(_dash_sent_cn)) != 0)
@@ -614,13 +626,24 @@ void AppHome::_fetch_weather()
 void AppHome::_nextSentence(lv_obj_t* card)
 {
     if (!card) return;
-    lv_obj_set_style_outline_color(card, lv_color_hex(theme::cur().card[3]), 0);
-    lv_obj_set_style_outline_width(card, 6, 0);
+    // 闪烁环画在 lv_layer_top (句卡是滚动容器最后一张, 左右/底部贴容器缘,
+    // 直接 outline 会被容器裁剪只剩顶边 —— 顶层层不受裁剪, 四边完整可见),
+    // 同卡片底色的 6px 描边环外扩 6px, 160ms 后消失 (同万年历日期格观感).
+    lv_area_t a;
+    lv_obj_get_coords(card, &a);
+    lv_obj_t* ring = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(ring);
+    lv_obj_set_pos(ring, a.x1 - 6, a.y1 - 6);
+    lv_obj_set_size(ring, lv_area_get_width(&a) + 12, lv_area_get_height(&a) + 12);
+    lv_obj_set_style_radius(ring, 24, 0);
+    lv_obj_set_style_border_width(ring, 6, 0);
+    lv_obj_set_style_border_color(ring, lv_obj_get_style_bg_color(card, 0), 0);
+    lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
     lv_timer_create([](lv_timer_t* tm) {
-        lv_obj_set_style_outline_width(
-            static_cast<lv_obj_t*>(lv_timer_get_user_data(tm)), 0, 0);
+        lv_obj_del(static_cast<lv_obj_t*>(lv_timer_get_user_data(tm)));
         lv_timer_del(tm);
-    }, 160, card);
+    }, 160, ring);
 
     const int off = ++_sent_offset;
     const std::string base =
@@ -665,7 +688,7 @@ void AppHome::_fetch_dashboard()
 
         // Row values — the row name ("GLM 用量"…) lives on the left of the
         // card, so these carry data only.
-        std::string glm_txt = "--", glm_sub = "", ds_txt = "--";
+        std::string glm_txt = "--", glm_sub = "", ds_txt = "--", ipo_txt = "\x01";  // \x01=保持不变哨兵
         std::string sent_en, sent_cn;
         std::string ag1, ag2;
 
@@ -700,6 +723,18 @@ void AppHome::_fetch_dashboard()
         }
         if (auto j = pick(GetHAL()->httpGet(base + "/api/deepseek/balance").body); !j.is_null()) {
             ds_txt = j.value("total_balance", std::string("?")) + " 元";
+        }
+        if (auto j = pick(GetHAL()->httpGet(base + "/stocks/ipo").body); !j.is_null()) {
+            // 新股申购 (近 5 条, today 标记今日): 拼 "名称 日期" 列表
+            std::string ipo;
+            if (j.contains("items") && j["items"].is_array())
+                for (auto& it : j["items"]) {
+                    if (!ipo.empty()) ipo += "  ";
+                    ipo += it.value("name", std::string()) + " "
+                         + it.value("date", std::string());
+                    if (it.value("today", false)) ipo += "(今)";
+                }
+            ipo_txt = ipo.empty() ? "" : "新股: " + ipo;
         }
         if (auto j = pick(GetHAL()->httpGet(base + "/daily/sentence?offset="
                                           + std::to_string(_sent_offset)).body); !j.is_null()) {
@@ -745,6 +780,7 @@ void AppHome::_fetch_dashboard()
         _dash_glm_txt = glm_txt;
         _dash_glm2_txt = glm_sub;
         if (!sent_en.empty()) { _dash_sent_en_txt = sent_en; _dash_sent_cn_txt = sent_cn; }
+        _ipo_txt = ipo_txt;   // 空串=无新股, UI 隐藏
         _dash_ds_txt  = ds_txt;
         _dash_ag1_txt = ag1.empty() ? "今日无提醒/行程" : ag1;
         _dash_ag2_txt = ag2;
@@ -1118,7 +1154,7 @@ void AppHome::_openQuickSettings()
     _refreshThemeBtn();
     lv_obj_align(_qs_theme_lbl, LV_ALIGN_BOTTOM_LEFT, 40, -28);
 
-    lv_obj_t* done = mk_btn(card, "完成", T_SAVE(), 200, 60,
+    lv_obj_t* done = mk_btn(card, "完成", T_ACCENT(), 200, 60,
         [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))->_closeModal();
         }, this);
@@ -1254,7 +1290,7 @@ void AppHome::_openNetworkDialog()
     y += ROW_H + 6;
 
     // Save + status
-    lv_obj_t* save = mk_btn(card, "保存并重启", T_SAVE(), 260, 60,
+    lv_obj_t* save = mk_btn(card, "保存并重启", T_ACCENT(), 260, 60,
         [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))->_doNetworkSave();
         }, this);
