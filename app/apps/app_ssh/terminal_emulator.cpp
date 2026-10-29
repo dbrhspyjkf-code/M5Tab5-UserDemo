@@ -342,9 +342,27 @@ void TerminalEmulator::putGlyph(const std::string& glyph, bool wide)
         next.inverse = _inverse;
         next.continuation = true;
         markDirtyWithNeighbors(_cursorCol + 1, _cursorRow);
+        // 宽字符吃掉邻格(原是另一宽字符左格)时, 其右半也要清
+        if (_cursorCol + 2 < _cols) {
+            Cell& nn = mutableCell(_cursorCol + 2, _cursorRow);
+            if (nn.continuation) {
+                nn = BlankCell(_fg, _bg);
+                markDirtyWithNeighbors(_cursorCol + 2, _cursorRow);
+            }
+        }
     }
 
     size_t advance = c.wide ? 2 : 1;
+    // 孤儿清理: 窄字符覆盖宽字符左格后, 其右格 continuation 残留旧字形,
+    // 若不清除则旧右半永久叠在屏上(TUI \r 重写进度行时必现, xterm 同款
+    // 语义: 破坏宽字符须清其另一半) —— 2026-10-29 "中文乱码叠字"真因
+    if (!c.wide && _cursorCol + 1 < _cols) {
+        Cell& nxt = mutableCell(_cursorCol + 1, _cursorRow);
+        if (nxt.continuation) {
+            nxt = BlankCell(_fg, _bg);
+            markDirtyWithNeighbors(_cursorCol + 1, _cursorRow);
+        }
+    }
     if (_cursorCol + advance >= _cols) {
         _cursorCol = _cols - 1;
         _wrapPending = true;
