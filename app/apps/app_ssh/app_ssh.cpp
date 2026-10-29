@@ -159,6 +159,9 @@ void AppSsh::_buildForm()
         lv_textarea_set_password_mode(ta, password);
         if (def && def[0]) lv_textarea_set_text(ta, def);
         lv_obj_set_style_text_font(ta, zh_font_md(), 0);
+        lv_obj_set_style_text_color(ta, lv_color_hex(T.text_hi), 0);
+        lv_obj_set_style_text_color(ta, lv_color_hex(T.text_dim),
+                                    LV_PART_TEXTAREA_PLACEHOLDER);
         lv_obj_set_style_bg_color(ta, lv_color_hex(T.card[1]), 0);
         lv_obj_set_style_border_color(ta, lv_color_hex(T.border), 0);
         lv_obj_set_style_border_width(ta, 1, 0);
@@ -323,9 +326,8 @@ void AppSsh::_drawCell(int col, int row, bool cursor_here)
         TerminusFont::drawGlyphRgb565(buf, TW, TH, font, cp,
                                       x0 + (CW - font.targetW) / 2, y0, fg);
     } else if (c.wide && CjkFont::hasGlyph(cp)) {
-        // CJK 宽字形: 24x24 点阵居中于 2 格 (28x28)
-        CjkFont::drawGlyphRgb565(buf, TW, TH, cp, x0 + (2 * CW - 24) / 2,
-                                 y0 + (CH - 24) / 2, fg);
+        // CJK 宽字形: font_zh_24 cbin 字体, 24px 字形居中于 2 格 (28x28)
+        CjkFont::drawGlyphRgb565(buf, TW, TH, cp, x0, y0, 2 * CW, CH, fg);
     } else if (cp >= 0x20) {
         // 豆腐框 (1px 边线): 宽字符跨 2 格, 窄字符 1 格
         const int span = c.wide ? 2 * CW : CW;

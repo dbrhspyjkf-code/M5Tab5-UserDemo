@@ -1,21 +1,23 @@
 #pragma once
 /*
- * cjk_font — GB2312 一级字库 24x24 点阵 (res 分区 cjk_font 资产,
- * gen_cjk_font.py 生成, STHeiti Light 渲染阈值 110)。终端宽字符渲染用:
- * 码点二分查找, 字形等长无偏移表。仅真机(桌面无 res 分区 → 恒无字形)。
+ * cjk_font — 终端 CJK 字形, 复用 xiaozhi 的 font_zh_24 cbin 字体
+ * (res 分区既有资产, app_radio 同款读取路径; 经 LVGL fmt_txt glyph
+ * API 取 4bpp 位图, 自行混成到 RGB565 canvas)。
  *
- * 二进制格式见 gen_cjk_font.py 头注释 ('CJK1' magic)。
+ * 不再使用自产 GB2312 点阵(gen_cjk_font.py/cjk_gb2312_24.bin 留仓库
+ * 备查): 那条路栽在打包奇数偏移上 uint32 码点表非对齐读。
+ *
+ * x/y 为 (boxW x boxH) 盒左上角, 字形在盒内居中; 前景对已铺的背景
+ * 像素做 4bpp 抗锯齿混色。仅真机(桌面无 res 分区 → 恒无字形)。
  */
 #include <stdint.h>
 
 namespace CjkFont {
 
-// 首次调用时从 res 分区加载(mmap 指针, 零拷贝); 失败恒返回 false
 bool ready();
 bool hasGlyph(uint32_t cp);
 
-// 画 24x24 字形到 RGB565 缓冲, (x,y) 为字形左上角, 外框留白由调用方管
-void drawGlyphRgb565(uint16_t* buf, int bufW, int bufH,
-                     uint32_t cp, int x, int y, uint16_t fg);
+void drawGlyphRgb565(uint16_t* buf, int bufW, int bufH, uint32_t cp,
+                     int x, int y, int boxW, int boxH, uint16_t fg);
 
 }  // namespace CjkFont
