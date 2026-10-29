@@ -276,7 +276,7 @@ void AppIdleScreen::_show()
     // 右下角时间/日期叠加 (2026-10-29 用户要求): 半透明黑圆角底衬保证任何
     // 照片上都可读; 标签不可点, 触摸始终落到 overlay 关闭。
     _ph_scrim = lv_obj_create(_overlay);
-    lv_obj_set_size(_ph_scrim, 620, 108);
+    lv_obj_set_size(_ph_scrim, 420, 96);
     lv_obj_align(_ph_scrim, LV_ALIGN_BOTTOM_RIGHT, -28, -28);
     lv_obj_set_style_bg_color(_ph_scrim, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(_ph_scrim, LV_OPA_40, 0);
@@ -286,24 +286,18 @@ void AppIdleScreen::_show()
     lv_obj_clear_flag(_ph_scrim, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
     // 两行布局 (2026-10-29 用户定稿): 行1=日期+时间, 行2=星期+农历
+    // 全部 30px 统一字号 (2026-10-29 用户要求): 行1="10月29日 17:43"
+    // (单标签, zh_font_lg 含数字), 行2="周三 农历xx"
     _ph_time_lbl = lv_label_create(_ph_scrim);
-    lv_obj_set_style_text_font(_ph_time_lbl, &lv_font_montserrat_44, 0);
+    lv_obj_set_style_text_font(_ph_time_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_ph_time_lbl, lv_color_hex(C_TEXT), 0);
     lv_obj_align(_ph_time_lbl, LV_ALIGN_TOP_RIGHT, -24, 12);
     lv_obj_clear_flag(_ph_time_lbl, LV_OBJ_FLAG_CLICKABLE);
 
-    // 行1 日期: 紧贴时间左侧 ("17:43" montserrat_44 恒 5 字符≈130px, 固定偏移)
-    _ph_date_lbl = lv_label_create(_ph_scrim);
-    lv_obj_set_style_text_font(_ph_date_lbl, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(_ph_date_lbl, lv_color_hex(0xE8F0F6), 0);
-    lv_obj_align(_ph_date_lbl, LV_ALIGN_TOP_RIGHT, -170, 18);
-    lv_obj_clear_flag(_ph_date_lbl, LV_OBJ_FLAG_CLICKABLE);
-
-    // 行2 星期+农历: 右对齐
     _ph_week_lbl = lv_label_create(_ph_scrim);
     lv_obj_set_style_text_font(_ph_week_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_ph_week_lbl, lv_color_hex(0xE8F0F6), 0);
-    lv_obj_align(_ph_week_lbl, LV_ALIGN_TOP_RIGHT, -24, 66);
+    lv_obj_align(_ph_week_lbl, LV_ALIGN_TOP_RIGHT, -24, 54);
     lv_obj_clear_flag(_ph_week_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     _ph_clock_ms = 0;
@@ -367,16 +361,14 @@ void AppIdleScreen::_updatePhotoClock()
     time_t t = time(nullptr);
     struct tm lt = {};
     localtime_r(&t, &lt);
-    char tbuf[8];
-    snprintf(tbuf, sizeof(tbuf), "%02d:%02d", lt.tm_hour, lt.tm_min);
+    static const char* const wd[] = {"日", "一", "二", "三", "四", "五", "六"};
+    // 行1: "10月29日 17:43" (单标签统一 30px)
+    char tbuf[32];
+    snprintf(tbuf, sizeof(tbuf), "%d月%d日 %02d:%02d",
+             lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
     lv_label_set_text(_ph_time_lbl, tbuf);
 
-    static const char* const wd[] = {"日", "一", "二", "三", "四", "五", "六"};
-    // 行1: 日期; 行2: 星期 + 农历 (2026-10-29 用户定稿两行制)
-    char dbuf[24];
-    snprintf(dbuf, sizeof(dbuf), "%d月%d日", lt.tm_mon + 1, lt.tm_mday);
-    lv_label_set_text(_ph_date_lbl, dbuf);
-
+    // 行2: 星期 + 农历
     char wbuf[48];
     int n = snprintf(wbuf, sizeof(wbuf), "周%s", wd[lt.tm_wday]);
     char lbuf[24];
@@ -433,7 +425,7 @@ void AppIdleScreen::_buildClockContent()
     }
     if (_ph_scrim) {                        // 右下角叠加一并退场
         lv_obj_delete(_ph_scrim);
-        _ph_scrim = _ph_time_lbl = _ph_date_lbl = nullptr;
+        _ph_scrim = _ph_time_lbl = nullptr;
     }
     _group = lv_obj_create(_overlay);
     lv_obj_set_size(_group, GROUP_W, GROUP_H);
@@ -471,7 +463,7 @@ void AppIdleScreen::_hide()
     lv_obj_delete(_overlay);
     _overlay = _group = _time_lbl = _date_lbl = _weather_lbl = nullptr;
     _photo_img = nullptr;
-    _ph_scrim = _ph_time_lbl = _ph_date_lbl = nullptr;
+    _ph_scrim = _ph_time_lbl = nullptr;
     // 照片缓冲与在途下载: 会话代递增让 worker 自弃, 已发布的就地释放
     {
         std::lock_guard<std::mutex> lk(_pm);

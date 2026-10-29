@@ -61,7 +61,6 @@ private:
     lv_obj_t* _photo_img = nullptr;
     lv_obj_t* _ph_scrim = nullptr;     // 右下角时间日期底衬 (半透明黑圆角)
     lv_obj_t* _ph_time_lbl = nullptr;  // "HH:MM" montserrat_44
-    lv_obj_t* _ph_date_lbl = nullptr;  // "10月29日" zh 30px (行1)
     lv_obj_t* _ph_week_lbl = nullptr;  // "周三 农历xx" zh 30px (行2)
     uint32_t  _ph_clock_ms = 0;        // 照片页时间刷新节流
     void _updatePhotoClock();
