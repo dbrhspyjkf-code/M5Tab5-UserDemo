@@ -276,7 +276,7 @@ void AppIdleScreen::_show()
     // 右下角时间/日期叠加 (2026-10-29 用户要求): 半透明黑圆角底衬保证任何
     // 照片上都可读; 标签不可点, 触摸始终落到 overlay 关闭。
     _ph_scrim = lv_obj_create(_overlay);
-    lv_obj_set_size(_ph_scrim, 420, 96);
+    lv_obj_set_size(_ph_scrim, 320, 96);
     lv_obj_align(_ph_scrim, LV_ALIGN_BOTTOM_RIGHT, -28, -28);
     lv_obj_set_style_bg_color(_ph_scrim, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(_ph_scrim, LV_OPA_40, 0);
