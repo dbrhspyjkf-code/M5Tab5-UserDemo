@@ -77,6 +77,11 @@ private:
 
     static bool _rawKeyCb(uint8_t modifier, uint8_t keycode, bool shift, void* user);
     void _drawImeBar(int len, const char* buf, int syl, int page);
+    // 语音输入: 右下角麦克风按钮 → STT 文本 → 直发远端
+    lv_obj_t* _mic_btn = nullptr;
+    std::mutex _voice_mx;
+    std::string _voice_text;
+    void _onVoiceText(const std::string& t);
 #endif
 
     // ── 上拨手势退出 (app_rfid 同款, 工具页模式) ──

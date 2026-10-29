@@ -140,6 +140,25 @@ void AppVoiceInput::onDestroy() {
 #endif
 }
 
+/* static */ void AppVoiceInput::requestVoiceText(VoiceTextCb cb) {
+#ifdef PLATFORM_BUILD_DESKTOP
+    (void)cb;  // no-op on desktop
+    return;
+#else
+    if (!s_instance || !s_instance->_service || !cb) return;
+    if (s_instance->_mic_btn) {
+        s_instance->_removeMicButton();
+    }
+    s_instance->_text_cb = std::move(cb);
+    s_instance->_target_ta = nullptr;
+    s_instance->_createBigMicButton(nullptr);
+#endif
+}
+
+/* static */ void AppVoiceInput::cancelVoiceText() {
+    if (s_instance) s_instance->_text_cb = nullptr;
+}
+
 /* static */ void AppVoiceInput::dismissMicButton() {
     ESP_LOGI("AppVoiceInput", "dismissMicButton: mic_active=%d", (int)isMicActive());
     if (s_instance) s_instance->_removeMicButton();
@@ -170,6 +189,22 @@ static void stt_callback_wrapper(const voice_input::Result& result) {
 void AppVoiceInput::onSttResult(const VoiceInputResult& result) {
     ESP_LOGI("AppVoiceInput", "onSttResult: success=%d text='%s' mic=%p ta=%p",
              (int)result.success, result.text.c_str(), (void*)_mic_btn, (void*)_target_ta);
+    // 回调模式优先: 文本交给 cb(一次性), 不碰 textarea
+    if (_text_cb) {
+        VoiceTextCb cb = _text_cb;
+        _text_cb = nullptr;
+        _removeMicButton();
+        if (result.success && !result.text.empty()) {
+            mclog::tagInfo(TAG, "voice text cb: '%s'", result.text.c_str());
+            cb(result.text);
+        } else {
+            const char* err = result.error.empty() ? "recognition failed" : result.error.c_str();
+            mclog::tagWarn(TAG, "voice input failed: %s", err);
+            cb(std::string());
+        }
+        return;
+    }
+
     // _target_ta is intentionally kept even after the mic button is removed,
     // so we can still deliver the STT result into the textarea. The mic may
     // be torn down for reasons unrelated to this session (e.g. the host app
@@ -263,7 +298,7 @@ void AppVoiceInput::_createMicButton(lv_obj_t* ta, int keyboard_h) {
 }
 
 void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
-    if (_mic_btn || !ta) return;
+    if (_mic_btn) return;   // ta 可为空(回调模式), 按钮不锚定输入框
     _big_mic_mode = true;
     s_focused_ta = ta;
 

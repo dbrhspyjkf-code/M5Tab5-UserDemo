@@ -2,6 +2,7 @@
 #include <mooncake.h>
 #include <lvgl.h>
 #include <string>
+#include <functional>
 #include <memory>
 
 /// Lightweight value types used by the App side — mirrors voice_input::Result/Config
@@ -61,6 +62,14 @@ public:
     /// Safe to call from any LVGL thread.
     static void requestMicInput(lv_obj_t* ta);
 
+    /// 识别文本回调模式 (2026-10-29, app_ssh 终端用): 大麦克风模式启动,
+    /// 识别成功后文本经 cb 回调交付(而非插入 textarea); 失败时回调空串。
+    /// cb 在 LVGL 线程执行, 一次性(结果交付后自动清除)。
+    using VoiceTextCb = std::function<void(const std::string& text)>;
+    static void requestVoiceText(VoiceTextCb cb);
+    /// 撤销回调请求(宿主 app 销毁时调用, 防悬挂回调)
+    static void cancelVoiceText();
+
     /// Hide the mic button if currently shown (e.g., keyboard dismissed).
     static void dismissMicButton();
 
@@ -103,6 +112,7 @@ private:
     // UI state
     lv_obj_t* _mic_btn = nullptr;
     lv_obj_t* _target_ta = nullptr;
+    VoiceTextCb _text_cb;   // 回调模式(2026-10-29): 非空时结果走 cb 而非 textarea
     lv_obj_t* _status_label = nullptr;
     lv_obj_t* _capture_layer = nullptr;  // full-screen tap-to-stop (big-mic mode)
     bool       _big_mic_mode = false;

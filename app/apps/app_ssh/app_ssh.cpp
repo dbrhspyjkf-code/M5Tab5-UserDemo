@@ -22,6 +22,7 @@
 #include "../utils/assets/assets_partition.h"
 #include "terminus_font.h"
 #include "cjk_font.h"
+#include "../app_voice_input/app_voice_input.h"
 
 extern const uint8_t font_puhui_common_30_4_bin_start[]
     asm("_binary_font_puhui_common_30_4_bin_start");
@@ -72,6 +73,7 @@ void AppSsh::_destroyUi()
 #ifndef PLATFORM_BUILD_DESKTOP
     _canvas = nullptr;
     _disc_btn = nullptr;
+    _mic_btn = nullptr;
     if (_cbuf) {
         free(_cbuf);
         _cbuf = nullptr;
@@ -612,13 +614,62 @@ void AppSsh::_buildSession()
     }, LV_EVENT_ALL, this);
 
     ime::reset(true);    // 加载拼音表 + 清缓冲
+    // 麦克风按钮(右下角): 点击 → 语音识别 → 文本直发远端
+    _mic_btn = lv_btn_create(_scr);
+    lv_obj_set_size(_mic_btn, 56, 56);
+    lv_obj_align(_mic_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -8);
+    lv_obj_set_style_radius(_mic_btn, 28, 0);
+    lv_obj_set_style_bg_color(_mic_btn, lv_color_hex(0x22303C), 0);
+    lv_obj_set_style_border_width(_mic_btn, 2, 0);
+    lv_obj_set_style_border_color(_mic_btn, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_set_style_shadow_width(_mic_btn, 0, 0);
+    lv_obj_add_event_cb(_mic_btn, [](lv_event_t* ev) {
+        auto* self = static_cast<AppSsh*>(lv_event_get_user_data(ev));
+        AppVoiceInput::requestVoiceText([self](const std::string& t) {
+            self->_onVoiceText(t);
+        });
+    }, LV_EVENT_CLICKED, this);
+    // 麦克风简笔画: 话筒身 + 杆 + 底座 (3 个形状, 白色)
+    const uint32_t MIC_C = 0xE8F0F6;
+    auto mic_part = [&](int x, int y, int w, int hh, int r) {
+        lv_obj_t* o = lv_obj_create(_mic_btn);
+        lv_obj_remove_style_all(o);
+        lv_obj_set_pos(o, x, y);
+        lv_obj_set_size(o, w, hh);
+        lv_obj_set_style_bg_color(o, lv_color_hex(MIC_C), 0);
+        lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(o, r, 0);
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    };
+    mic_part(20, 8, 16, 26, 8);    // 话筒身(胶囊)
+    mic_part(26, 36, 4, 8, 2);     // 杆
+    mic_part(18, 44, 20, 3, 1);    // 底座
+
+    ime::reset(true);    // 加载拼音表 + 清缓冲
     _installKeySink();
     _renderTerminal();   // 首帧
+}
+
+// 语音识别结果(LVGL 线程回调): 文本挂起, 会话任务循环直发远端
+void AppSsh::_onVoiceText(const std::string& t)
+{
+    if (t.empty()) {
+        mclog::tagWarn(TAG, "voice: no text recognized");
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(_voice_mx);
+        _voice_text += t;
+    }
+    mclog::tagInfo(TAG, "voice text queued: {} ({}B)", t, t.size());
 }
 
 void AppSsh::_teardownSession()
 {
     ime::reset(false);
+    AppVoiceInput::dismissMicButton();
+    AppVoiceInput::cancelVoiceText();
+    if (_mic_btn) { lv_obj_delete(_mic_btn); _mic_btn = nullptr; }
     _removeKeySink();
     if (_disc_btn) { lv_obj_delete(_disc_btn); _disc_btn = nullptr; }
     if (_canvas)   { lv_obj_delete(_canvas); _canvas = nullptr; }
@@ -912,6 +963,22 @@ void AppSsh::_sessionTask()
             break;
         }
         bool ui_dirty = false;
+        {
+            std::string vt;
+            {
+                std::lock_guard<std::mutex> lk(_voice_mx);
+                vt = std::move(_voice_text);
+                _voice_text.clear();
+            }
+            if (!vt.empty()) {
+                // 识别文本整串写入通道(远端回显即上屏); 失败按断流处理
+                if (!_ssh.write((const uint8_t*)vt.data(), vt.size())) {
+                    _sess_closing.store(true);
+                } else {
+                    ui_dirty = true;
+                }
+            }
+        }
         if (s_keyq) {
             KeyEvt e;
             while (xQueueReceive(s_keyq, &e, 0) == pdTRUE) {
