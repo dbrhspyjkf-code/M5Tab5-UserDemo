@@ -55,7 +55,11 @@ def main():
     # 注: app_ssh 终端 CJK 用 font_zh_24(cbin), 自产 GB2312 点阵方案已弃
     # (gen_cjk_font.py 留档; 若复活须解决资产间 4 字节对齐)
 
-    assets = [("home_bg", bg), ("font_zh_20", font20), ("font_zh_24", font24)]
+    pinyin_tbl = open(
+        os.path.join(ROOT, "../../app/assets/fonts/pinyin_tbl.bin"), "rb").read()
+
+    assets = [("home_bg", bg), ("font_zh_20", font20), ("font_zh_24", font24),
+              ("pinyin_tbl", pinyin_tbl)]
 
     header_size = 16 + ENTRY_SIZE * len(assets)
     off = (header_size + 3) & ~3  # 数据区 4 字节对齐

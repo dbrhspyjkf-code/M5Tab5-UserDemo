@@ -7,8 +7,10 @@
 #include "../utils/theme/theme.h"
 #include <hal/hal.h>
 #include <mooncake_log.h>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
@@ -232,6 +234,253 @@ void AppSsh::_focus_ta_cb(lv_event_t* e)
 // ═══════════════════════════════════════════════════════════════════════
 // 会话屏 + 终端渲染
 // ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// 拼音 IME (智能 ABC 式): 字母进缓冲→候选条→空格/数字上屏; 回车原样发;
+// 非法继续(如 ls)整串原样直通, 英文输入零干扰。F6 硬开关。
+// 状态: kb 任务写 / 渲染(会话任务)锁内读快照。选字经 s_keyq 统一发送。
+// ═══════════════════════════════════════════════════════════════════════
+// mapKey 定义在下方"键盘输入"分节(IME 键分流复用它)
+static int mapKey(uint8_t modifier, uint8_t keycode, bool shift, uint8_t* out);
+
+namespace ime {
+
+struct SylEntry { char py[8]; uint16_t off; uint16_t cnt; };
+
+// 表: 'PYN1' u32 + u16 nsyll + u16 pad + nsyll×12B + utf8 blob (res: pinyin_tbl)
+const SylEntry* s_tab = nullptr;
+int s_tab_n = 0;
+const uint8_t* s_blob = nullptr;
+bool s_loaded = false;
+
+void load()
+{
+    size_t sz = 0;
+    const uint8_t* p = assets_part::find("pinyin_tbl", &sz);
+    if (!p || sz < 8 || p[0] != 'P' || p[1] != 'Y' || p[2] != 'N' || p[3] != '1') {
+        mclog::tagWarn(TAG, "ime: pinyin_tbl missing");
+        return;
+    }
+    int n = p[4] | (p[5] << 8);
+    if ((int)(8 + n * 12) > (int)sz) return;
+    s_tab = (const SylEntry*)(p + 8);
+    s_tab_n = n;
+    s_blob = p + 8 + n * 12;
+    s_loaded = true;
+    mclog::tagInfo(TAG, "ime: pinyin_tbl {} syllables", s_tab_n);
+}
+
+struct Snap {
+    bool on;
+    int len;                 // 拼音缓冲长度
+    char buf[8];
+    int syl;                 // 精确匹配的音节下标, -1 无
+    int page;
+};
+
+std::mutex s_mx;
+Snap s_snap{true, 0, {0}, -1, 0};
+std::atomic<bool> s_bar_gone{false};   // 候选条消失→整屏重绘一次
+
+Snap snapshot()
+{
+    std::lock_guard<std::mutex> lk(s_mx);
+    return s_snap;
+}
+
+const SylEntry* exactEntry(const Snap& s)
+{
+    if (s.syl < 0 || s.syl >= s_tab_n) return nullptr;
+    return &s_tab[s.syl];
+}
+
+int sylCount(const SylEntry* e) { return e ? e->cnt : 0; }
+
+int candBytes(const SylEntry* e, int k, uint8_t* out)
+{
+    if (!e || k < 0 || k >= e->cnt) return 0;
+    memcpy(out, s_blob + e->off + k * 3, 3);
+    return 3;
+}
+
+// 会话建立/退出时复位
+void reset(bool load_tbl)
+{
+    std::lock_guard<std::mutex> lk(s_mx);
+    if (load_tbl && !s_loaded) load();
+    s_snap.len = 0;
+    s_snap.syl = -1;
+    s_snap.page = 0;
+}
+
+void setOn(bool on)
+{
+    std::lock_guard<std::mutex> lk(s_mx);
+    s_snap.on = on;
+    if (!on) { s_snap.len = 0; s_snap.syl = -1; s_snap.page = 0; }
+    s_bar_gone = true;
+}
+
+bool exactMatch(const Snap& s) { return exactEntry(s) != nullptr; }
+
+const SylEntry* exactEntryOf(int idx)
+{
+    return (idx >= 0 && idx < s_tab_n) ? &s_tab[idx] : nullptr;
+}
+
+bool validPrefix(const char* b, int n)
+{
+    if (n <= 0) return true;
+    for (int i = 0; i < s_tab_n; ++i)
+        if ((int)strlen(s_tab[i].py) >= n && strncmp(s_tab[i].py, b, n) == 0) return true;
+    return false;
+}
+
+}  // namespace ime
+
+// IME 按键处理(会话中): 返回 true=已消费(out 带待发字节, outlen 可为 0)
+bool imeKey(uint8_t modifier, uint8_t keycode, bool shift,
+            uint8_t* out, int& outlen)
+{
+    const bool ctrl = modifier & 0x11;
+    std::lock_guard<std::mutex> lk(ime::s_mx);
+    auto& st = ime::s_snap;
+
+    if (keycode == 0x3F) {                    // F6: IME 开关
+        st.on = !st.on;
+        if (!st.on) { st.len = 0; st.syl = -1; st.page = 0; }
+        ime::s_bar_gone = true;
+        mclog::tagInfo(TAG, "ime {}", st.on ? "on" : "off");
+        outlen = 0;
+        return true;
+    }
+    if (!st.on || ctrl) return false;
+
+    // 功能键/方向键不拦(TUI 依赖)
+    if ((keycode >= 0x3A && keycode <= 0x45) ||   // F1-F12
+        (keycode >= 0x4F && keycode <= 0x52))     // 方向键
+        return false;
+
+    uint8_t raw[6];
+    int n = mapKey(modifier, keycode, shift, raw);
+
+    if (keycode == 0x28) {                    // Enter: 缓冲非空=原样发字母+回车
+        if (st.len > 0) {
+            memcpy(out, st.buf, st.len);
+            out[st.len] = '\r';
+            outlen = st.len + 1;
+            st.len = 0; st.syl = -1; st.page = 0;
+            ime::s_bar_gone = true;
+            return true;
+        }
+        out[0] = '\r'; outlen = 1;
+        return true;
+    }
+    if (keycode == 0x29) {                    // Esc: 清缓冲; 空则透传
+        if (st.len > 0) {
+            st.len = 0; st.syl = -1; st.page = 0;
+            ime::s_bar_gone = true;
+            outlen = 0;
+            return true;
+        }
+        out[0] = 0x1B; outlen = 1;
+        return true;
+    }
+    if (keycode == 0x2A) {                    // Backspace: 删拼音末字母
+        if (st.len > 0) {
+            st.buf[--st.len] = 0;
+            st.syl = -1;
+            for (int i = 0; i < ime::s_tab_n; ++i)
+                if ((int)strlen(ime::s_tab[i].py) == st.len &&
+                    strncmp(ime::s_tab[i].py, st.buf, st.len) == 0) { st.syl = i; break; }
+            st.page = 0;
+            if (st.len == 0) ime::s_bar_gone = true;
+            outlen = 0;
+            return true;
+        }
+        out[0] = 0x7F; outlen = 1;
+        return true;
+    }
+
+    const ime::SylEntry* e = ime::exactEntry(st);
+    int total = ime::sylCount(e);
+    if (e && keycode >= 0x1E && keycode <= 0x26) {   // '1'-'9' 选候选
+        int k = st.page * 9 + (keycode - 0x1E);
+        outlen = ime::candBytes(e, k, out);
+        st.len = 0; st.syl = -1; st.page = 0;
+        ime::s_bar_gone = true;
+        return true;
+    }
+    if (e && total > 9 &&
+        (keycode == 0x2D || keycode == 0x2E ||      // - / = 翻页
+         keycode == 0x4B || keycode == 0x4E)) {     // PgUp / PgDn
+        int pages = (total + 8) / 9;
+        st.page = (st.page + (keycode == 0x2E || keycode == 0x4E ? 1 : pages - 1)) % pages;
+        outlen = 0;
+        return true;
+    }
+
+    // 字母: 进拼音缓冲
+    if (n == 1 && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z'))) {
+        char c = raw[0] | 0x20;
+        bool ok = false;
+        if (st.len < 7) {
+            char nb[8];
+            memcpy(nb, st.buf, st.len);
+            nb[st.len] = c;
+            ok = ime::validPrefix(nb, st.len + 1);
+            if (ok) {
+                st.buf[st.len] = c;
+                st.buf[++st.len] = 0;
+                st.syl = -1;
+                for (int i = 0; i < ime::s_tab_n; ++i)
+                    if ((int)strlen(ime::s_tab[i].py) == st.len &&
+                        strncmp(ime::s_tab[i].py, st.buf, st.len) == 0) { st.syl = i; break; }
+                st.page = 0;
+                outlen = 0;
+                return true;
+            }
+        }
+        // 非法继续: 整串原样直通(英文优先), 缓冲换成本字母
+        memcpy(out, st.buf, st.len);
+        out[st.len] = c;
+        outlen = st.len + 1;
+        st.len = 1; st.buf[0] = c; st.buf[1] = 0;
+        st.syl = -1; st.page = 0;
+        return true;
+    }
+
+    // 空格: 有精确音节→上第一候选; 缓冲非空无匹配→字母+空格原样; 空→透传
+    if (keycode == 0x2C && !shift) {
+        if (e) {
+            outlen = ime::candBytes(e, st.page * 9, out);
+            st.len = 0; st.syl = -1; st.page = 0;
+            ime::s_bar_gone = true;
+            return true;
+        }
+        if (st.len > 0) {
+            memcpy(out, st.buf, st.len);
+            out[st.len] = ' ';
+            outlen = st.len + 1;
+            st.len = 0; st.syl = -1;
+            ime::s_bar_gone = true;
+            return true;
+        }
+        out[0] = ' '; outlen = 1;
+        return true;
+    }
+
+    // 其他可打印字符: 缓冲非空→原样直通+本字符; 空→透传
+    if (n >= 1 && st.len > 0) {
+        memcpy(out, st.buf, st.len);
+        memcpy(out + st.len, raw, n);
+        outlen = st.len + n;
+        st.len = 0; st.syl = -1; st.page = 0;
+        ime::s_bar_gone = true;
+        return true;
+    }
+    return false;
+}
+
 namespace {
 constexpr int COLS = 91, ROWS = 25;
 constexpr int CW = 14, CH = 28;
@@ -281,12 +530,14 @@ void AppSsh::_buildSession()
     lv_obj_set_style_text_color(x, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(x);
 
+    ime::reset(true);    // 加载拼音表 + 清缓冲
     _installKeySink();
     _renderTerminal();   // 首帧
 }
 
 void AppSsh::_teardownSession()
 {
+    ime::reset(false);
     _removeKeySink();
     if (_disc_btn) { lv_obj_delete(_disc_btn); _disc_btn = nullptr; }
     if (_canvas)   { lv_obj_delete(_canvas); _canvas = nullptr; }
@@ -347,6 +598,7 @@ void AppSsh::_renderTerminal()
 {
     if (!_canvas || !_emu || !_cbuf) return;
     GetHAL()->lvglLock();
+    if (ime::s_bar_gone.exchange(false)) _emu->markAllDirty();   // 候选条消失→整屏重绘
     bool cursor = _emu->cursorVisible() && _emu->scrollbackOffset() == 0;
     bool any = false;
     for (int row = 0; row < ROWS; ++row) {
@@ -358,8 +610,55 @@ void AppSsh::_renderTerminal()
         }
     }
     _emu->clearDirty();
+    // IME 候选条 overlay(每帧重画, 盖在终端内容上)
+    ime::Snap snap = ime::snapshot();
+    if (snap.on && snap.len > 0) {
+        _drawImeBar(snap.len, snap.buf, snap.syl, snap.page);
+        any = true;
+    }
     if (any) lv_obj_invalidate(_canvas);
     GetHAL()->lvglUnlock();
+}
+
+// IME 候选条: 光标行下方整行横条, 拼音(Terminus) + 数字编号 + 汉字(CJK)
+void AppSsh::_drawImeBar(int len, const char* buf, int syl, int page)
+{
+    uint16_t* bufpx = (uint16_t*)_cbuf;
+    const int row = std::min(ROWS - 1, (int)_emu->cursorRow() + 1);
+    const int y0 = row * CH;
+    for (int y = y0; y < y0 + CH; ++y)
+        for (int x = 0; x < TW; ++x) bufpx[(size_t)y * TW + x] = 0x101820;
+
+    const TerminusFont::Font& font = TerminusFont::fontForHeight(CH);
+    const uint32_t C_PINYIN = 0x7FD5F7, C_NUM = 0xFFD24A, C_HANZI = 0xFFFFFF;
+    int x = 4;
+    for (int i = 0; i < len; ++i) {
+        TerminusFont::drawGlyphRgb565(bufpx, TW, TH, font, buf[i], x, y0, C_PINYIN);
+        x += CW;
+    }
+    x += CW / 2;
+    const ime::SylEntry* e = ime::exactEntryOf(syl);
+    if (!e) return;
+    const int total = ime::sylCount(e);
+    const int begin = page * 9;
+    const int end = std::min(total, begin + 9);
+    for (int k = begin; k < end; ++k) {
+        TerminusFont::drawGlyphRgb565(bufpx, TW, TH, font, '1' + (k - begin), x, y0, C_NUM);
+        x += CW;
+        uint8_t hz[3];
+        if (ime::candBytes(e, k, hz) == 3) {
+            const uint32_t cp = ((hz[0] & 0x0F) << 12) | ((hz[1] & 0x3F) << 6) | (hz[2] & 0x3F);
+            CjkFont::drawGlyphRgb565(bufpx, TW, TH, cp, x, y0, 2 * CW, CH, C_HANZI);
+        }
+        x += 2 * CW + 6;
+    }
+    if (total > 9) {   // 页码提示(右端): 如 2/4
+        char pg[8];
+        int n = snprintf(pg, sizeof(pg), "%d/%d", page + 1, (total + 8) / 9);
+        int px = TW - 8 - n * CW;
+        for (int i = 0; i < n; ++i)
+            TerminusFont::drawGlyphRgb565(bufpx, TW, TH, font, pg[i], px + i * CW, y0, C_NUM);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -434,6 +733,13 @@ bool AppSsh::_rawKeyCb(uint8_t modifier, uint8_t keycode, bool shift, void* user
     auto* app = static_cast<AppSsh*>(user);
     if (!app || app->_sess_state.load() != 2) return false;   // 非会话态不拦截
     KeyEvt e{};
+    // IME 优先(F6 开关/组字), 未消费走原直通路径
+    int ime_len = 0;
+    if (imeKey(modifier, keycode, shift, e.b, ime_len)) {
+        e.len = (uint8_t)ime_len;
+        if (e.len && s_keyq) xQueueSend(s_keyq, &e, 0);
+        return true;
+    }
     e.len = (uint8_t)mapKey(modifier, keycode, shift, e.b);
     if (!e.len) return false;
     if (s_keyq) xQueueSend(s_keyq, &e, 0);   // 满则丢(打字速率远低于容量)

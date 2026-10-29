@@ -76,6 +76,7 @@ private:
     void _removeKeySink();
 
     static bool _rawKeyCb(uint8_t modifier, uint8_t keycode, bool shift, void* user);
+    void _drawImeBar(int len, const char* buf, int syl, int page);
 #endif
 
     // ── 上拨手势退出 (app_rfid 同款, 工具页模式) ──
