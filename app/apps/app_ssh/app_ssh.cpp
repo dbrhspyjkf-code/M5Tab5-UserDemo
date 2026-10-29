@@ -282,7 +282,7 @@ struct Snap {
 };
 
 std::mutex s_mx;
-Snap s_snap{true, 0, {0}, -1, 0};
+Snap s_snap{false, 0, {0}, -1, 0};   // 默认关: SSH 以英文为主, Ctrl 按需开
 std::atomic<bool> s_bar_gone{false};   // 候选条消失→整屏重绘一次
 
 // 裸 Ctrl 单击状态机 (键盘无 F 排, 单击 Ctrl = IME 开关):
@@ -363,23 +363,20 @@ bool imeKey(uint8_t modifier, uint8_t keycode, bool shift,
         if (ctrl) {
             if (ime::s_keys_down > 0) {          // 别的键在 Ctrl 按住期间释放
                 ime::s_keys_down--;
-                ime::s_ctrl_solo = false;
             } else if (!ime::s_prev_ctrl) {      // Ctrl 刚按下且无其他键
-                ime::s_prev_ctrl = true;
                 ime::s_ctrl_solo = true;
             }
-        } else if (ime::s_keys_down > 0) {
-            ime::s_keys_down--;
-            ime::s_ctrl_solo = false;
-        } else if (ime::s_prev_ctrl && ime::s_ctrl_solo) {
+            ime::s_prev_ctrl = true;
+        } else {                                 // 全部键已松开: 计数归零自愈
+            ime::s_keys_down = 0;                // (漏事件如 CapsLock 截走也不失步)
+            if (ime::s_prev_ctrl && ime::s_ctrl_solo) {
+                st.on = !st.on;                  // ★ 裸 Ctrl 单击 → 开关
+                if (!st.on) { st.len = 0; st.syl = -1; st.page = 0; }
+                mclog::tagInfo(TAG, "ime {} (ctrl)", st.on ? "on" : "off");
+            }
             ime::s_prev_ctrl = false;
             ime::s_ctrl_solo = false;
-            st.on = !st.on;                      // ★ 裸 Ctrl 单击 → 开关
-            if (!st.on) { st.len = 0; st.syl = -1; st.page = 0; }
             ime::s_bar_gone = true;
-            mclog::tagInfo(TAG, "ime {} (ctrl)", st.on ? "on" : "off");
-        } else {
-            ime::s_prev_ctrl = false;
         }
         outlen = 0;
         return true;                             // 释放事件对 LVGL 无意义, 一律消化
@@ -666,7 +663,6 @@ void AppSsh::_renderTerminal()
 {
     if (!_canvas || !_emu || !_cbuf) return;
     GetHAL()->lvglLock();
-    if (ime::s_bar_gone.exchange(false)) _emu->markAllDirty();   // 候选条消失→整屏重绘
     bool cursor = _emu->cursorVisible() && _emu->scrollbackOffset() == 0;
     bool any = false;
     for (int row = 0; row < ROWS; ++row) {
@@ -678,11 +674,30 @@ void AppSsh::_renderTerminal()
         }
     }
     _emu->clearDirty();
-    // IME 候选条 overlay(每帧重画, 盖在终端内容上)
+    // IME 候选条 overlay(每帧重画); 消失时只重绘候选条所在行
+    // (旧行为 markAllDirty 整屏 2275 格重绘, 打字高频触发造成卡顿)
+    static int s_bar_row = -1;
     ime::Snap snap = ime::snapshot();
-    if (snap.on && snap.len > 0) {
+    const bool bar = snap.on && (snap.len > 0 || snap.syl >= 0);
+    if (s_bar_row >= 0 && !bar) {
+        for (int col = 0; col < COLS; ++col) _drawCell(col, s_bar_row, false);
+        any = true;
+    }
+    if (bar) {
+        s_bar_row = std::min(ROWS - 1, (int)_emu->cursorRow() + 1);
         _drawImeBar(snap.len, snap.buf, snap.syl, snap.page);
         any = true;
+    } else if (snap.on) {
+        // IME 开但空闲: 光标行下方画小指示, 提示组字模式已激活
+        const int row = std::min(ROWS - 1, (int)_emu->cursorRow() + 1);
+        uint16_t* bufpx = (uint16_t*)_cbuf;
+        const TerminusFont::Font& font = TerminusFont::fontForHeight(CH);
+        const char* hint = "pin-yin";
+        int hx = TW - 8 - (int)strlen(hint) * CW / 2;
+        for (const char* q = hint; *q; ++q) {
+            TerminusFont::drawGlyphRgb565(bufpx, TW, TH, font, *q, hx, row * CH, 0x4A6A8A);
+            hx += CW / 2;
+        }
     }
     if (any) lv_obj_invalidate(_canvas);
     GetHAL()->lvglUnlock();
