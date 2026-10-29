@@ -83,6 +83,7 @@ public:
 
     void reboot() override;
     bool tryRunDetached(std::function<void()> fn) override;
+    bool tryRunDetached(std::function<void()> fn, size_t stack_bytes) override;
 
     bool isSdCardMounted() override;
     std::vector<FileEntry_t> scanSdCard(const std::string& dirPath) override;

@@ -173,6 +173,19 @@ static void kb_forward_to_lvgl(uint8_t modifier, uint8_t keycode)
         lv_obj_t* focused = lv_group_get_focused(g);
         bool is_textarea  = (focused != nullptr) && lv_obj_check_type(focused, &lv_textarea_class);
 
+        // 排查期决策日志: 前 100 个事件记录 keycode/字符/聚焦判定(2026-10-29
+        // app_ssh 表单聚焦了却无法输入的现场取证, 稳定后可降回 event 级)
+        {
+            static uint32_t s_dbg_n = 0;
+            if (s_dbg_n < 100) {
+                s_dbg_n++;
+                ESP_LOGI(TAG, "fwd[%u] key=0x%02X mod=0x%02X c=%c focused=%p ta=%d",
+                         s_dbg_n, keycode, modifier,
+                         (c >= 0x20 && c < 0x7F) ? c : '?',
+                         (void*)focused, (int)is_textarea);
+            }
+        }
+
         // Backspace / Enter / Tab / Forward delete — always handled for textareas.
         if (keycode == 0x2A) {  // Backspace
             if (is_textarea) lv_textarea_delete_char(focused);

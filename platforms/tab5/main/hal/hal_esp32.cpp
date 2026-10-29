@@ -313,7 +313,7 @@ void HalEsp32::setRtcTime(tm time)
     update_system_time();
 }
 
-bool HalEsp32::tryRunDetached(std::function<void()> fn)
+static bool spawn_detached_worker(std::function<void()> fn, size_t stack_bytes)
 {
     // Heap-own the functor so it survives until the worker runs it.
     auto* heap_fn = new (std::nothrow) std::function<void()>(std::move(fn));
@@ -324,12 +324,10 @@ bool HalEsp32::tryRunDetached(std::function<void()> fn)
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    // 8 KB instead of the 16 KB pthread default: these workers do plain-HTTP
-    // fetches (no TLS), so 8 KB is ample and a contiguous 8 KB internal block is
-    // far easier to find than 16 KB when RAM is fragmented (e.g. right after
-    // leaving xiaozhi). Stack size set on the attr so we don't perturb the
-    // task-global esp_pthread cfg used by other threads (e.g. HaClient poll).
-    pthread_attr_setstacksize(&attr, 8192);
+    // 栈大小设在 attr 上, 不动全局 esp_pthread 配置(HaClient poll 等线程依赖)。
+    // 默认 8KB: 普通 HTTP worker 足够, 且比 16KB 更容易在内存碎片期找到
+    // 连续块; TLS 握手(SSH/mbedtls)等深调用链用带参重载给 24KB+。
+    pthread_attr_setstacksize(&attr, stack_bytes);
 
     pthread_t tid;
     int ret = pthread_create(&tid, &attr, [](void* arg) -> void* {
@@ -344,10 +342,21 @@ bool HalEsp32::tryRunDetached(std::function<void()> fn)
         // pthread_create failed (e.g. ENOMEM). Returning false lets the caller
         // skip this work instead of aborting like std::thread would.
         delete heap_fn;
-        mclog::tagWarn(_tag, "tryRunDetached: pthread_create failed ({})", ret);
+        mclog::tagWarn("hal", "tryRunDetached({}B): pthread_create failed ({})",
+                       stack_bytes, ret);
         return false;
     }
     return true;
+}
+
+bool HalEsp32::tryRunDetached(std::function<void()> fn)
+{
+    return spawn_detached_worker(std::move(fn), 8192);
+}
+
+bool HalEsp32::tryRunDetached(std::function<void()> fn, size_t stack_bytes)
+{
+    return spawn_detached_worker(std::move(fn), stack_bytes);
 }
 
 void HalEsp32::update_system_time()

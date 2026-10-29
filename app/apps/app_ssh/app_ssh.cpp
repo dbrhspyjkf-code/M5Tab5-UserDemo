@@ -450,7 +450,9 @@ void AppSsh::_startTask()
 {
     if (_task_running.load()) return;
     _task_running.store(true);
-    GetHAL()->tryRunDetached([this]() { _sessionTask(); });
+    // SSH+mbedtls 握手深调用链: 8KB 会在 ssh_connect 内打穿栈(Stack
+    // protection fault 实测), 给 32KB
+    GetHAL()->tryRunDetached([this]() { _sessionTask(); }, 32 * 1024);
 }
 
 void AppSsh::_sessionTask()

@@ -337,6 +337,20 @@ public:
         return true;
     }
 
+    /**
+     * @brief 同上, 但可指定栈大小(字节)。
+     *
+     * 默认 8KB 版适合普通 HTTP worker; TLS 握手(SSH/mbedtls)等深调用链
+     * 需要 24KB+ —— app_ssh 连接任务实测 8KB 在 ssh_connect 内打穿栈
+     * (Stack protection fault, 2026-10-29)。
+     */
+    virtual bool tryRunDetached(std::function<void()> fn, size_t stack_bytes)
+    {
+        (void)stack_bytes;   // 桌面 std::thread 栈由系统管
+        std::thread(std::move(fn)).detach();
+        return true;
+    }
+
     /* --------------------------------- SD Card -------------------------------- */
     struct FileEntry_t {
         std::string name;
