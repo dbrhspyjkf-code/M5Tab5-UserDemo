@@ -426,13 +426,11 @@ bool imeKey(uint8_t modifier, uint8_t keycode, bool shift,
     // 字母: 进拼音缓冲
     if (n == 1 && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z'))) {
         char c = raw[0] | 0x20;
-        bool ok = false;
         if (st.len < 7) {
             char nb[8];
             memcpy(nb, st.buf, st.len);
             nb[st.len] = c;
-            ok = ime::validPrefix(nb, st.len + 1);
-            if (ok) {
+            if (ime::validPrefix(nb, st.len + 1)) {
                 st.buf[st.len] = c;
                 st.buf[++st.len] = 0;
                 st.syl = -1;
@@ -444,12 +442,15 @@ bool imeKey(uint8_t modifier, uint8_t keycode, bool shift,
                 return true;
             }
         }
-        // 非法继续: 整串原样直通(英文优先), 缓冲换成本字母
+        // 非法继续: 旧缓冲+新字母【一次整串直通, 缓冲清空】—— 字节保序
+        // 保完整(hermes → "her"+"mes" 恰好还原); 旧版只发旧缓冲、扣住新
+        // 字母, 叠加键盘重复事件导致字母错乱+尾字残留(2026-10-29 实测)
         memcpy(out, st.buf, st.len);
         out[st.len] = c;
         outlen = st.len + 1;
-        st.len = 1; st.buf[0] = c; st.buf[1] = 0;
+        st.len = 0; st.buf[0] = 0;
         st.syl = -1; st.page = 0;
+        ime::s_bar_gone = true;
         return true;
     }
 
@@ -695,7 +696,7 @@ void AppSsh::_drawImeBar(int len, const char* buf, int syl, int page)
 struct KeyEvt {
     uint8_t len;
     uint8_t kind;   // 0=字节流 1=回滚上(更旧) 2=回滚下(更新)
-    uint8_t b[6];
+    uint8_t b[8];
 };
 static QueueHandle_t s_keyq = nullptr;
 
