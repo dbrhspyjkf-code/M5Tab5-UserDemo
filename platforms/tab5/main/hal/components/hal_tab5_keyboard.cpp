@@ -154,18 +154,20 @@ static void kb_forward_to_lvgl(uint8_t modifier, uint8_t keycode)
         return;
     }
 
-    // Skip release / modifier-only events. No LVGL access needed.
-    if (keycode == 0) return;
-
     // Letters get XOR'd with our sticky CapsLock; other keys only respect
     // the modifier byte. No LVGL access needed.
     bool is_letter       = (keycode >= 0x04 && keycode <= 0x1D);
     bool effective_shift = mod_shift(modifier) ^ (is_letter && s_caps_lock);
 
-    // 原始钩子优先: 终端类 app 消费 Ctrl 组合/方向键等, 拿原始 HID 事件。
+    // 原始钩子优先 —— 含按键释放事件(keycode==0): app_ssh IME 需要
+    // "裸 Ctrl 单击"做开关, 必须能看到 Ctrl 的按下与释放。钩子未消费
+    // 时释放/纯修饰键事件照旧丢弃(对 LVGL 无意义)。
     if (s_raw_cb && s_raw_cb(modifier, keycode, effective_shift, s_raw_user)) {
         return;
     }
+
+    // Skip release / modifier-only events. No LVGL access needed.
+    if (keycode == 0) return;
     char c = hid_keycode_to_ascii(keycode, effective_shift);
 
     hal->lvglLock();

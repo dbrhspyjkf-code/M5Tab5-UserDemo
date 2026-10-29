@@ -285,6 +285,12 @@ std::mutex s_mx;
 Snap s_snap{true, 0, {0}, -1, 0};
 std::atomic<bool> s_bar_gone{false};   // 候选条消失→整屏重绘一次
 
+// 裸 Ctrl 单击状态机 (键盘无 F 排, 单击 Ctrl = IME 开关):
+// keys_down 追踪非修饰键按下数; ctrl_solo=Ctrl 按下后未碰任何键
+int s_keys_down = 0;
+bool s_prev_ctrl = false;
+bool s_ctrl_solo = false;
+
 Snap snapshot()
 {
     std::lock_guard<std::mutex> lk(s_mx);
@@ -314,6 +320,9 @@ void reset(bool load_tbl)
     s_snap.len = 0;
     s_snap.syl = -1;
     s_snap.page = 0;
+    s_keys_down = 0;
+    s_prev_ctrl = false;
+    s_ctrl_solo = false;
 }
 
 void setOn(bool on)
@@ -349,7 +358,37 @@ bool imeKey(uint8_t modifier, uint8_t keycode, bool shift,
     std::lock_guard<std::mutex> lk(ime::s_mx);
     auto& st = ime::s_snap;
 
-    if (keycode == 0x3F) {                    // F6: IME 开关
+    // 按键释放/纯修饰键事件: 裸 Ctrl 单击 = IME 开关 (键盘无 F6 实体键)
+    if (keycode == 0) {
+        if (ctrl) {
+            if (ime::s_keys_down > 0) {          // 别的键在 Ctrl 按住期间释放
+                ime::s_keys_down--;
+                ime::s_ctrl_solo = false;
+            } else if (!ime::s_prev_ctrl) {      // Ctrl 刚按下且无其他键
+                ime::s_prev_ctrl = true;
+                ime::s_ctrl_solo = true;
+            }
+        } else if (ime::s_keys_down > 0) {
+            ime::s_keys_down--;
+            ime::s_ctrl_solo = false;
+        } else if (ime::s_prev_ctrl && ime::s_ctrl_solo) {
+            ime::s_prev_ctrl = false;
+            ime::s_ctrl_solo = false;
+            st.on = !st.on;                      // ★ 裸 Ctrl 单击 → 开关
+            if (!st.on) { st.len = 0; st.syl = -1; st.page = 0; }
+            ime::s_bar_gone = true;
+            mclog::tagInfo(TAG, "ime {} (ctrl)", st.on ? "on" : "off");
+        } else {
+            ime::s_prev_ctrl = false;
+        }
+        outlen = 0;
+        return true;                             // 释放事件对 LVGL 无意义, 一律消化
+    }
+    ime::s_keys_down++;
+    ime::s_ctrl_solo = false;
+    ime::s_prev_ctrl = ctrl;
+
+    if (keycode == 0x3F) {                    // F6: IME 开关(兼容有 F 排的键盘)
         st.on = !st.on;
         if (!st.on) { st.len = 0; st.syl = -1; st.page = 0; }
         ime::s_bar_gone = true;
