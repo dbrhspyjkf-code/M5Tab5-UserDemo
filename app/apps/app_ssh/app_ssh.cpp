@@ -296,18 +296,20 @@ void AppSsh::_teardownSession()
 void AppSsh::_drawCell(int col, int row, bool cursor_here)
 {
     const TerminalEmulator::Cell& c = _emu->displayCell(col, row);
+    // 宽字符右半格: 左格已连带铺 2 格背景+画字形, 这里绝不能再铺背景
+    // (否则把字形右半擦掉 —— 2026-10-29 "中文只显示一半"真因)
+    if (c.continuation) return;
     uint16_t fg = resolveColor(c.fg, c.bold);
     uint16_t bg = resolveColor(c.bg, false);
     if (c.inverse || cursor_here) std::swap(fg, bg);
 
     uint16_t* buf = (uint16_t*)_cbuf;
     const int x0 = col * CW, y0 = row * CH;
-    // 背景
+    const int span = c.wide ? 2 * CW : CW;   // 宽字符背景铺满 2 格
     for (int y = y0; y < y0 + CH; ++y) {
         uint16_t* line = buf + (size_t)y * TW;
-        for (int x = x0; x < x0 + CW; ++x) line[x] = bg;
+        for (int x = x0; x < x0 + span; ++x) line[x] = bg;
     }
-    if (c.continuation) return;   // 宽字符右半: 只铺背景
 
     // 字形: Terminus 252 码点; 无字形(如 CJK)画豆腐框
     if (c.ch.empty()) return;
@@ -330,7 +332,6 @@ void AppSsh::_drawCell(int col, int row, bool cursor_here)
         CjkFont::drawGlyphRgb565(buf, TW, TH, cp, x0, y0, 2 * CW, CH, fg);
     } else if (cp >= 0x20) {
         // 豆腐框 (1px 边线): 宽字符跨 2 格, 窄字符 1 格
-        const int span = c.wide ? 2 * CW : CW;
         for (int x = x0 + 1; x < x0 + span - 1; ++x) {
             buf[(size_t)y0 * TW + x] = fg;
             buf[(size_t)(y0 + CH - 1) * TW + x] = fg;
