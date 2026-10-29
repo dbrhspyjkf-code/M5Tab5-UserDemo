@@ -505,9 +505,8 @@ void AppSsh::_connect_cb(lv_event_t* e)
     app->_profile.user = lv_textarea_get_text(app->_ta_user);
     app->_profile.password = lv_textarea_get_text(app->_ta_pass);
     app->_profile.port = 22;
-    if (app->_profile.host.empty() || app->_profile.user.empty() ||
-        app->_profile.password.empty()) {
-        lv_label_set_text(app->_form_status, "主机 / 用户 / 密码都要填");
+    if (app->_profile.host.empty() || app->_profile.user.empty()) {
+        lv_label_set_text(app->_form_status, "主机 / 用户要填(密码可空=走密钥)");
         return;
     }
     app->_err[0] = 0;

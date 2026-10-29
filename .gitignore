@@ -20,3 +20,4 @@ memory/
 # Reference clones used while porting the ST25R3916 driver (not part of the build)
 var/M5Unit-NFC/
 var/M5Utility/
+app/apps/app_ssh/secrets.h

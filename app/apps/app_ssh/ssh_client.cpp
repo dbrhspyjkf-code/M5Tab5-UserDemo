@@ -11,6 +11,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_timer.h>
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+#ifndef TAB5_SSH_PRIVKEY
+#define TAB5_SSH_PRIVKEY nullptr   // 无 secrets.h: 只走密码认证
+#endif
 
 static const char* TAG = "ssh";
 
@@ -50,12 +56,33 @@ bool SshClient::connect(const SshProfile& profile, std::string& error,
         return false;
     }
 
-    stage("auth");
-    if (ssh_userauth_password(session, nullptr, profile.password.c_str()) != SSH_AUTH_SUCCESS) {
-        error = ssh_get_error(session);
-        ssh_disconnect(session);
-        ssh_free(session);
-        return false;
+    // 认证: 内置 ed25519 密钥优先(secrets.h, 设备无键盘输密口令的场景),
+    // 密码兜底(表单可留空 = 只走密钥)
+    bool authed = false;
+    if (TAB5_SSH_PRIVKEY && TAB5_SSH_PRIVKEY[0]) {
+        stage("auth pubkey");
+        ssh_key key = nullptr;
+        if (ssh_pki_import_privkey_base64(TAB5_SSH_PRIVKEY, nullptr,
+                                          nullptr, nullptr, &key) == SSH_OK) {
+            authed = ssh_userauth_publickey(session, nullptr, key) == SSH_AUTH_SUCCESS;
+            ssh_key_free(key);
+        }
+        if (!authed) mclog::tagWarn(TAG, "pubkey auth failed, fallback password");
+    }
+    if (!authed) {
+        if (profile.password.empty()) {
+            error = "密钥认证不可用, 且未填密码";
+            ssh_disconnect(session);
+            ssh_free(session);
+            return false;
+        }
+        stage("auth password");
+        if (ssh_userauth_password(session, nullptr, profile.password.c_str()) != SSH_AUTH_SUCCESS) {
+            error = ssh_get_error(session);
+            ssh_disconnect(session);
+            ssh_free(session);
+            return false;
+        }
     }
     ssh_set_blocking(session, 1);
 
