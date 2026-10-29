@@ -1,0 +1,110 @@
+#pragma once
+/*
+ * terminal_emulator — ANSI/VT 转义序列终端模拟器 (移植自
+ * Tab5_SSH_Client 的 TerminalEmulator, Arduino String → std::string)。
+ *
+ * 维护 cols×rows 的 Cell 网格 (字形+fg/bg+bold/inverse+宽字符标记)、
+ * 主/副屏切换(vim)、800 行回滚缓冲、脏标记。颜色: 0-15 调色板索引,
+ * 0x01000000|rgb565 = 直接色 (256 色与 truecolor 折算)。
+ * 非线程安全: 仅会话任务触碰; 渲染同任务内做。
+ */
+#include <cstdint>
+#include <string>
+#include <vector>
+
+class TerminalEmulator {
+public:
+    struct Cell {
+        std::string ch{" "};
+        uint32_t fg{7};
+        uint32_t bg{0};
+        bool bold{false};
+        bool inverse{false};
+        bool wide{false};
+        bool continuation{false};
+        bool dirty{true};
+    };
+
+    void resize(size_t columns, size_t rows);
+    void reset();
+    void clear();
+    void write(const char* data, size_t len);
+    void write(const std::string& text) { write(text.data(), text.size()); }
+    void putStatusLine(const std::string& text);
+
+    size_t columns() const { return _cols; }
+    size_t rows() const { return _rows; }
+    size_t cursorColumn() const { return _cursorCol; }
+    size_t cursorRow() const { return _cursorRow; }
+    bool cursorVisible() const { return _cursorVisible; }
+    bool alternateScreen() const { return _alternate; }
+    const Cell& cell(size_t col, size_t row) const;
+    const Cell& displayCell(size_t col, size_t row) const;
+    void scrollback(int delta);
+    void scrollbackToBottom();
+    size_t scrollbackOffset() const { return _scrollbackOffset; }
+    size_t scrollbackRows() const;
+    void markAllDirty();
+    void markCursorDirty();
+    void clearDirty();
+
+private:
+    enum class State : uint8_t {
+        Ground, Escape, Charset, Csi, Osc, Utf8
+    };
+
+    void resetAttrs();
+    void useAlternate(bool enabled);
+    void newline();
+    void carriageReturn();
+    void backspace();
+    void tab();
+    void putGlyph(const std::string& glyph, bool wide);
+    void scrollUp(size_t top, size_t bottom, size_t count);
+    void clearRow(size_t row, size_t fromCol, size_t toCol);
+    void clearCells();
+    void clearScrollback();
+    void pushScrollbackRow(size_t row);
+    void insertCells(size_t count);
+    void deleteCells(size_t count);
+    void insertLines(size_t count);
+    void deleteLines(size_t count);
+    void scrollDown(size_t top, size_t bottom, size_t count);
+    void processByte(uint8_t c);
+    void processEscape(uint8_t c);
+    void processCsi(uint8_t c);
+    void executeCsi(char command);
+    int param(size_t index, int fallback) const;
+    void parseParams();
+    void setCursor(size_t row, size_t col);
+    void markDirty(size_t col, size_t row);
+    void markDirtyWithNeighbors(size_t col, size_t row);
+    Cell& mutableCell(size_t col, size_t row);
+
+    size_t _cols{80};
+    size_t _rows{24};
+    size_t _cursorCol{0};
+    size_t _cursorRow{0};
+    size_t _savedCol{0};
+    size_t _savedRow{0};
+    uint32_t _fg{7};
+    uint32_t _bg{0};
+    bool _bold{false};
+    bool _inverse{false};
+    bool _wrapPending{false};
+    bool _alternate{false};
+    bool _cursorVisible{true};
+    size_t _scrollTop{0};
+    size_t _scrollBottom{0};
+    State _state{State::Ground};
+    std::string _csi;
+    std::string _osc;
+    std::string _utf8;
+    uint8_t _utf8Expected{0};
+    std::vector<int> _params;
+    std::vector<Cell> _main;
+    std::vector<Cell> _alt;
+    std::vector<Cell> _scrollback;
+    size_t _scrollbackOffset{0};
+    size_t _maxScrollbackRows{800};
+};

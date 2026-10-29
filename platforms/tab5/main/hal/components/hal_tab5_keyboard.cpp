@@ -22,6 +22,8 @@
  ***************************************************/
 #include <hal/hal.h>
 
+#include "hal_tab5_keyboard.h"
+
 #include <mooncake_log.h>
 #include <esp_log.h>
 #include <lvgl.h>
@@ -118,6 +120,17 @@ static esp_err_t kb_write_reg(uint8_t reg, uint8_t value)
     return i2c_master_transmit(s_kb_dev, buf, sizeof(buf), 100);
 }
 
+// === Raw sink (app_ssh 终端等需要原始 HID 事件的 app) ===
+static hal_tab5_kb_raw_cb_t s_raw_cb  = nullptr;
+static void*                s_raw_user = nullptr;
+
+extern "C" void hal_tab5_keyboard_set_raw_sink(hal_tab5_kb_raw_cb_t cb, void* user)
+{
+    s_raw_cb = cb;
+    s_raw_user = user;
+    ESP_LOGI(TAG, "raw sink %s", cb ? "installed" : "cleared");
+}
+
 // Forward a HID key event to the focused LVGL widget. The HAL keyboard
 // group must exist (hal_tab5_keyboard_init creates it if the USB path
 // hasn't already).
@@ -148,6 +161,11 @@ static void kb_forward_to_lvgl(uint8_t modifier, uint8_t keycode)
     // the modifier byte. No LVGL access needed.
     bool is_letter       = (keycode >= 0x04 && keycode <= 0x1D);
     bool effective_shift = mod_shift(modifier) ^ (is_letter && s_caps_lock);
+
+    // 原始钩子优先: 终端类 app 消费 Ctrl 组合/方向键等, 拿原始 HID 事件。
+    if (s_raw_cb && s_raw_cb(modifier, keycode, effective_shift, s_raw_user)) {
+        return;
+    }
     char c = hid_keycode_to_ascii(keycode, effective_shift);
 
     hal->lvglLock();
