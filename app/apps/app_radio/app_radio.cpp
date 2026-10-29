@@ -45,10 +45,19 @@ static const lv_font_t* zh_font_md()
     }();
     return f;
 }
+static const lv_font_t* zh_font_sm()
+{
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_20");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+    }();
+    return f;
+}
 #else
 extern "C" const lv_font_t font_puhui_20_4;
 static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_md() { return &font_puhui_20_4; }
+static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
 #endif
 
 static const char* TAG = "radio";
@@ -60,6 +69,13 @@ struct RadioStation {
     int freq;
 };
 static uint16_t s_vu_h[20] = {0};   // 当前条高(px), draw 回调与 _updateVu 共享
+static uint16_t s_vu_pk[20] = {0};  // 峰值帽高(px): 超峰记录, 8fps 每帧 ×0.92 缓降
+
+// ICY「正在播放」歌名(relay /nowplaying 端点, 流任务 20s 轮询; seq=0 表示
+// 写入中, UI 见非 0 新值才拷贝 —— 单写者 seqlock-lite, 任务绝不触碰 LVGL)
+static char s_np_title[192] = {0};
+static std::atomic<uint32_t> s_np_seq{0};
+[[maybe_unused]] static uint32_t s_np_gen = 0;
 
 static const RadioStation kStations[] = {
     {"深圳交通广播",    "szjt",  1062},
@@ -256,6 +272,41 @@ void teardown_stream(esp_http_client_handle_t& http)
     esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
 }
 
+// ①ICY 正在播放歌名: relay 对上游另开 Icy-MetaData 连接收割 StreamTitle,
+// 端点直接回 text/plain 歌名(HLS 国内台无 ICY, relay 负缓存, 返回空串)。
+// 短超时失败静默 —— 主流不被它阻塞(ring 128KB≈4s 可吸收收割期停喂)。
+void fetch_nowplaying(int idx)
+{
+    char url[160];
+    snprintf(url, sizeof(url), "%s%s/nowplaying", kRelayBase, kStations[idx].path);
+    esp_http_client_config_t cfg = {};
+    cfg.url         = url;
+    cfg.timeout_ms  = 4500;
+    cfg.buffer_size = 1024;
+    esp_http_client_handle_t h = esp_http_client_init(&cfg);
+    if (!h) return;
+    if (esp_http_client_open(h, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(h);
+        if (esp_http_client_get_status_code(h) == 200) {
+            char buf[160] = {0};
+            int n = esp_http_client_read(h, buf, (int)sizeof(buf) - 1);
+            if (n > 0) {
+                while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r' || buf[n - 1] == ' '))
+                    buf[--n] = 0;
+                if (n > 0) {
+                    s_np_seq.store(0);
+                    memcpy(s_np_title, buf, n + 1);
+                    s_np_seq.store(++s_np_gen);
+                    mclog::tagInfo(TAG, "np: {}", s_np_title);
+                }
+            }
+        }
+    }
+    esp_http_client_close(h);
+    esp_http_client_cleanup(h);
+}
+
+// 换台失败/断流后进入退避; mark_fail 统一三条失败路径
 void radio_task_fn(TaskCtx ctx)
 {
     esp_http_client_handle_t http = nullptr;
@@ -265,9 +316,43 @@ void radio_task_fn(TaskCtx ctx)
     bool have_odd = false;
     int stall = 0;
 
+    // ②换台去抖(参考 esp32-p4-webradio commit_station): 目标稳定 300ms 才
+    // 拆建流, 连点 prev/next 合并; 停止(want<0)与重按同台(值不变)立即生效
+    int last_want = -99;
+    int64_t want_changed_at = 0;
+    // ③失败退避: 同台重试按 3s→6s→12s→24s→30s 封顶; 换到别的台不受限
+    int fail_count = 0;
+    int failed_station = -1;
+    int64_t retry_ok_at = 0;
+    int64_t np_last = 0;   // ①ICY 歌名轮询节流
+
+    auto mark_fail = [&](int st, const char* why) {
+        fail_count++;
+        failed_station = st;
+        int bo = 3000 << (fail_count - 1 > 4 ? 4 : fail_count - 1);
+        if (bo > 30000) bo = 30000;
+        retry_ok_at = esp_timer_get_time() + (int64_t)bo * 1000;
+        teardown_stream(http);
+        cur = -1;
+        ctx.state->store(3);
+        mclog::tagWarn(TAG, "{}: {} (retry in {}s)", why, kStations[st].name, bo / 1000);
+    };
+
     int64_t diag_t0 = esp_timer_get_time();
     while (!ctx.closing->load()) {
         int want = ctx.want->load();
+        if (want != last_want) {
+            last_want = want;
+            want_changed_at = esp_timer_get_time();
+        }
+        bool settled = want < 0 ||
+                       (esp_timer_get_time() - want_changed_at) >= 300000;
+        if (want >= 0 && want == failed_station &&
+            esp_timer_get_time() < retry_ok_at) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         if (esp_timer_get_time() - diag_t0 >= 30000000) {   // 30s 诊断
             mclog::tagInfo(TAG, "diag: read={}KB stalls={} underruns={}",
                            s_diag_read / 1024, s_diag_stalls, s_diag_underruns);
@@ -275,7 +360,7 @@ void radio_task_fn(TaskCtx ctx)
             diag_t0 = esp_timer_get_time();
         }
 
-        if (want != cur) {               // 换台 / 停止 / 重试
+        if (want != cur && settled) {    // 换台 / 停止 / 重试
             teardown_stream(http);
             cur = want;
             odd_carry = 0;
@@ -283,6 +368,7 @@ void radio_task_fn(TaskCtx ctx)
             stall = 0;
 
             if (cur < 0) {
+                failed_station = -1;     // 用户主动停: 清退避记忆, 再播立即连
                 ctx.state->store(0);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
@@ -317,38 +403,42 @@ void radio_task_fn(TaskCtx ctx)
                 }
             }
             if (!ok) {
-                mclog::tagWarn(TAG, "connect failed: {}", kStations[cur].name);
-                teardown_stream(http);
-                cur = -1;
-                ctx.state->store(3);
+                mark_fail(cur, "connect failed");
                 continue;
             }
+            fail_count = 0;
+            failed_station = -1;
             esp_http_client_set_timeout_ms(http, 1000);   // 感知停止/断流
             ctx.state->store(2);
+            // 清上一台的歌名并立刻拉新台的(relay 无缓存时会在端点内收割 ~2s)
+            s_np_seq.store(0);
+            s_np_title[0] = 0;
+            s_np_seq.store(++s_np_gen);
+            np_last = 0;
         }
 
         if (!http) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
 
+        // ①ICY 歌名: 每 20s 一次(relay 收割+缓存; 失败静默, 下轮再试)
+        if (cur >= 0 && esp_timer_get_time() - np_last >= 20000000LL) {
+            np_last = esp_timer_get_time();
+            fetch_nowplaying(cur);
+        }
+
         int n = esp_http_client_read(http, (char*)inbuf, sizeof(inbuf));
         if (n == 0) {                    // 服务端关闭
-            teardown_stream(http);
-            cur = -1;
-            ctx.state->store(3);
+            mark_fail(cur, "stream ended");
             continue;
         }
         if (n < 0) {
             if (n != -ESP_ERR_HTTP_EAGAIN) {
-                teardown_stream(http);
-                cur = -1;
-                ctx.state->store(3);
+                mark_fail(cur, "read error");
                 continue;
             }
             s_diag_stalls++;
             ring_drain();                         // 断流期环内余量续播
             if (++stall >= 15) {                  // 连续 15s 无数据才判失败
-                teardown_stream(http);
-                cur = -1;
-                ctx.state->store(3);
+                mark_fail(cur, "stall timeout");
             }
             continue;
         }
@@ -487,9 +577,22 @@ void AppRadio::onOpen()
     lv_label_set_text(_now_name, "—");
     lv_obj_set_style_text_font(_now_name, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_now_name, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_pos(_now_name, 40, 64);
+    lv_obj_set_pos(_now_name, 40, 58);
     lv_label_set_long_mode(_now_name, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(_now_name, 520);
+
+    // ①ICY 正在播放歌名(20px 副行; 国内台 HLS 无 ICY = 恒空不占眼)
+    _now_title = lv_label_create(panel);
+    lv_label_set_text(_now_title, "");
+    lv_obj_set_style_text_font(_now_title, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(_now_title, lv_color_hex(C_TEXT2), 0);
+    lv_label_set_long_mode(_now_title, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(_now_title, 520);
+    lv_obj_set_pos(_now_title, 40, 98);
+    if (uint32_t sq = s_np_seq.load()) {   // 后台播放中重进: 恢复已取到的歌名
+        _np_seen = sq;
+        lv_label_set_text(_now_title, s_np_title);
+    }
 
     // ── 调谐刻度盘(参考 leo-radio / Passport radio_app) ─────────────
     // 88.0-108.0MHz 横向刻度: 主刻度每 2MHz 带数字, 副刻度每 0.5MHz;
@@ -613,7 +716,7 @@ void AppRadio::onOpen()
     lv_screen_load(_scr);
 
     // 几何版本标记: 从串口确证当前固件的布局参数(排查改了没生效)
-    mclog::tagInfo(TAG, "ui-geom: vu_base=380 vu_max=88 btn_play_y=388 btn_d=110/70 vol_y=532");
+    mclog::tagInfo(TAG, "ui-geom: name_y=58 title_y=98 vu_base=384 vu_max=152 btn_play_y=388 vol_y=532");
 
     _startTask();
 }
@@ -625,6 +728,12 @@ void AppRadio::onRunning()
 
     if (_state.load() != _ui_state)        _refreshStateUi();
     if (_want_station.load() != _ui_station) _refreshStationUi();
+
+    // ①歌名: 流任务换了新值才拷进 label(seq=0 是写入中, 跳过)
+    if (uint32_t sq = s_np_seq.load(); sq != 0 && sq != _np_seen && _now_title) {
+        _np_seen = sq;
+        lv_label_set_text(_now_title, s_np_title);   // 任务 20s 才写一次, 拷贝窗口安全
+    }
 
     uint32_t now = GetHAL()->millis();
     if (now - _vu_ms >= 120) {             // 8fps: CPU 让路音频(Passport 电平表教训)
@@ -653,7 +762,17 @@ void AppRadio::_updateVu()
         int h = (int)(_vu_cur[i] + 0.5f);
         if (h < 3) h = 3;
         if (h > 152) h = 152;
-        if ((uint16_t)h != s_vu_h[i]) { s_vu_h[i] = h; changed = true; } // 变化才重绘
+        // ④峰值帽: 超峰即记, 8fps 每帧 ×0.92 缓降, 永不低于条顶(0.92^8≈0.5/s)
+        float pk = s_vu_pk[i];
+        if ((float)h >= pk) pk = (float)h;
+        else                pk *= 0.92f;
+        if (pk < (float)h) pk = (float)h;
+        int ph = (int)(pk + 0.5f);
+        if (ph < h) ph = h;
+        if (ph > 152) ph = 152;
+        bool pchg = ((uint16_t)ph != s_vu_pk[i]);
+        s_vu_pk[i] = (uint16_t)ph;
+        if ((uint16_t)h != s_vu_h[i] || pchg) { s_vu_h[i] = h; changed = true; } // 变化才重绘
     }
     if (changed) lv_obj_invalidate(_vu_strip);
 }
@@ -677,6 +796,20 @@ void AppRadio::_vu_draw_cb(lv_event_t* e)
         a.x2 = a.x1 + 19;
         a.y2 = oc.y1 + 156;          // 条底(条带内 y=156 → 面板 y=384)
         a.y1 = a.y2 - h + 1;
+        lv_draw_rect(layer, &dsc, &a);
+    }
+    // ④峰值帽: 各条峰高的 2px 亮线(琥珀混白), 条到峰时叠成亮顶
+    dsc.bg_color = lv_color_mix(lv_color_hex(C_AMBER), lv_color_white(), LV_OPA_50);
+    dsc.bg_opa  = LV_OPA_COVER;
+    dsc.radius  = 1;
+    for (int i = 0; i < 20; i++) {
+        int ph = s_vu_pk[i];
+        if (ph < 5) continue;
+        lv_area_t a;
+        a.x1 = oc.x1 + i * 26;
+        a.x2 = a.x1 + 19;
+        a.y2 = oc.y1 + 156 - ph;
+        a.y1 = a.y2 - 1;
         lv_draw_rect(layer, &dsc, &a);
     }
 }

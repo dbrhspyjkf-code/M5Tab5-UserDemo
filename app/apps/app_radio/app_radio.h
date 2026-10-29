@@ -45,6 +45,8 @@ private:
     lv_obj_t* _scr        = nullptr;
     lv_obj_t* _status_lbl = nullptr;   // 顶栏右侧状态
     lv_obj_t* _now_name   = nullptr;   // 右侧当前台名
+    lv_obj_t* _now_title  = nullptr;   // ICY 正在播放歌名(20px 副行, relay 收割)
+    uint32_t  _np_seen    = 0;         // 已刷进 UI 的歌名序号
     lv_obj_t* _play_icon  = nullptr;   // 播放/暂停按钮内容
     lv_obj_t* _vol_slider = nullptr;
     lv_obj_t* _vol_lbl    = nullptr;
