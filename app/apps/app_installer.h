@@ -21,6 +21,7 @@
 #include "app_email_led/app_email_led.h"
 #include "app_stocks/app_stocks.h"
 #include "app_rfid/app_rfid.h"
+#include "app_ssh/app_ssh.h"
 #include "app_radio/app_radio.h"
 #include "app_player/app_player.h"
 #include "app_timer/app_timer.h"
@@ -85,6 +86,9 @@ inline void on_install_apps()
     auto rf_uptr = std::make_unique<AppRfid>();
     AppRfid* rfid = rf_uptr.get();
 
+    auto sh_uptr = std::make_unique<AppSsh>();
+    AppSsh* ssh = sh_uptr.get();        // SSH 终端: 工具页入口
+
     auto ra_uptr = std::make_unique<AppRadio>();
     AppRadio* radio = ra_uptr.get();
 
@@ -110,6 +114,7 @@ inline void on_install_apps()
     int st_id = mooncake::GetMooncake().installApp(std::move(st_uptr));
     int re_id = mooncake::GetMooncake().installApp(std::move(re_uptr));
     int rf_id = mooncake::GetMooncake().installApp(std::move(rf_uptr));
+    int sh_id = mooncake::GetMooncake().installApp(std::move(sh_uptr));
     int ra_id = mooncake::GetMooncake().installApp(std::move(ra_uptr));
     int pl_id = mooncake::GetMooncake().installApp(std::move(pl_uptr));
     int ti_id = mooncake::GetMooncake().installApp(std::move(ti_uptr));
@@ -144,6 +149,10 @@ inline void on_install_apps()
     rfid->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+    // SSH 终端同从「工具」页打开, 上拨返回工具页.
+    ssh->setCloseCallback([set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+    });
     // 收音机是主页入口(非工具页), 关闭直接回主屏
     radio->setCloseCallback([home]() { home->restoreScreen(); });
     // 播放器(Sonos/HomePod)同为主页入口
@@ -162,6 +171,7 @@ inline void on_install_apps()
     settings->setCalendarAppId(cal_id);
     settings->setReachyAppId(re_id);
     settings->setRfidAppId(rf_id);
+    settings->setSshAppId(sh_id);
 
     // Status-bar mail icon → open the AppSettings email sub-page. The handler
     // (1) brings the AppSettings app to the foreground (its onOpen builds the

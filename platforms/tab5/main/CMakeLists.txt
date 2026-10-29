@@ -46,7 +46,8 @@ idf_component_register(SRCS "app_main.cpp" ${APP_LAYER_SRCS} ${MY_HAL_SRCS}
                         esp_http_client
                         esp-tls
                         esp_pm
-                        voice_input)
+                        voice_input
+                        libssh)
 
 # LVGL assert handler: abort() instead of while(1) so crashes restart cleanly
 target_compile_definitions(__idf_main PRIVATE

@@ -529,6 +529,25 @@ void AppSettings::_buildToolsPage()
                 tool_accent_rect(tile, C_ACCENT, icx + 10, icy - 12, 8, 8, 2);
                 tool_accent_rect(tile, C_ACCENT, icx - 8, icy + 4, 16, 5, 2);    // 嘴
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 10) {
+                // SSH 终端 — 终端窗框 + 标题条圆点 + ">_" 提示符,
+                // 参考 icons8-控制台. 图标盒 96x96.
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                const int fx = start + 10, fy = top + 8, fw = 76, fh = 80;
+                tool_accent_frame(tile, C_ACCENT, fx, fy, fw, fh, 12, 6);        // 窗框
+                tool_accent_rect(tile, C_ACCENT, fx + 8, fy + 10, 8, 8, 4);      // 标题点x3
+                tool_accent_rect(tile, C_ACCENT, fx + 22, fy + 10, 8, 8, 4);
+                tool_accent_rect(tile, C_ACCENT, fx + 36, fy + 10, 8, 8, 4);
+                tool_accent_rect(tile, C_ACCENT, fx + 8, fy + 24, fw - 16, 4, 2);// 分隔线
+                // ">": 两段折线 (点位相对线对象原点)
+                static const lv_point_precise_t chevron_pts[] = {
+                    {0, 0}, {12, 9}, {0, 18}
+                };
+                tool_accent_line(tile, C_ACCENT, fx + 14, fy + 36, chevron_pts, 3, 5);
+                tool_accent_rect(tile, C_ACCENT, fx + 32, fy + 50, 22, 5, 2);    // "_"
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -589,6 +608,10 @@ void AppSettings::_buildToolsPage()
     // 第 2 行第 3 列: RFID 读写器 (Unit NFC / MFRC522, PORT A I2C 0x28)
     //   图标走 kind=2 分支: 3 个同心圆环 + 中心芯片, 象征 NFC 感应
     make_tile(1, 1, nullptr, 130, "RFID", _toolRfid_cb, 256, 12, -1, 2);
+
+    // 第 3 行第 2 列: SSH 终端 (libssh 0.11.5 + mbedtls, 移植 Tab5_SSH_Client)
+    //   图标走 kind=10 分支: 终端窗框 + ">_" 提示符
+    make_tile(1, 2, nullptr, 130, "SSH", _toolSsh_cb, 256, 12, -1, 10);
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)
@@ -669,6 +692,14 @@ void AppSettings::_toolRfid_cb(lv_event_t* e)
     auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
     if (self->_rfid_id > 0) {
         mooncake::GetMooncake().openApp(self->_rfid_id);
+    }
+}
+
+void AppSettings::_toolSsh_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (self->_ssh_id > 0) {
+        mooncake::GetMooncake().openApp(self->_ssh_id);
     }
 }
 
