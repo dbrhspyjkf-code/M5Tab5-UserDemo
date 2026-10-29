@@ -84,6 +84,10 @@ void AppSsh::onOpen()
     if (_scr) _destroyUi();   // 工具页模式: 幂等收割
     mclog::tagInfo(TAG, "on open");
 #ifndef PLATFORM_BUILD_DESKTOP
+    // 上次退出残留的关闭标志必须清掉, 否则新会话连上即退
+    // (ready 后 100ms session end, 2026-10-29 "无法再进入"实锤;
+    //  同收音机 _app_closing.store(false) 惯例)
+    _sess_closing.store(false);
     if (!_emu) _emu = std::make_unique<TerminalEmulator>();
 #endif
     _buildForm();
