@@ -47,6 +47,8 @@ inline void blend(uint16_t& dst, uint16_t fg, uint8_t a)
 
 bool ready() { return zh24() != nullptr; }
 
+void* debugFont() { return zh24(); }
+
 bool hasGlyph(uint32_t cp)
 {
     lv_font_t* f = zh24();
@@ -75,19 +77,22 @@ void drawGlyphRgb565(uint16_t* buf, int bufW, int bufH, uint32_t cp,
     const auto& gd = fdsc->glyph_dsc[gid];
     const uint8_t* bm = fdsc->glyph_bitmap + gd.bitmap_index;
     const int bw = gd.box_w, bh = gd.box_h;
-    const int stride = (bw + 1) / 2;          // 4bpp, 高半字节在前
 
     // 字形盒在 (boxW x boxH) 内居中
     const int ox = x + (boxW - bw) / 2;
     const int oy = y + (boxH - bh) / 2;
 
+    // 4bpp = 连续半字节流(高半字节在前), 行间【不做】字节对齐 ——
+    // 奇数宽度时下一行从半个字节开始; 按行对齐读会整体斜切错位
+    // (2026-10-29 "奇数宽中文全乱/斜切"真因, 偶数宽两种读法碰巧等价)
+    int nib = 0;
     for (int gy = 0; gy < bh; ++gy) {
         const int dy = oy + gy;
-        if (dy < 0 || dy >= bufH) continue;
-        const uint8_t* row = bm + (size_t)gy * stride;
+        if (dy < 0 || dy >= bufH) { nib += bw; continue; }
         uint16_t* line = buf + (size_t)dy * bufW;
         for (int gx = 0; gx < bw; ++gx) {
-            const uint8_t a = (gx & 1) ? (row[gx >> 1] & 0xF) : (row[gx >> 1] >> 4);
+            const uint8_t a = (nib & 1) ? (bm[nib >> 1] & 0xF) : (bm[nib >> 1] >> 4);
+            ++nib;
             if (!a) continue;
             const int dx = ox + gx;
             if (dx >= 0 && dx < bufW) blend(line[dx], fg, a);
@@ -102,6 +107,7 @@ void drawGlyphRgb565(uint16_t* buf, int bufW, int bufH, uint32_t cp,
 namespace CjkFont {
 bool ready() { return false; }
 bool hasGlyph(uint32_t) { return false; }
+void* debugFont() { return nullptr; }
 void drawGlyphRgb565(uint16_t*, int, int, uint32_t, int, int, int, int, uint16_t) {}
 }  // namespace CjkFont
 

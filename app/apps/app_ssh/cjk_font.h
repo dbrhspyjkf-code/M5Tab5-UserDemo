@@ -17,6 +17,9 @@ namespace CjkFont {
 bool ready();
 bool hasGlyph(uint32_t cp);
 
+// 排查期: 暴露内部字体实例(诊断日志用, 实际类型 lv_font_t*)
+void* debugFont();
+
 void drawGlyphRgb565(uint16_t* buf, int bufW, int bufH, uint32_t cp,
                      int x, int y, int boxW, int boxH, uint16_t fg);
 
