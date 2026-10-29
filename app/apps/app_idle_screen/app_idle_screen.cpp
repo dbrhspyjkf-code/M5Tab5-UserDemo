@@ -276,7 +276,7 @@ void AppIdleScreen::_show()
     // 右下角时间/日期叠加 (2026-10-29 用户要求): 半透明黑圆角底衬保证任何
     // 照片上都可读; 标签不可点, 触摸始终落到 overlay 关闭。
     _ph_scrim = lv_obj_create(_overlay);
-    lv_obj_set_size(_ph_scrim, 620, 84);
+    lv_obj_set_size(_ph_scrim, 620, 108);
     lv_obj_align(_ph_scrim, LV_ALIGN_BOTTOM_RIGHT, -28, -28);
     lv_obj_set_style_bg_color(_ph_scrim, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(_ph_scrim, LV_OPA_40, 0);
@@ -285,18 +285,26 @@ void AppIdleScreen::_show()
     lv_obj_set_style_pad_all(_ph_scrim, 0, 0);
     lv_obj_clear_flag(_ph_scrim, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
-    // 时间+日期同一行 (2026-10-29 用户要求): 日期(24px)居左, 时间(44px)居右
+    // 两行布局 (2026-10-29 用户定稿): 行1=日期+时间, 行2=星期+农历
     _ph_time_lbl = lv_label_create(_ph_scrim);
     lv_obj_set_style_text_font(_ph_time_lbl, &lv_font_montserrat_44, 0);
     lv_obj_set_style_text_color(_ph_time_lbl, lv_color_hex(C_TEXT), 0);
-    lv_obj_align(_ph_time_lbl, LV_ALIGN_TOP_RIGHT, -24, 14);
+    lv_obj_align(_ph_time_lbl, LV_ALIGN_TOP_RIGHT, -24, 12);
     lv_obj_clear_flag(_ph_time_lbl, LV_OBJ_FLAG_CLICKABLE);
 
+    // 行1 日期: 紧贴时间左侧 ("17:43" montserrat_44 恒 5 字符≈130px, 固定偏移)
     _ph_date_lbl = lv_label_create(_ph_scrim);
     lv_obj_set_style_text_font(_ph_date_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_ph_date_lbl, lv_color_hex(0xE8F0F6), 0);
-    lv_obj_align(_ph_date_lbl, LV_ALIGN_LEFT_MID, 24, 0);
+    lv_obj_align(_ph_date_lbl, LV_ALIGN_TOP_RIGHT, -170, 18);
     lv_obj_clear_flag(_ph_date_lbl, LV_OBJ_FLAG_CLICKABLE);
+
+    // 行2 星期+农历: 右对齐
+    _ph_week_lbl = lv_label_create(_ph_scrim);
+    lv_obj_set_style_text_font(_ph_week_lbl, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(_ph_week_lbl, lv_color_hex(0xE8F0F6), 0);
+    lv_obj_align(_ph_week_lbl, LV_ALIGN_TOP_RIGHT, -24, 66);
+    lv_obj_clear_flag(_ph_week_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     _ph_clock_ms = 0;
     _updatePhotoClock();
@@ -364,14 +372,18 @@ void AppIdleScreen::_updatePhotoClock()
     lv_label_set_text(_ph_time_lbl, tbuf);
 
     static const char* const wd[] = {"日", "一", "二", "三", "四", "五", "六"};
-    char dbuf[64];
-    int n = snprintf(dbuf, sizeof(dbuf), "%d月%d日 周%s",
-                     lt.tm_mon + 1, lt.tm_mday, wd[lt.tm_wday]);
+    // 行1: 日期; 行2: 星期 + 农历 (2026-10-29 用户定稿两行制)
+    char dbuf[24];
+    snprintf(dbuf, sizeof(dbuf), "%d月%d日", lt.tm_mon + 1, lt.tm_mday);
+    lv_label_set_text(_ph_date_lbl, dbuf);
+
+    char wbuf[48];
+    int n = snprintf(wbuf, sizeof(wbuf), "周%s", wd[lt.tm_wday]);
     char lbuf[24];
     if (n > 0 && lunar::format_lunar_date(lt.tm_year + 1900, lt.tm_mon + 1,
                                           lt.tm_mday, lbuf, sizeof(lbuf)))
-        snprintf(dbuf + n, sizeof(dbuf) - n, " 农历%s", lbuf);
-    lv_label_set_text(_ph_date_lbl, dbuf);
+        snprintf(wbuf + n, sizeof(wbuf) - n, " 农历%s", lbuf);
+    lv_label_set_text(_ph_week_lbl, wbuf);
 }
 
 void AppIdleScreen::_photoTick()

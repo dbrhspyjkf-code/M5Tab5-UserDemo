@@ -695,15 +695,14 @@ void AppHome::_fetch_weather()
 // 文本缓存, onRunning 应用 — 与 _fetch_dashboard 同模式)
 void AppHome::_applyCarousel()
 {
-    CarItem it;
-    {
-        std::lock_guard<std::mutex> lk(_dash_mutex);
-        if (_carousel.empty()) return;
-        if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
-        it = _carousel[_car_idx];
-    }
-    if (_dash_sent_en) lv_label_set_text(_dash_sent_en, it.l1.c_str());
-    if (_dash_sent_cn) lv_label_set_text(_dash_sent_cn, it.l2.c_str());
+    // 写数据源(_dash_sent_*_txt)而非直接写 label —— onRunning 每秒的
+    // 同步块会把 label 拉回数据源, 只写 label 会在 1s 内被打回原条目
+    // (2026-10-29 "轮播不切/长按松手弹回"真因)
+    std::lock_guard<std::mutex> lk(_dash_mutex);
+    if (_carousel.empty()) return;
+    if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
+    _dash_sent_en_txt = _carousel[_car_idx].l1;
+    _dash_sent_cn_txt = _carousel[_car_idx].l2;
 }
 
 void AppHome::_carouselNext(lv_obj_t* card)
