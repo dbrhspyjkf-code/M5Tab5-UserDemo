@@ -163,6 +163,13 @@ void AppSsh::_buildForm()
         lv_obj_set_style_border_width(ta, 1, 0);
         lv_obj_set_style_radius(ta, 10, 0);
         lv_obj_add_event_cb(ta, _focus_ta_cb, LV_EVENT_CLICKED, nullptr);
+        // 关键: 输入框必须加入 hal 键盘组, 物理键盘的字符才会投递到
+        // 组内被聚焦的 textarea(lv_group_focus_obj 只对组内对象生效)。
+        // hal 键盘驱动路径: kb_forward_to_lvgl → 组内聚焦对象若是
+        // textarea → lv_textarea_add_char。删除对象时 LVGL 自动退组。
+        if (hal::HalBase* hal = GetHAL(); hal && hal->lvKbGroup) {
+            lv_group_add_obj(hal->lvKbGroup, ta);
+        }
         return ta;
     };
 
@@ -199,6 +206,13 @@ void AppSsh::_buildForm()
     lv_obj_set_style_text_font(_form_status, zh_font_md(), 0);
     lv_obj_set_style_text_color(_form_status, lv_color_hex(T.text_dim), 0);
     lv_obj_align(_form_status, LV_ALIGN_TOP_MID, 0, 650);
+
+#ifndef PLATFORM_BUILD_DESKTOP
+    // 默认聚焦主机框: 打开表单即可直接打字(跳过点击这一步)
+    if (hal::HalBase* hal = GetHAL(); hal && hal->lvKbGroup && _ta_host) {
+        lv_group_focus_obj(_ta_host);
+    }
+#endif
 }
 
 // ── 表单事件(两平台共用) ───────────────────────────────────────────────
