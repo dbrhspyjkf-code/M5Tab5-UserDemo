@@ -109,6 +109,11 @@ private:
     uint32_t   _last_dash_ms = 0;
     std::string _dash_glm_txt, _dash_glm2_txt, _dash_ds_txt, _dash_ag1_txt, _dash_ag2_txt;
     std::string _dash_sent_en_txt, _dash_sent_cn_txt;
+    // 轮播: [0]=每日一句, 1..=AI 新闻条目 (guarded by _dash_mutex)
+    struct CarItem { std::string l1, l2; };
+    std::vector<CarItem> _carousel, _news_items;
+    int      _car_idx = 0;
+    uint32_t _car_ms  = 0;
     std::string _ipo_txt = "\x01";     // \x01=未拉取哨兵 (空串=确认无新股)
     int _sent_offset = 0;   // 每日一句偏移 (点击换句累计, 轮询沿用)
 
@@ -131,7 +136,8 @@ private:
     OpiData    _opi;                  // guarded by _dash_mutex
     std::mutex  _dash_mutex;
     void _fetch_dashboard();
-    void _nextSentence(lv_obj_t* card);   // 每日一句: 闪 + 拉下一句
+    void _carouselNext(lv_obj_t* card);   // 轮播: 闪环 + 推进下一条 (长按/定时)
+    void _applyCarousel();                // 当前轮播条目 → 卡片标签 (LVGL 线程)
     void _updateOpiWidgets();  // 把 _opi 刷进右缘 OPi 卡; 调用方需已持有 _dash_mutex
 
     // Weather detail popup (tap the status-bar weather). A worker fetches the

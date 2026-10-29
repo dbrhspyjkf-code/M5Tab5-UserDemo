@@ -276,7 +276,7 @@ void AppIdleScreen::_show()
     // 右下角时间/日期叠加 (2026-10-29 用户要求): 半透明黑圆角底衬保证任何
     // 照片上都可读; 标签不可点, 触摸始终落到 overlay 关闭。
     _ph_scrim = lv_obj_create(_overlay);
-    lv_obj_set_size(_ph_scrim, 460, 150);
+    lv_obj_set_size(_ph_scrim, 620, 84);
     lv_obj_align(_ph_scrim, LV_ALIGN_BOTTOM_RIGHT, -28, -28);
     lv_obj_set_style_bg_color(_ph_scrim, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(_ph_scrim, LV_OPA_40, 0);
@@ -285,16 +285,17 @@ void AppIdleScreen::_show()
     lv_obj_set_style_pad_all(_ph_scrim, 0, 0);
     lv_obj_clear_flag(_ph_scrim, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
+    // 时间+日期同一行 (2026-10-29 用户要求): 日期(24px)居左, 时间(44px)居右
     _ph_time_lbl = lv_label_create(_ph_scrim);
     lv_obj_set_style_text_font(_ph_time_lbl, &lv_font_montserrat_44, 0);
     lv_obj_set_style_text_color(_ph_time_lbl, lv_color_hex(C_TEXT), 0);
-    lv_obj_align(_ph_time_lbl, LV_ALIGN_TOP_RIGHT, -24, 16);
+    lv_obj_align(_ph_time_lbl, LV_ALIGN_TOP_RIGHT, -24, 14);
     lv_obj_clear_flag(_ph_time_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     _ph_date_lbl = lv_label_create(_ph_scrim);
     lv_obj_set_style_text_font(_ph_date_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_ph_date_lbl, lv_color_hex(0xE8F0F6), 0);
-    lv_obj_align(_ph_date_lbl, LV_ALIGN_TOP_RIGHT, -24, 82);
+    lv_obj_align(_ph_date_lbl, LV_ALIGN_LEFT_MID, 24, 0);
     lv_obj_clear_flag(_ph_date_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     _ph_clock_ms = 0;

@@ -46,6 +46,10 @@ static const lv_font_t* zh_font_md() { return &font_puhui_20_4; }
 
 static const char* TAG = "ssh";
 
+#ifndef PLATFORM_BUILD_DESKTOP
+static std::atomic<int> s_touch_dy{0};   // 触屏拖动累计像素(LVGL 线程加, 会话任务取)
+#endif
+
 AppSsh::AppSsh()
 {
     setAppInfo().name = "AppSsh";
@@ -517,6 +521,7 @@ void AppSsh::_buildSession()
     _canvas = lv_canvas_create(_scr);
     lv_canvas_set_buffer(_canvas, _cbuf, TW, TH, LV_COLOR_FORMAT_RGB565);
     lv_obj_set_pos(_canvas, (1280 - TW) / 2, (720 - TH) / 2);
+    lv_obj_add_flag(_canvas, LV_OBJ_FLAG_CLICKABLE);   // 触屏拖动滚动需要事件
 
     _disc_btn = lv_btn_create(_scr);
     lv_obj_set_size(_disc_btn, 56, 56);
@@ -529,6 +534,29 @@ void AppSsh::_buildSession()
     lv_label_set_text(x, LV_SYMBOL_CLOSE);
     lv_obj_set_style_text_color(x, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(x);
+
+    // 触屏拖动滚动回滚缓冲: PRESSING 累计 dy 像素, 会话任务换算成行
+    static int s_last_y = 0;
+    lv_obj_add_event_cb(_canvas, [](lv_event_t* ev) {
+        lv_point_t p;
+        lv_indev_get_point(lv_indev_get_act(), &p);
+        auto* self = static_cast<AppSsh*>(lv_event_get_user_data(ev));
+        switch (lv_event_get_code(ev)) {
+        case LV_EVENT_PRESSED:
+            s_last_y = p.y;
+            break;
+        case LV_EVENT_PRESSING: {
+            int dy = s_last_y - p.y;          // 手指下滑(dy<0)→看更旧
+            s_last_y = p.y;
+            int v = s_touch_dy.load() - dy;   // 内容随手指数方向移动
+            s_touch_dy.store(v);
+            break;
+        }
+        default:
+            break;
+        }
+        (void)self;
+    }, LV_EVENT_ALL, this);
 
     ime::reset(true);    // 加载拼音表 + 清缓冲
     _installKeySink();
@@ -664,7 +692,11 @@ void AppSsh::_drawImeBar(int len, const char* buf, int syl, int page)
 // ═══════════════════════════════════════════════════════════════════════
 // 键盘输入: raw sink → 队列 → 会话任务写通道 (libssh noop 锁=读写同任务)
 // ═══════════════════════════════════════════════════════════════════════
-struct KeyEvt { uint8_t len; uint8_t b[6]; };
+struct KeyEvt {
+    uint8_t len;
+    uint8_t kind;   // 0=字节流 1=回滚上(更旧) 2=回滚下(更新)
+    uint8_t b[6];
+};
 static QueueHandle_t s_keyq = nullptr;
 
 // USB HID keycode → 终端字节 (xterm 转义序列)
@@ -733,6 +765,13 @@ bool AppSsh::_rawKeyCb(uint8_t modifier, uint8_t keycode, bool shift, void* user
     auto* app = static_cast<AppSsh*>(user);
     if (!app || app->_sess_state.load() != 2) return false;   // 非会话态不拦截
     KeyEvt e{};
+    // Ctrl+Up/Down: 回滚缓冲滚动(不上送远端)
+    if ((modifier & 0x11) && (keycode == 0x52 || keycode == 0x51)) {
+        e.len = 0;
+        e.kind = (keycode == 0x52) ? 1 : 2;   // Up=看更旧 Down=回更新
+        if (s_keyq) xQueueSend(s_keyq, &e, 0);
+        return true;
+    }
     // IME 优先(F6 开关/组字), 未消费走原直通路径
     int ime_len = 0;
     if (imeKey(modifier, keycode, shift, e.b, ime_len)) {
@@ -795,12 +834,23 @@ void AppSsh::_sessionTask()
         } else if (n < 0) {
             break;
         }
+        bool ui_dirty = false;
         if (s_keyq) {
             KeyEvt e;
             while (xQueueReceive(s_keyq, &e, 0) == pdTRUE) {
-                if (!_ssh.write(e.b, e.len)) { _sess_closing.store(true); break; }
+                if (e.kind == 1) { _emu->scrollback(4); ui_dirty = true; }
+                else if (e.kind == 2) { _emu->scrollback(-4); ui_dirty = true; }
+                else if (!_ssh.write(e.b, e.len)) { _sess_closing.store(true); break; }
             }
         }
+        // 触屏拖动: 累计像素 → 行数
+        int dy_px = s_touch_dy.exchange(0);
+        if (dy_px) {
+            _emu->scrollback(dy_px / CH);
+            if (dy_px % CH > CH / 2) _emu->scrollback(dy_px > 0 ? 1 : -1);
+            ui_dirty = true;
+        }
+        if (ui_dirty) _renderTerminal();
         if (!_ssh.connected()) break;
         vTaskDelay(pdMS_TO_TICKS(10));
     }

@@ -411,7 +411,7 @@ void AppHome::onOpen()
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))
-                ->_nextSentence(lv_event_get_current_target_obj(e));
+                ->_carouselNext(lv_event_get_current_target_obj(e));
         }, LV_EVENT_LONG_PRESSED, this);
     }
     {   // 05 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
@@ -500,6 +500,14 @@ void AppHome::onRunning()
     uint32_t now = GetHAL()->millis();
     if (_last_status_ms != 0 && now - _last_status_ms < 1000) return;
     _last_status_ms = now;
+
+    // 轮播: 每日一句/AI 新闻每 10s 推进 (长按卡=手动下一条); 首次立即应用
+    if (_car_ms == 0) {
+        _car_ms = now;
+        _applyCarousel();
+    } else if (now - _car_ms >= 10000 && _carousel.size() > 1) {
+        _carouselNext(nullptr);
+    }
 
     // Clock
     time_t t = time(nullptr);
@@ -685,43 +693,51 @@ void AppHome::_fetch_weather()
 
 // 每日一句卡点击: outline 闪 160ms + offset+1 异步拉下一句 (worker 只写
 // 文本缓存, onRunning 应用 — 与 _fetch_dashboard 同模式)
-void AppHome::_nextSentence(lv_obj_t* card)
+void AppHome::_applyCarousel()
 {
-    if (!card) return;
-    // 闪烁环画在 lv_layer_top (句卡是滚动容器最后一张, 左右/底部贴容器缘,
-    // 直接 outline 会被容器裁剪只剩顶边 —— 顶层层不受裁剪, 四边完整可见),
-    // 同卡片底色的 6px 描边环外扩 6px, 160ms 后消失 (同万年历日期格观感).
-    lv_area_t a;
-    lv_obj_get_coords(card, &a);
-    lv_obj_t* ring = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(ring);
-    lv_obj_set_pos(ring, a.x1 - 6, a.y1 - 6);
-    lv_obj_set_size(ring, lv_area_get_width(&a) + 12, lv_area_get_height(&a) + 12);
-    lv_obj_set_style_radius(ring, 24, 0);
-    lv_obj_set_style_border_width(ring, 6, 0);
-    lv_obj_set_style_border_color(ring, lv_obj_get_style_bg_color(card, 0), 0);
-    lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
-    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
-    lv_timer_create([](lv_timer_t* tm) {
-        lv_obj_del(static_cast<lv_obj_t*>(lv_timer_get_user_data(tm)));
-        lv_timer_del(tm);
-    }, 160, ring);
+    CarItem it;
+    {
+        std::lock_guard<std::mutex> lk(_dash_mutex);
+        if (_carousel.empty()) return;
+        if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
+        it = _carousel[_car_idx];
+    }
+    if (_dash_sent_en) lv_label_set_text(_dash_sent_en, it.l1.c_str());
+    if (_dash_sent_cn) lv_label_set_text(_dash_sent_cn, it.l2.c_str());
+}
 
-    const int off = ++_sent_offset;
-    const std::string base =
-        "http://" + GetHAL()->getConfig("svc_host", "192.168.1.200") + ":8766";
-    GetHAL()->tryRunDetached([this, base, off]() {
-        auto resp = GetHAL()->httpGet(base + "/daily/sentence?offset="
-                                      + std::to_string(off));
-        try {
-            auto j = nlohmann::json::parse(resp.body);
-            if (j.value("ok", false)) {
-                std::lock_guard<std::mutex> lk(_dash_mutex);
-                _dash_sent_en_txt = j.value("en", std::string());
-                _dash_sent_cn_txt = j.value("cn", std::string());
-            }
-        } catch (...) {}
-    });
+void AppHome::_carouselNext(lv_obj_t* card)
+{
+    // 闪烁环(仅长按有 card; 定时推进无环): 画在 lv_layer_top (句卡是滚动
+    // 容器最后一张, 左右/底部贴容器缘, 直接 outline 会被容器裁剪只剩顶边
+    // —— 顶层层不受裁剪, 四边完整可见), 同卡片底色的 6px 描边环外扩 6px,
+    // 160ms 后消失 (同万年历日期格观感).
+    if (card) {
+        lv_area_t a;
+        lv_obj_get_coords(card, &a);
+        lv_obj_t* ring = lv_obj_create(lv_layer_top());
+        lv_obj_remove_style_all(ring);
+        lv_obj_set_pos(ring, a.x1 - 6, a.y1 - 6);
+        lv_obj_set_size(ring, lv_area_get_width(&a) + 12, lv_area_get_height(&a) + 12);
+        lv_obj_set_style_radius(ring, 24, 0);
+        lv_obj_set_style_border_width(ring, 6, 0);
+        lv_obj_set_style_border_color(ring, lv_obj_get_style_bg_color(card, 0), 0);
+        lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+        lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+        lv_timer_create([](lv_timer_t* tm) {
+            lv_obj_del(static_cast<lv_obj_t*>(lv_timer_get_user_data(tm)));
+            lv_timer_del(tm);
+        }, 160, ring);
+    }
+
+    // 推进轮播下一条 + 重置 10s 定时
+    _car_ms = GetHAL()->millis();
+    {
+        std::lock_guard<std::mutex> lk(_dash_mutex);
+        if (_carousel.empty()) return;
+        _car_idx = (_car_idx + 1) % (int)_carousel.size();
+    }
+    _applyCarousel();
 }
 
 void AppHome::_fetch_dashboard()
@@ -808,6 +824,30 @@ void AppHome::_fetch_dashboard()
             std::string cn = j.value("cn", std::string());
             if (!en.empty()) { sent_en = en; sent_cn = cn; }
         }
+        // AI 新闻 (hermes /news/ai, 同 AI Passport 数据契约; 30 分钟节流)
+        // 条目并入每日一句卡轮播: 每条一行 "【分区】标题", 副行日期
+        static std::atomic<uint32_t> s_news_ms{0};
+        std::vector<CarItem> news;
+        uint32_t wnow = GetHAL()->millis();
+        if (s_news_ms.load() == 0 || wnow - s_news_ms.load() >= 30u * 60 * 1000) {
+            s_news_ms.store(wnow);
+            if (auto j = pick(GetHAL()->httpGet(base + "/news/ai").body); !j.is_null()) {
+                std::string ndate = j.value("date", std::string());
+                if (j.contains("secs") && j["secs"].is_array())
+                    for (auto& sec : j["secs"]) {
+                        std::string label = sec.value("label", std::string("新闻"));
+                        if (!sec.contains("items") || !sec["items"].is_array()) continue;
+                        for (auto& it : sec["items"]) {
+                            if (!it.is_string()) continue;
+                            std::string t = it.get<std::string>();
+                            if (t.empty()) continue;
+                            news.push_back({"【" + label + "】" + t, "AI 新闻 · " + ndate});
+                            if (news.size() >= 12) break;
+                        }
+                        if (news.size() >= 12) break;
+                    }
+            }
+        }
         OpiData od;
         if (auto j = pick(GetHAL()->httpGet(base + "/system/status").body); !j.is_null()) {
             od.ok     = true;
@@ -845,6 +885,12 @@ void AppHome::_fetch_dashboard()
         _dash_glm_txt = glm_txt;
         _dash_glm2_txt = glm_sub;
         if (!sent_en.empty()) { _dash_sent_en_txt = sent_en; _dash_sent_cn_txt = sent_cn; }
+        if (!news.empty()) _news_items = news;
+        // 重建轮播: [0]=每日一句 + AI 新闻; 越界索引归零
+        _carousel.clear();
+        _carousel.push_back({_dash_sent_en_txt, _dash_sent_cn_txt});
+        for (auto& n : _news_items) _carousel.push_back(n);
+        if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
         _ipo_txt = ipo_txt;   // 空串=无新股, UI 隐藏
         mclog::tagInfo(_tag, "[dbg] ipo='{}'", ipo_txt.c_str());
         _dash_ds_txt  = ds_txt;
