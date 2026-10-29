@@ -4,6 +4,7 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -15,19 +16,22 @@ namespace voice_input {
  * Voice recording + Opus encoding + cloud STT pipeline.
  *
  * On start():
- *   1. Suspends xiaozhi (if running) to free I2S_NUM_0 (the WebSocket channel
- *      stays open, see xiaozhi_suspend() rationale).
- *   2. Enables the shared codec input (ES7210 mic).
- *   3. Spawns a FreeRTOS task that reads TDM PCM, extracts mono channel,
- *      Opus-encodes 60ms frames, and collects them in a buffer.
- *   4. On stop (silence timeout or max duration):
- *        a. Transitions to Processing.
- *        b. Reuses xiaozhi's still-open protocol channel to send
+ *   1. Registers an input tap with xiaozhi's audio service (xiaozhi keeps
+ *      running; its audio_input task stays the codec's single reader and
+ *      hands us the same 16 kHz mono PCM the wake word engine consumes —
+ *      suspending xiaozhi and reading the codec ourselves deadlocks the
+ *      I2S read lock, see 2026-10-29 serial log).
+ *   2. Spawns a FreeRTOS task that buffers tap chunks into 60ms frames,
+ *      Opus-encodes them, and collects them in a buffer.
+ *   3. On stop (silence timeout or max duration):
+ *        a. Detaches the tap (wake word detection resumes).
+ *        b. Transitions to Processing.
+ *        c. Reuses xiaozhi's still-open protocol channel to send
  *           listen-start + each Opus frame + listen-stop.
- *        c. Waits on a FreeRTOS semaphore (timeout = stt_response_timeout_ms)
+ *        d. Waits on a FreeRTOS semaphore (timeout = stt_response_timeout_ms)
  *           for the server's {"type":"stt","text":"..."} reply, dispatched
  *           from xiaozhi's main task via xiaozhi_register_stt_callback().
- *        d. Invokes the user callback with the recognized text (or error).
+ *        e. Invokes the user callback with the recognized text (or error).
  */
 class VoiceInputService {
 public:
@@ -49,11 +53,12 @@ private:
     static void task_fn(void* self);
     void run();
 
-    bool init_codec();
-    void deinit_codec();
+    bool init_tap();
+    void deinit_tap();
+    /** Mic chunk delivered by xiaozhi's audio_input task. Must be cheap. */
+    void on_tap_frame(const int16_t* pcm, size_t samples);
     bool init_opus();
     void deinit_opus();
-    int  record_pcm(int16_t* buf, int samples);
 
     void reset_silence();
     bool is_silence(const int16_t* buf, int samples);
@@ -76,6 +81,12 @@ private:
     // Silence detection
     int64_t silence_start_ms_ = 0;
     int64_t recording_start_ms_ = 0;
+
+    // Mic tap backlog: filled by on_tap_frame (audio_input task), drained by
+    // the recording task. cv wakes the recorder when a full frame is ready.
+    std::mutex pcm_mu_;
+    std::condition_variable pcm_cv_;
+    std::deque<int16_t> pcm_backlog_;
 
     // Output buffer
     std::deque<std::vector<uint8_t>> opus_packets_;

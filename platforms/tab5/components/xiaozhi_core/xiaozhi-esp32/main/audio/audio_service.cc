@@ -229,8 +229,25 @@ void AudioService::Stop(StopMode mode) {
     }
 }
 
-void AudioService::SetMicEnabled(bool enabled) {
-    if (!codec_) return;
+void AudioService::SetInputTap(std::function<void(const int16_t*, size_t)> tap) {
+    if (tap) {
+        {
+            std::lock_guard<std::mutex> lock(input_tap_mutex_);
+            input_tap_ = std::move(tap);
+        }
+        xEventGroupSetBits(event_group_, AS_EVENT_INPUT_TAP_RUNNING);
+        ESP_LOGI(TAG, "Input tap registered");
+    } else {
+        xEventGroupClearBits(event_group_, AS_EVENT_INPUT_TAP_RUNNING);
+        {
+            std::lock_guard<std::mutex> lock(input_tap_mutex_);
+            input_tap_ = nullptr;
+        }
+        ESP_LOGI(TAG, "Input tap cleared");
+    }
+}
+
+void AudioService::SetMicEnabled(bool enabled) {    if (!codec_) return;
     if (enabled && !codec_->input_enabled()) {
         esp_timer_stop(audio_power_timer_);
         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
@@ -289,7 +306,7 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
 void AudioService::AudioInputTask() {
     while (true) {
         EventBits_t bits = xEventGroupWaitBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING |
-            AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING,
+            AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_INPUT_TAP_RUNNING,
             pdFALSE, pdFALSE, portMAX_DELAY);
 
         if (service_stopped_) {
@@ -299,6 +316,33 @@ void AudioService::AudioInputTask() {
             audio_input_need_warmup_ = false;
             vTaskDelay(pdMS_TO_TICKS(120));
             continue;
+        }
+
+        /* Deliver mic PCM to an external subscriber (voice input / STT).
+         * This branch runs FIRST so the tap keeps the full 10 ms cadence —
+         * the input task stays the codec's single reader, no second task
+         * ever touches the I2S channel (dual-reader = lost read lock). */
+        if (bits & AS_EVENT_INPUT_TAP_RUNNING) {
+            int samples = 160; // 10ms
+            std::vector<int16_t> data;
+            if (ReadAudioData(data, 16000, samples)) {
+                if (codec_->input_channels() == 2) {
+                    auto mono_data = std::vector<int16_t>(data.size() / 2);
+                    for (size_t i = 0, j = 0; i < mono_data.size(); ++i, j += 2) {
+                        mono_data[i] = data[j];
+                    }
+                    data = std::move(mono_data);
+                }
+                std::function<void(const int16_t*, size_t)> tap;
+                {
+                    std::lock_guard<std::mutex> lock(input_tap_mutex_);
+                    tap = input_tap_;
+                }
+                if (tap) {
+                    tap(data.data(), data.size());
+                }
+                continue;
+            }
         }
 
         /* Used for audio testing in NetworkConfiguring mode by clicking the BOOT button */

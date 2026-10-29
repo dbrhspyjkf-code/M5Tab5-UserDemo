@@ -103,9 +103,8 @@ int   xiaozhi_opus_encode(void* enc, int16_t* pcm, uint8_t* outbuf, int outbuf_s
 /* ------------------------------------------------------------------------- */
 /* STT-only listen session (used by the voice input service).                 */
 /* These send messages through xiaozhi's existing WebSocket connection, so   */
-/* no extra TLS handshake / extra internal RAM is required. Callers must     */
-/* have invoked xiaozhi_suspend() first to free the audio pipeline, then    */
-/* these calls piggy-back on the still-open protocol channel.                */
+/* no extra TLS handshake / extra internal RAM is required. xiaozhi keeps   */
+/* running; the mic is borrowed via xiaozhi_set_input_tap() while recording. */
 /* ------------------------------------------------------------------------- */
 
 /**
@@ -180,6 +179,20 @@ void xiaozhi_register_stt_callback(std::function<void(const std::string&)> cb);
  * to react to wake words globally (e.g. open the xiaozhi app).
  */
 void xiaozhi_register_wake_callback(std::function<void(const std::string&)> cb);
+
+/**
+ * Subscribe to xiaozhi's mic PCM stream (16 kHz mono, ~10 ms chunks, delivered
+ * on the audio_input task — the callback must be cheap and must not block).
+ *
+ * This is the supported way for other apps to "borrow" the microphone: the
+ * audio_input task stays the codec's single reader (suspending xiaozhi and
+ * reading the codec from another task deadlocks the I2S read lock), and the
+ * tap receives the same resampled 16 kHz mono feed the wake word engine gets.
+ *
+ * Registering pauses wake word detection; passing nullptr detaches the tap and
+ * re-enables wake word detection. Returns false if xiaozhi isn't initialized.
+ */
+bool xiaozhi_set_input_tap(std::function<void(const int16_t*, size_t)> tap);
 
 // Internal helper invoked from Application::HandleWakeWordDetectedEvent.
 // Not part of the stable public API.

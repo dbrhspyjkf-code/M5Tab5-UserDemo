@@ -1,7 +1,6 @@
 #include "voice_input_service.h"
 
 #include <chrono>
-#include <thread>
 #include "xiaozhi_ctl.h"
 
 #include <esp_log.h>
@@ -22,19 +21,16 @@ static int64_t now_ms() {
     return esp_timer_get_time() / 1000;
 }
 
-static int16_t extract_mono_ch0(const int16_t* tdm_buf, int total_samples) {
-    int64_t sum = 0;
-    int count = total_samples / 4;
-    for (int i = 0; i < count; ++i)
-        sum += tdm_buf[i * 4];
-    return static_cast<int16_t>(sum / count);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // VoiceInputService
 // ─────────────────────────────────────────────────────────────────────────────
 
 VoiceInputService::VoiceInputService() {}
+
+// Pointer to the service instance currently tapping the mic. The tap callback
+// (running on xiaozhi's audio_input task) routes PCM here. Only one voice
+// input session is in flight at a time, so a single static pointer suffices.
+static voice_input::VoiceInputService* s_active_tap_session = nullptr;
 
 // Pointer to the service instance currently waiting on an STT reply. The
 // xiaozhi stt callback (running on xiaozhi's main task) routes the reply
@@ -152,9 +148,9 @@ void VoiceInputService::run() {
     Result result;
     result.success = false;
 
-    // 1. Suspend xiaozhi + init codec input
-    if (!init_codec()) {
-        result.error = "codec unavailable";
+    // 1. Subscribe to xiaozhi's mic stream (xiaozhi keeps running)
+    if (!init_tap()) {
+        result.error = "mic unavailable";
         goto done;
     }
 
@@ -173,10 +169,9 @@ void VoiceInputService::run() {
 
     {
         const int samples_per_frame = config_.opus_frame_duration_ms * 16;  // 960 for 60ms @ 16kHz
-        const int read_buf_samples = samples_per_frame * 4;  // 4-channel TDM
-        std::vector<int16_t> pcm_buf(read_buf_samples);
-        std::vector<int16_t> mono_buf(samples_per_frame);
+        std::vector<int16_t> frame(samples_per_frame);
         std::vector<uint8_t> opus_out(encoder_outbuf_size_);
+        int64_t starve_ms = 0;  // consecutive time the tap delivered nothing
 
         while (state_ == State::Recording && !stop_requested_.load()) {
             int64_t elapsed = now_ms() - recording_start_ms_;
@@ -185,15 +180,29 @@ void VoiceInputService::run() {
                 break;
             }
 
-            int read = record_pcm(pcm_buf.data(), read_buf_samples);
-            if (read < samples_per_frame * 4) continue;
-
-            // TDM → mono
-            for (int i = 0; i < samples_per_frame; ++i)
-                mono_buf[i] = pcm_buf[i * 4];
+            // Wait for a full 60ms frame from the tap backlog.
+            {
+                std::unique_lock<std::mutex> lk(pcm_mu_);
+                pcm_cv_.wait_for(lk, std::chrono::milliseconds(200), [&] {
+                    return pcm_backlog_.size() >= (size_t)samples_per_frame
+                        || stop_requested_.load();
+                });
+                if (pcm_backlog_.size() < (size_t)samples_per_frame) {
+                    // No data within 200 ms — mic pipeline stalled?
+                    starve_ms += 200;
+                    if (starve_ms >= 2000) {
+                        ESP_LOGE(TAG, "mic tap starved for %lld ms, aborting", starve_ms);
+                        break;
+                    }
+                    continue;
+                }
+                std::copy(pcm_backlog_.begin(), pcm_backlog_.begin() + samples_per_frame, frame.begin());
+                pcm_backlog_.erase(pcm_backlog_.begin(), pcm_backlog_.begin() + samples_per_frame);
+            }
+            starve_ms = 0;
 
             // Silence detection
-            if (is_silence(mono_buf.data(), samples_per_frame)) {
+            if (is_silence(frame.data(), samples_per_frame)) {
                 if (silence_start_ms_ == 0) silence_start_ms_ = now_ms();
                 int64_t silence_dur = now_ms() - silence_start_ms_;
                 if (silence_dur >= config_.silence_timeout_ms) {
@@ -205,7 +214,7 @@ void VoiceInputService::run() {
             }
 
             // Opus encode
-            int encoded_bytes = xiaozhi_opus_encode(opus_encoder_, mono_buf.data(), opus_out.data(), (int)opus_out.size());
+            int encoded_bytes = xiaozhi_opus_encode(opus_encoder_, frame.data(), opus_out.data(), (int)opus_out.size());
             if (encoded_bytes <= 0) continue;
 
             opus_packets_.push_back(std::vector<uint8_t>(opus_out.data(), opus_out.data() + encoded_bytes));
@@ -217,6 +226,9 @@ void VoiceInputService::run() {
     if (stop_requested_.load()) {
         ESP_LOGI(TAG, "user-stopped recording with %zu packets", opus_packets_.size());
     }
+
+    // Detach the tap before STT so wake word detection resumes immediately.
+    deinit_tap();
 
     // 4. Send recorded opus to tenclass STT via xiaozhi's open WebSocket.
     {
@@ -243,7 +255,7 @@ done:
     ESP_LOGI(TAG, "session done: success=%d text='%s' err='%s' peak_opus=%zu",
              result.success, result.text.c_str(), result.error.c_str(), peak_opus_mem_);
     deinit_opus();
-    deinit_codec();
+    deinit_tap();
     state_ = result.success ? State::Done : State::Error;
     if (callback_) callback_(result);
     callback_ = nullptr;
@@ -252,34 +264,43 @@ done:
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Codec
+// Mic tap (xiaozhi's audio_input task stays the codec's single reader)
 // ────────────────────────────────────────────────────────────────────
 
-bool VoiceInputService::init_codec() {
-    if (xiaozhi_is_initialized()) {
-        ESP_LOGI(TAG, "suspending xiaozhi for voice input");
-        xiaozhi_suspend();
-        // xiaozhi_suspend 是异步的(Schedule 排队停音频服务, input task 自行
-        // 退出) —— 立即读 codec 会与未退出的 input task 抢同一输入设备:
-        // esp_codec_dev_read 断言刷屏 + 只录到静音(2026-10-29 实锤,
-        // 2 opus 包 16 字节 → STT 无译文超时)。等它退干净。
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+bool VoiceInputService::init_tap() {
+    s_active_tap_session = this;
+    bool ok = xiaozhi_set_input_tap([](const int16_t* pcm, size_t samples) {
+        if (s_active_tap_session) s_active_tap_session->on_tap_frame(pcm, samples);
+    });
+    if (!ok) {
+        ESP_LOGE(TAG, "failed to subscribe to xiaozhi mic stream");
+        s_active_tap_session = nullptr;
     }
-    xiaozhi_codec_enable_input(true);
-    ESP_LOGI(TAG, "codec input enabled");
-    return true;
+    return ok;
 }
 
-void VoiceInputService::deinit_codec() {
-    xiaozhi_codec_enable_input(false);
-    if (xiaozhi_is_initialized()) {
-        ESP_LOGI(TAG, "resuming xiaozhi");
-        xiaozhi_resume();
+void VoiceInputService::deinit_tap() {
+    // Idempotent: run() calls this once after the record loop and once in
+    // the done path to cover early-exit failures.
+    if (!s_active_tap_session) return;
+    s_active_tap_session = nullptr;
+    xiaozhi_set_input_tap(nullptr);
+    {
+        std::lock_guard<std::mutex> lk(pcm_mu_);
+        pcm_backlog_.clear();
     }
 }
 
-int VoiceInputService::record_pcm(int16_t* buf, int samples) {
-    return xiaozhi_codec_read(buf, samples);
+void VoiceInputService::on_tap_frame(const int16_t* pcm, size_t samples) {
+    // Runs on xiaozhi's audio_input task (high priority) — keep it tiny.
+    std::lock_guard<std::mutex> lk(pcm_mu_);
+    // Consumer stalled (e.g. long encode hiccup): drop stale audio rather
+    // than grow without bound. 16000 samples = 1 s at 16 kHz.
+    if (pcm_backlog_.size() > 16000) {
+        pcm_backlog_.clear();
+    }
+    pcm_backlog_.insert(pcm_backlog_.end(), pcm, pcm + samples);
+    pcm_cv_.notify_one();
 }
 
 // ────────────────────────────────────────────────────────────────────

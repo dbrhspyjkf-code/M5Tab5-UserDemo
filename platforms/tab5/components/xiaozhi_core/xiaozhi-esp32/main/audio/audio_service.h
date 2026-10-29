@@ -51,6 +51,7 @@
 #define AS_EVENT_WAKE_WORD_RUNNING          (1 << 1)
 #define AS_EVENT_AUDIO_PROCESSOR_RUNNING    (1 << 2)
 #define AS_EVENT_PLAYBACK_NOT_EMPTY         (1 << 3)
+#define AS_EVENT_INPUT_TAP_RUNNING          (1 << 4)
 
 #define AS_OPUS_GET_FRAME_DRU_ENUM(duration_ms)                   \
     ((duration_ms) == 5 ? ESP_OPUS_ENC_FRAME_DURATION_5_MS :      \
@@ -136,6 +137,16 @@ public:
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 
+    /**
+     * Subscribe an external consumer to the mic PCM stream (16 kHz mono).
+     * While a tap is registered the input task keeps its single-reader
+     * ownership of the codec and hands each 10 ms chunk to the callback
+     * (runs on the audio_input task — keep it cheap). Pass nullptr to
+     * detach. Callers should disable wake word detection while tapping so
+     * the tap owns the full read cadence.
+     */
+    void SetInputTap(std::function<void(const int16_t*, size_t)> tap);
+
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
@@ -191,6 +202,11 @@ private:
     bool voice_detected_ = false;
     bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
+
+    // External mic subscriber (see SetInputTap). Guarded because it is set
+    // from another thread while the input task reads it every 10 ms.
+    std::mutex input_tap_mutex_;
+    std::function<void(const int16_t*, size_t)> input_tap_;
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;

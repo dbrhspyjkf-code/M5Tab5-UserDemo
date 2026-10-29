@@ -381,6 +381,26 @@ void xiaozhi_register_wake_callback(std::function<void(const std::string&)> cb)
     s_wake_callback = std::move(cb);
 }
 
+bool xiaozhi_set_input_tap(std::function<void(const int16_t*, size_t)> tap)
+{
+    if (!s_initialized) return false;
+    auto& as = Application::GetInstance().GetAudioService();
+    if (tap) {
+        // Make sure the input task is alive (a previous suspend may have
+        // stopped it), then pause wake word so the tap owns the full read
+        // cadence — otherwise both branches would alternate at half rate.
+        as.Start(StartMode::kInputOnly);
+        as.EnableWakeWordDetection(false);
+        as.SetInputTap(std::move(tap));
+        ESP_LOGI(TAG, "input tap armed (wake word paused)");
+    } else {
+        as.SetInputTap(nullptr);
+        as.EnableWakeWordDetection(true);
+        ESP_LOGI(TAG, "input tap released (wake word resumed)");
+    }
+    return true;
+}
+
 // Internal helper: fired from Application::HandleWakeWordDetectedEvent.
 void xiaozhi_ctl_fire_wake_callback(const std::string& word)
 {
