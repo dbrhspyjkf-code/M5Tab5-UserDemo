@@ -1,14 +1,21 @@
 /*
  * cjk_font — font_zh_24 cbin 字体的终端位图混成实现。
- * 字体解析(cbin_font_create)与位图格式(LVGL fmt_txt A4, 高半字节在前)
- * 均为 LVGL 标准管线; 本文件只做 glyph→RGB565 的居中 blit + 混色。
- * 调用方(会话任务渲染)持有 lvglLock, lv_font_* 缓存访问在此锁内安全。
+ *
+ * 字形获取: lv_font_get_glyph_dsc(cmap 查找+元数据) 后, 绕开
+ * lv_font_get_glyph_bitmap —— LVGL9.2 该 API 语义是"解到调用方
+ * draw_buf->data"(传 nullptr 即空指针崩溃, 2026-10-29 实锤
+ * Load access fault @ lv_font_get_bitmap_fmt_txt), 改为直读
+ * fmt_txt 内部结构: 字体由 gen_cbin_font.py --no-compress 生成
+ * (PLAIN 格式, 4bpp 高半字节在前), glyph_bitmap 指向 res 分区
+ * mmap, 单字节读取无对齐要求, 零拷贝。
+ * 调用方(会话任务渲染)持有 lvglLock, 字体缓存访问在锁内安全。
  */
 #include "cjk_font.h"
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <lvgl.h>
 #include <cbin_font.h>
+#include <font/lv_font_fmt_txt.h>
 #include "../utils/assets/assets_partition.h"
 
 namespace CjkFont {
@@ -56,55 +63,35 @@ void drawGlyphRgb565(uint16_t* buf, int bufW, int bufH, uint32_t cp,
     if (!f || !buf) return;
     lv_font_glyph_dsc_t dsc;
     if (!lv_font_get_glyph_dsc(f, &dsc, cp, 0)) return;
-    if (dsc.is_placeholder || !dsc.box_w || !dsc.box_h) return;
-    const uint8_t* bm = (const uint8_t*)lv_font_get_glyph_bitmap(&dsc, nullptr);
-    if (!bm) return;
+    if (dsc.is_placeholder || !dsc.gid.index) return;
+
+    const lv_font_t* font = dsc.resolved_font;
+    if (!font || !font->dsc) return;
+    const auto* fdsc = (const lv_font_fmt_txt_dsc_t*)font->dsc;
+    if (fdsc->bitmap_format != LV_FONT_FMT_TXT_PLAIN || fdsc->bpp != 4) return;
+    if (!dsc.box_w || !dsc.box_h) return;
+
+    const uint32_t gid = dsc.gid.index;
+    const auto& gd = fdsc->glyph_dsc[gid];
+    const uint8_t* bm = fdsc->glyph_bitmap + gd.bitmap_index;
+    const int bw = gd.box_w, bh = gd.box_h;
+    const int stride = (bw + 1) / 2;          // 4bpp, 高半字节在前
 
     // 字形盒在 (boxW x boxH) 内居中
-    const int ox = x + (boxW - (int)dsc.box_w) / 2;
-    const int oy = y + (boxH - (int)dsc.box_h) / 2;
+    const int ox = x + (boxW - bw) / 2;
+    const int oy = y + (boxH - bh) / 2;
 
-    switch (dsc.format) {
-    case LV_FONT_GLYPH_FORMAT_A4: {
-        const int stride = ((int)dsc.box_w + 1) / 2;
-        for (uint16_t gy = 0; gy < dsc.box_h; ++gy) {
-            const int dy = oy + gy;
-            if (dy < 0 || dy >= bufH) continue;
-            const uint8_t* row = bm + (size_t)gy * stride;
-            uint16_t* line = buf + (size_t)dy * bufW;
-            for (uint16_t gx = 0; gx < dsc.box_w; ++gx) {
-                const uint8_t a = (gx & 1) ? (row[gx >> 1] & 0xF) : (row[gx >> 1] >> 4);
-                if (!a) continue;
-                const int dx = ox + gx;
-                if (dx >= 0 && dx < bufW) blend(line[dx], fg, a);
-            }
+    for (int gy = 0; gy < bh; ++gy) {
+        const int dy = oy + gy;
+        if (dy < 0 || dy >= bufH) continue;
+        const uint8_t* row = bm + (size_t)gy * stride;
+        uint16_t* line = buf + (size_t)dy * bufW;
+        for (int gx = 0; gx < bw; ++gx) {
+            const uint8_t a = (gx & 1) ? (row[gx >> 1] & 0xF) : (row[gx >> 1] >> 4);
+            if (!a) continue;
+            const int dx = ox + gx;
+            if (dx >= 0 && dx < bufW) blend(line[dx], fg, a);
         }
-        break;
-    }
-    case LV_FONT_GLYPH_FORMAT_A1: {
-        const int stride = ((int)dsc.box_w + 7) / 8;
-        for (uint16_t gy = 0; gy < dsc.box_h; ++gy) {
-            const int dy = oy + gy;
-            if (dy < 0 || dy >= bufH) continue;
-            const uint8_t* row = bm + (size_t)gy * stride;
-            uint16_t* line = buf + (size_t)dy * bufW;
-            for (uint16_t gx = 0; gx < dsc.box_w; ++gx) {
-                if (!((row[gx >> 3] >> (7 - (gx & 7))) & 1)) continue;
-                const int dx = ox + gx;
-                if (dx >= 0 && dx < bufW) line[dx] = fg;
-            }
-        }
-        break;
-    }
-    default:   // A2/其他: 本字体恒为 A4; 未知格式按实心块兜底避免丢字
-        for (uint16_t gy = 0; gy < dsc.box_h; ++gy) {
-            for (uint16_t gx = 0; gx < dsc.box_w; ++gx) {
-                const int dx = ox + gx, dy = oy + gy;
-                if (dx >= 0 && dx < bufW && dy >= 0 && dy < bufH)
-                    buf[(size_t)dy * bufW + dx] = fg;
-            }
-        }
-        break;
     }
 }
 
