@@ -218,6 +218,8 @@ void TerminalEmulator::markAllDirty()
 {
     for (auto& c : _main) c.dirty = true;
     for (auto& c : _alt) c.dirty = true;
+    for (auto& c : _scrollback) c.dirty = true;   // 回滚视图 displayCell 读的是这里,
+                                                  // 漏标则滚动后整屏不更新(2026-10-29 实锤)
 }
 
 void TerminalEmulator::clearDirty()
