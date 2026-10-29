@@ -51,8 +51,13 @@ def main():
     font24 = open(
         os.path.join(ROOT, "../../app/assets/fonts/"
                       "font_puhui_common_24_4.bin"), "rb").read()
+    # GB2312 一级 24x24 点阵 (app_ssh 终端 CJK; gen_cjk_font.py 生成)
+    cjk = open(
+        os.path.join(ROOT, "../../app/assets/fonts/"
+                      "cjk_gb2312_24.bin"), "rb").read()
 
-    assets = [("home_bg", bg), ("font_zh_20", font20), ("font_zh_24", font24)]
+    assets = [("home_bg", bg), ("font_zh_20", font20), ("font_zh_24", font24),
+              ("cjk_font", cjk)]
 
     header_size = 16 + ENTRY_SIZE * len(assets)
     off = (header_size + 3) & ~3  # 数据区 4 字节对齐

@@ -19,6 +19,7 @@
 #include "hal/components/hal_tab5_keyboard.h"
 #include "../utils/assets/assets_partition.h"
 #include "terminus_font.h"
+#include "cjk_font.h"
 
 extern const uint8_t font_puhui_common_30_4_bin_start[]
     asm("_binary_font_puhui_common_30_4_bin_start");
@@ -321,15 +322,20 @@ void AppSsh::_drawCell(int col, int row, bool cursor_here)
     if (TerminusFont::hasGlyph(font, cp)) {
         TerminusFont::drawGlyphRgb565(buf, TW, TH, font, cp,
                                       x0 + (CW - font.targetW) / 2, y0, fg);
+    } else if (c.wide && CjkFont::hasGlyph(cp)) {
+        // CJK 宽字形: 24x24 点阵居中于 2 格 (28x28)
+        CjkFont::drawGlyphRgb565(buf, TW, TH, cp, x0 + (2 * CW - 24) / 2,
+                                 y0 + (CH - 24) / 2, fg);
     } else if (cp >= 0x20) {
-        // 豆腐框 (1px 边线)
-        for (int x = x0 + 1; x < x0 + CW - 1; ++x) {
+        // 豆腐框 (1px 边线): 宽字符跨 2 格, 窄字符 1 格
+        const int span = c.wide ? 2 * CW : CW;
+        for (int x = x0 + 1; x < x0 + span - 1; ++x) {
             buf[(size_t)y0 * TW + x] = fg;
             buf[(size_t)(y0 + CH - 1) * TW + x] = fg;
         }
         for (int y = y0 + 1; y < y0 + CH - 1; ++y) {
             buf[(size_t)y * TW + x0 + 1] = fg;
-            buf[(size_t)y * TW + x0 + CW - 2] = fg;
+            buf[(size_t)y * TW + x0 + span - 2] = fg;
         }
     }
 }
