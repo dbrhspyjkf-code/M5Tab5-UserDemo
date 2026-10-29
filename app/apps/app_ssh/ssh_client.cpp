@@ -38,6 +38,10 @@ bool SshClient::connect(const SshProfile& profile, std::string& error,
     ssh_options_set(session, SSH_OPTIONS_PORT, &port);
     ssh_options_set(session, SSH_OPTIONS_USER, profile.user.c_str());
     ssh_options_set(session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
+    // 设备无 HOME/getpwuid: libssh 默认 sshdir 要展开 ~/.ssh, 拿不到家目录
+    // 会以 "Failed to process system configuration files" 拒连(2026-10-29
+    // 实测)。显式给个目录, /tmp/config 不存在 → 配置解析静默跳过。
+    ssh_options_set(session, SSH_OPTIONS_SSH_DIR, "/tmp");
 
     stage("connect");
     if (ssh_connect(session) != SSH_OK) {
