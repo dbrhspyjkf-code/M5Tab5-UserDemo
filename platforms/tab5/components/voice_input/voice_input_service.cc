@@ -1,4 +1,7 @@
 #include "voice_input_service.h"
+
+#include <chrono>
+#include <thread>
 #include "xiaozhi_ctl.h"
 
 #include <esp_log.h>
@@ -256,6 +259,11 @@ bool VoiceInputService::init_codec() {
     if (xiaozhi_is_initialized()) {
         ESP_LOGI(TAG, "suspending xiaozhi for voice input");
         xiaozhi_suspend();
+        // xiaozhi_suspend 是异步的(Schedule 排队停音频服务, input task 自行
+        // 退出) —— 立即读 codec 会与未退出的 input task 抢同一输入设备:
+        // esp_codec_dev_read 断言刷屏 + 只录到静音(2026-10-29 实锤,
+        // 2 opus 包 16 字节 → STT 无译文超时)。等它退干净。
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
     xiaozhi_codec_enable_input(true);
     ESP_LOGI(TAG, "codec input enabled");
