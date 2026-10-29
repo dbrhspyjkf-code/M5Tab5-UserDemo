@@ -385,6 +385,18 @@ bool imeKey(uint8_t modifier, uint8_t keycode, bool shift,
     ime::s_ctrl_solo = false;
     ime::s_prev_ctrl = ctrl;
 
+    // Shift+Space: IME 开关 —— Tab5 键盘固件对修饰键(Ctrl/Shift 单独按)
+    // 不产生 HID 事件(实测事件流全为 (0x00, key) 陪对), 裸 Ctrl 不可检测;
+    // Shift+Space 的空格事件自带 mod=0x22, 稳定可辨
+    if (keycode == 0x2C && (modifier & 0x22)) {
+        st.on = !st.on;
+        if (!st.on) { st.len = 0; st.syl = -1; st.page = 0; }
+        ime::s_bar_gone = true;
+        mclog::tagInfo(TAG, "ime {} (shift+space)", st.on ? "on" : "off");
+        outlen = 0;
+        return true;
+    }
+
     if (keycode == 0x3F) {                    // F6: IME 开关(兼容有 F 排的键盘)
         st.on = !st.on;
         if (!st.on) { st.len = 0; st.syl = -1; st.page = 0; }
