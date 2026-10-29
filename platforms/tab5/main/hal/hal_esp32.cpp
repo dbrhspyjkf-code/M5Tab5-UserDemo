@@ -12,6 +12,7 @@ extern "C" {
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_netif_sntp.h>
+#include <esp_pthread.h>
 #include <bsp/m5stack_tab5.h>
 #include <lv_demos.h>
 #include <cstdlib>
@@ -313,12 +314,42 @@ void HalEsp32::setRtcTime(tm time)
     update_system_time();
 }
 
+static void* detached_tramp(void* arg)
+{
+    auto* f = static_cast<std::function<void()>*>(arg);
+    (*f)();
+    delete f;
+    return nullptr;
+}
+
 static bool spawn_detached_worker(std::function<void()> fn, size_t stack_bytes)
 {
     // Heap-own the functor so it survives until the worker runs it.
     auto* heap_fn = new (std::nothrow) std::function<void()>(std::move(fn));
     if (!heap_fn) {
         return false;
+    }
+
+    // ≥16KB 深调用链(SSH/TLS 握手): 栈优先放 PSRAM —— 内部 RAM 长时间
+    // 运行后碎片化, 连续 32KB 块常不可得(pthread_create ENOMEM 12,
+    // 2026-10-29 实测: SSH 连接静默卡死)。CONFIG_SPIRAM_ALLOW_STACK_
+    // EXTERNAL_MEMORY=y 已开。set_cfg 是线程局部, 用后恢复默认。
+    if (stack_bytes >= 16384) {
+        esp_pthread_cfg_t pc = esp_pthread_get_default_config();
+        pc.stack_size       = stack_bytes;
+        pc.stack_alloc_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+        pc.inherit_cfg      = false;
+        esp_pthread_set_cfg(&pc);
+        pthread_t tid;
+        int r = pthread_create(&tid, nullptr, detached_tramp, heap_fn);
+        esp_pthread_cfg_t def = esp_pthread_get_default_config();
+        esp_pthread_set_cfg(&def);
+        if (r == 0) {
+            pthread_detach(tid);
+            return true;
+        }
+        mclog::tagWarn("hal", "tryRunDetached({}B psram) failed ({}), fallback internal",
+                       stack_bytes, r);
     }
 
     pthread_attr_t attr;
@@ -330,12 +361,7 @@ static bool spawn_detached_worker(std::function<void()> fn, size_t stack_bytes)
     pthread_attr_setstacksize(&attr, stack_bytes);
 
     pthread_t tid;
-    int ret = pthread_create(&tid, &attr, [](void* arg) -> void* {
-        auto* f = static_cast<std::function<void()>*>(arg);
-        (*f)();
-        delete f;
-        return nullptr;
-    }, heap_fn);
+    int ret = pthread_create(&tid, &attr, detached_tramp, heap_fn);
     pthread_attr_destroy(&attr);
 
     if (ret != 0) {

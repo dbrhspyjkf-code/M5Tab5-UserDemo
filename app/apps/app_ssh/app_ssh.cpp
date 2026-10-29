@@ -845,8 +845,14 @@ void AppSsh::_startTask()
     if (_task_running.load()) return;
     _task_running.store(true);
     // SSH+mbedtls 握手深调用链: 8KB 会在 ssh_connect 内打穿栈(Stack
-    // protection fault 实测), 给 32KB
-    GetHAL()->tryRunDetached([this]() { _sessionTask(); }, 32 * 1024);
+    // protection fault 实测), 给 32KB; hal 侧优先 PSRAM 栈(内部 RAM
+    // 碎片化时 pthread_create ENOMEM, 2026-10-29 实测), 失败回退内部
+    if (!GetHAL()->tryRunDetached([this]() { _sessionTask(); }, 32 * 1024)) {
+        _task_running.store(false);
+        snprintf(_err, sizeof(_err), "内存不足创建连接任务, 请稍后重试");
+        _sess_state.store(3);
+        mclog::tagWarn(TAG, "spawn session task failed");
+    }
 }
 
 void AppSsh::_sessionTask()
