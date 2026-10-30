@@ -210,9 +210,12 @@ inline void on_install_apps()
     home->addApp("计时器", ti_id);
     home->addApp("工  具", set_id);   // 2026-10-28: 移到最右 (用户指定)
 #ifdef PLATFORM_BUILD_DESKTOP
-    // 桌面调试: TAB5_OPEN_CALENDAR=1 启动即打开万年历
+    // 桌面调试: TAB5_OPEN_CALENDAR=1 启动即打开万年历; TAB5_OPEN_SSH=1 打开 SSH 表单
     if (const char* e = getenv("TAB5_OPEN_CALENDAR")) {
         if (e[0] == '1') mooncake::GetMooncake().openApp(cal_id);
+    }
+    if (const char* e = getenv("TAB5_OPEN_SSH")) {
+        if (e[0] == '1') mooncake::GetMooncake().openApp(sh_id);
     }
 #endif
     /* Install app locator (Don't remove) */

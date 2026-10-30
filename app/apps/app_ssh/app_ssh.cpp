@@ -160,13 +160,13 @@ void AppSsh::_buildForm()
         lv_label_set_text(l, txt);
         lv_obj_set_style_text_font(l, zh_font_md(), 0);
         lv_obj_set_style_text_color(l, lv_color_hex(T.text_dim), 0);
-        lv_obj_set_pos(l, 0, y);
+        lv_obj_set_pos(l, 100, y);   // 与输入框左缘对齐 (框 480 居中于 680 表单)
         return l;
     };
     auto mk_ta = [&](int y, const char* def, bool password) {
         lv_obj_t* ta = lv_textarea_create(_form);
-        lv_obj_set_size(ta, 680, 64);
-        lv_obj_set_pos(ta, 0, y);
+        lv_obj_set_size(ta, 480, 64);   // 2026-10-30 680→480: 用户反馈全宽太大
+        lv_obj_set_pos(ta, 100, y);
         lv_textarea_set_one_line(ta, true);
         lv_textarea_set_password_mode(ta, password);
         if (def && def[0]) lv_textarea_set_text(ta, def);
