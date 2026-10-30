@@ -168,21 +168,22 @@ void AppHome::onOpen()
     lv_obj_set_style_text_font(_status_time, &lv_font_montserrat_44, 0);
     lv_obj_set_style_text_color(_status_time, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_time, "--:--");
-    // 2026-10-30 整块上移 28px (104→76): 天气下腾出每日一句区
-    lv_obj_align(_status_time, LV_ALIGN_TOP_MID, 0, 76);
+    // 2026-10-30 二次上移: time 104→24 (顶部大空白), 各行保持原间距 52/54,
+    // 天气下句子区扩到 150px (en 3 行 + cn 2 行视觉高度)
+    lv_obj_align(_status_time, LV_ALIGN_TOP_MID, 0, 24);
 
     _status_date = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_date, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_status_date, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_date, "");
-    lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 148);
+    lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 96);
     lv_obj_set_style_transform_scale(_status_date, 320, 0);   // 1.25x 与右列卡片一致 (时钟不动, 2026-10-28 用户指定)
 
     _status_lunar = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_lunar, zh_font_md(), 0);
     lv_obj_set_style_text_color(_status_lunar, lv_color_hex(theme::cur().text_soft), 0);
     lv_label_set_text(_status_lunar, "");
-    lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 200);
+    lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 148);
     lv_obj_set_style_transform_scale(_status_lunar, 320, 0);
 
     // Weather row (tap → detailed weather dialog): temperature (latin font,
@@ -199,7 +200,7 @@ void AppHome::onOpen()
     lv_obj_set_flex_flow(wbox, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(wbox, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(wbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 254);
+    lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 202);
 
     _status_wtemp = lv_label_create(wbox);
     // 数字用 zh 字体 (与 44.11 元同款): montserrat 同尺寸下笔画粗、视觉偏大 (用户反馈)
@@ -230,8 +231,8 @@ void AppHome::onOpen()
     // 居中淡墨。长按换下一句 (offset+1, 轻量重拉)。可用高度 ~296..396: 底边
     // 让位给新股行 (满额 4 行时顶到 ~396), 长句极端情况可与之贴近。
     lv_obj_t* sbox = lv_obj_create(hero);
-    lv_obj_set_pos(sbox, 24, 294);
-    lv_obj_set_size(sbox, 352, 118);   // en 2 行 + cn 2 行 (≈114px) 恰容; 再长极端句可贴新股行
+    lv_obj_set_pos(sbox, 24, 246);
+    lv_obj_set_size(sbox, 352, 150);   // en≤3 行 + cn≤2 行视觉高 (×1.25); 底 396 与新股行满额顶齐
     lv_obj_set_style_bg_opa(sbox, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(sbox, 0, 0);
     lv_obj_set_style_pad_all(sbox, 0, 0);
