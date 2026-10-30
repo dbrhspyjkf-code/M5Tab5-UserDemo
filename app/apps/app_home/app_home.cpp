@@ -20,23 +20,39 @@
 
 static const std::string _tag = "app-home";
 
-// 全量中文字体 (GB2312 常用+生僻), 对话/标签不再出豆腐块.
-// 设备: lg=内嵌 30px cbin (XIP), md/sm=res 分区 24px/20px cbin;
-// 桌面: 直接 fopen 仓库内 24px 全量字体 bin 用 cbin_font_create 解析
-// (puhui_20 子集缺股票生僻字, 2026-10-28 实锤).
+// 中文字体: 设备从 res 分区 mmap 20px cbin (与 calendar/stocks/rfid/ha/
+// radio/reachy 同一模式)。此前直接链接 C 数组版 font_puhui_20_4, 与 res 的
+// font_zh_20 是同一字体的两份拷贝, 白占 app 镜像 1.19MB (2026-10-30 移除)。
+// res 异常时回退 xiaozhi 内嵌 30px 聊天字体 (已在镜像, 不额外占 flash)。
+// 桌面: 无 res 分区, 用 xiaozhi-fonts 编译进的 puhui_20 子集——缺股票生僻
+// 字 (钶锶等), 仅影响模拟器观感, 设备端 res 20px 正常 (2026-10-28 实锤)。
 #ifdef PLATFORM_BUILD_DESKTOP
 #include "../../../platforms/tab5/managed_components/78__xiaozhi-fonts/include/cbin_font.h"
-#else
-#include <cbin_font.h>
-#endif
-extern "C" const lv_font_t font_puhui_20_4;   // 桌面回退字体 (20px 子集)
-
-// 桌面本想加载与设备相同的 24px 全量字体, 但桌面 cbin_font.c 解析该 bin
-// 直接段错误 (原因未查明, 2026-10-28) — 回退 puhui_20 子集: 模拟器里股票
-// 名生僻字 (钶锶等) 显示为空白, 仅影响模拟器观感, 设备端 24px 全量正常.
+extern "C" const lv_font_t font_puhui_20_4;
 static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_md() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
+#else
+#include <cbin_font.h>
+extern const uint8_t font_puhui_common_30_4_bin_start[]
+    asm("_binary_font_puhui_common_30_4_bin_start");
+static const lv_font_t* zh_font_any()
+{
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_20");
+        lv_font_t* r = p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+        if (!r) {
+            // res 分区异常兜底: 内嵌 30px 全量字体, 保证中文不出豆腐
+            r = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
+        }
+        return r;
+    }();
+    return f;
+}
+static const lv_font_t* zh_font_lg() { return zh_font_any(); }
+static const lv_font_t* zh_font_md() { return zh_font_any(); }
+static const lv_font_t* zh_font_sm() { return zh_font_any(); }
+#endif
 
 AppHome::AppHome()
 {
