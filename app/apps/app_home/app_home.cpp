@@ -168,20 +168,21 @@ void AppHome::onOpen()
     lv_obj_set_style_text_font(_status_time, &lv_font_montserrat_44, 0);
     lv_obj_set_style_text_color(_status_time, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_time, "--:--");
-    lv_obj_align(_status_time, LV_ALIGN_TOP_MID, 0, 104);
+    // 2026-10-30 整块上移 28px (104→76): 天气下腾出每日一句区
+    lv_obj_align(_status_time, LV_ALIGN_TOP_MID, 0, 76);
 
     _status_date = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_date, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_status_date, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_date, "");
-    lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 176);
+    lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 148);
     lv_obj_set_style_transform_scale(_status_date, 320, 0);   // 1.25x 与右列卡片一致 (时钟不动, 2026-10-28 用户指定)
 
     _status_lunar = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_lunar, zh_font_md(), 0);
     lv_obj_set_style_text_color(_status_lunar, lv_color_hex(theme::cur().text_soft), 0);
     lv_label_set_text(_status_lunar, "");
-    lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 228);
+    lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 200);
     lv_obj_set_style_transform_scale(_status_lunar, 320, 0);
 
     // Weather row (tap → detailed weather dialog): temperature (latin font,
@@ -198,7 +199,7 @@ void AppHome::onOpen()
     lv_obj_set_flex_flow(wbox, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(wbox, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(wbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 282);
+    lv_obj_align(wbox, LV_ALIGN_TOP_MID, 0, 254);
 
     _status_wtemp = lv_label_create(wbox);
     // 数字用 zh 字体 (与 44.11 元同款): montserrat 同尺寸下笔画粗、视觉偏大 (用户反馈)
@@ -224,6 +225,45 @@ void AppHome::onOpen()
         lv_obj_add_event_cb(item, _statusClick_cb, LV_EVENT_CLICKED, this);
     };
     make_tappable(wbox, 4);
+
+    // 每日一句 (2026-10-30 从右列轮播卡移来): 天气下方, 英文 2 行 + 中文 1 行,
+    // 居中淡墨。长按换下一句 (offset+1, 轻量重拉)。可用高度 ~296..396: 底边
+    // 让位给新股行 (满额 4 行时顶到 ~396), 长句极端情况可与之贴近。
+    lv_obj_t* sbox = lv_obj_create(hero);
+    lv_obj_set_pos(sbox, 24, 294);
+    lv_obj_set_size(sbox, 352, 118);   // en 2 行 + cn 2 行 (≈114px) 恰容; 再长极端句可贴新股行
+    lv_obj_set_style_bg_opa(sbox, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(sbox, 0, 0);
+    lv_obj_set_style_pad_all(sbox, 0, 0);
+    lv_obj_set_flex_flow(sbox, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(sbox, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(sbox, 6, 0);
+    lv_obj_clear_flag(sbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+
+    _hero_sent_en = lv_label_create(sbox);
+    lv_obj_set_style_text_font(_hero_sent_en, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(_hero_sent_en, lv_color_hex(theme::cur().text_dim), 0);
+    lv_obj_set_style_text_line_space(_hero_sent_en, 2, 0);
+    lv_obj_set_style_text_align(_hero_sent_en, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(_hero_sent_en, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(_hero_sent_en, 264);   // 264*1.25=330 视觉宽, 卡内 400-2*35
+    lv_obj_set_style_transform_scale(_hero_sent_en, 320, 0);
+    lv_label_set_text(_hero_sent_en, "");
+
+    _hero_sent_cn = lv_label_create(sbox);
+    lv_obj_set_style_text_font(_hero_sent_cn, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(_hero_sent_cn, lv_color_hex(theme::cur().text_soft), 0);
+    lv_obj_set_style_text_line_space(_hero_sent_cn, 2, 0);
+    lv_obj_set_style_text_align(_hero_sent_cn, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(_hero_sent_cn, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(_hero_sent_cn, 264);
+    lv_obj_set_style_transform_scale(_hero_sent_cn, 320, 0);
+    lv_label_set_text(_hero_sent_cn, "");
+
+    lv_obj_add_flag(sbox, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(sbox, [](lv_event_t* e) {
+        static_cast<AppHome*>(lv_event_get_user_data(e))->_sentenceNext();
+    }, LV_EVENT_LONG_PRESSED, this);
 
     // Thin divider + icon row along the card bottom (light ink on deep green).
     lv_obj_t* div = lv_obj_create(hero);
@@ -395,7 +435,8 @@ void AppHome::onOpen()
         lv_obj_set_style_text_align(_dash_ag2, LV_TEXT_ALIGN_CENTER, 0);
         big(_dash_ag2);
     }
-    {   // 04 每日一句英文宽卡 (hermes /daily/sentence?offset=N, 长按换下一句)
+    {   // 04 AI 新闻轮播宽卡 (hermes /news/ai; 每日一句已移 hero 主卡, 2026-10-30)
+        // 长按/每 10s 自动推进下一条; 30 分钟节流拉取
         // 加高 110→140 容纳 1.25x 文字; OPi 卡相应 240→212, 右列仍填满 608
         lv_obj_t* card = row_card(244, 140, theme::cur().card[3], theme::cur().border);
         // 垂直均匀分布: 英文中 / 中文底 (行数变化间距恒定)
@@ -517,12 +558,17 @@ void AppHome::onRunning()
     if (_last_status_ms != 0 && now - _last_status_ms < 1000) return;
     _last_status_ms = now;
 
-    // 轮播: 每日一句/AI 新闻每 10s 推进 (长按卡=手动下一条); 首次立即应用
+    // 轮播: AI 新闻每 10s 推进 (长按卡=手动下一条); 首次立即应用;
+    // 新闻数据常晚于首帧到达 (worker 串行拉 6 个端点) → 卡还挂着 "--" 时
+    // 数据一到就上屏, 不空等第一个 10s
     if (_car_ms == 0) {
         _car_ms = now;
         _applyCarousel();
     } else if (now - _car_ms >= 10000 && _carousel.size() > 1) {
         _carouselNext(nullptr);
+    } else if (!_carousel.empty() && _dash_sent_en
+               && lv_label_get_text(_dash_sent_en)[0] == '-') {
+        _applyCarousel();
     }
 
     // Clock
@@ -668,6 +714,10 @@ void AppHome::onRunning()
             lv_label_set_text(_dash_sent_en, _dash_sent_en_txt.c_str());
         if (_dash_sent_cn && _dash_sent_cn_txt.compare(lv_label_get_text(_dash_sent_cn)) != 0)
             lv_label_set_text(_dash_sent_cn, _dash_sent_cn_txt.c_str());
+        if (_hero_sent_en && _hero_sent_en_txt.compare(lv_label_get_text(_hero_sent_en)) != 0)
+            lv_label_set_text(_hero_sent_en, _hero_sent_en_txt.c_str());
+        if (_hero_sent_cn && _hero_sent_cn_txt.compare(lv_label_get_text(_hero_sent_cn)) != 0)
+            lv_label_set_text(_hero_sent_cn, _hero_sent_cn_txt.c_str());
         if (_dash_ds)  lv_label_set_text(_dash_ds,  _dash_ds_txt.c_str());
         if (_dash_ag1) lv_label_set_text(_dash_ag1, _dash_ag1_txt.c_str());
         if (_dash_ag2) lv_label_set_text(_dash_ag2, _dash_ag2_txt.c_str());
@@ -719,6 +769,28 @@ void AppHome::_applyCarousel()
     if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
     _dash_sent_en_txt = _carousel[_car_idx].l1;
     _dash_sent_cn_txt = _carousel[_car_idx].l2;
+}
+
+void AppHome::_sentenceNext()
+{
+    // hero 每日一句长按: offset+1, 只拉 sentence 端点写 _hero_sent_*_txt,
+    // onRunning 同步块应用 (与全量 _fetch_dashboard 相同的 worker→UI 模式)
+    ++_sent_offset;
+    std::string base = "http://" + GetHAL()->getConfig("svc_host", "192.168.1.200") + ":8766";
+    int off = _sent_offset;
+    GetHAL()->tryRunDetached([this, base, off]() {
+        auto resp = GetHAL()->httpGet(base + "/daily/sentence?offset=" + std::to_string(off));
+        try {
+            auto j = nlohmann::json::parse(resp.body);
+            if (!j.value("ok", false)) return;
+            std::string en = j.value("en", std::string());
+            std::string cn = j.value("cn", std::string());
+            if (en.empty()) return;
+            std::lock_guard<std::mutex> lk(_dash_mutex);
+            _hero_sent_en_txt = en;
+            _hero_sent_cn_txt = cn;
+        } catch (...) {}
+    });
 }
 
 void AppHome::_carouselNext(lv_obj_t* card)
@@ -899,12 +971,10 @@ void AppHome::_fetch_dashboard()
         std::lock_guard<std::mutex> lk(_dash_mutex);
         _dash_glm_txt = glm_txt;
         _dash_glm2_txt = glm_sub;
-        if (!sent_en.empty()) { _dash_sent_en_txt = sent_en; _dash_sent_cn_txt = sent_cn; }
+        if (!sent_en.empty()) { _hero_sent_en_txt = sent_en; _hero_sent_cn_txt = sent_cn; }
         if (!news.empty()) _news_items = news;
-        // 重建轮播: [0]=每日一句 + AI 新闻; 越界索引归零
-        _carousel.clear();
-        _carousel.push_back({_dash_sent_en_txt, _dash_sent_cn_txt});
-        for (auto& n : _news_items) _carousel.push_back(n);
+        // 轮播 = 纯 AI 新闻 (每日一句移 hero 主卡, 2026-10-30); 越界索引归零
+        _carousel = _news_items;
         if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
         _ipo_txt = ipo_txt;   // 空串=无新股, UI 隐藏
         mclog::tagInfo(_tag, "[dbg] ipo='{}'", ipo_txt.c_str());

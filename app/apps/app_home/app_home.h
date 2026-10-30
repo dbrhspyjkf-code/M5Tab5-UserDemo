@@ -68,6 +68,8 @@ private:
     lv_obj_t* _status_lunar   = nullptr;  // 农历 line under the date
     lv_obj_t* _status_wtemp   = nullptr;  // weather temperature (latin font, has °)
     lv_obj_t* _status_wcond   = nullptr;  // weather condition (zh font)
+    lv_obj_t* _hero_sent_en   = nullptr;  // 每日一句英文 (hero 天气下方, 2026-10-30)
+    lv_obj_t* _hero_sent_cn   = nullptr;  // 每日一句中文
     lv_obj_t* _status_wifi    = nullptr;
     lv_obj_t* _status_batt    = nullptr;
     uint32_t  _last_status_ms = 0;
@@ -97,8 +99,8 @@ private:
     // orange-pi.widget). Same pattern as the weather: a detached worker
     // writes strings/struct, onRunning copies them to widgets.
     lv_obj_t*  _dash_scroll = nullptr;  // 右列滚动容器 (5 卡)
-    lv_obj_t*  _dash_sent_en = nullptr;  // 每日一句英文
-    lv_obj_t*  _dash_sent_cn = nullptr;  // 每日一句中文
+    lv_obj_t*  _dash_sent_en = nullptr;  // AI 新闻轮播·标题行 (原每日一句卡)
+    lv_obj_t*  _dash_sent_cn = nullptr;  // AI 新闻轮播·副行 (来源·日期)
     lv_obj_t*  _ipo_lbl = nullptr;     // 新股申购行 (hero, 无新股隐藏)
     lv_obj_t*  _hero_div = nullptr;    // hero 分隔线 (新股行对齐锚点)
     lv_obj_t*  _dash_glm = nullptr;
@@ -109,7 +111,8 @@ private:
     uint32_t   _last_dash_ms = 0;
     std::string _dash_glm_txt, _dash_glm2_txt, _dash_ds_txt, _dash_ag1_txt, _dash_ag2_txt;
     std::string _dash_sent_en_txt, _dash_sent_cn_txt;
-    // 轮播: [0]=每日一句, 1..=AI 新闻条目 (guarded by _dash_mutex)
+    std::string _hero_sent_en_txt, _hero_sent_cn_txt;  // hero 每日一句 (独立于轮播数据源)
+    // 轮播: AI 新闻条目 (每日一句已移 hero 主卡, 2026-10-30; guarded by _dash_mutex)
     struct CarItem { std::string l1, l2; };
     std::vector<CarItem> _carousel, _news_items;
     int      _car_idx = 0;
@@ -138,6 +141,7 @@ private:
     void _fetch_dashboard();
     void _carouselNext(lv_obj_t* card);   // 轮播: 闪环 + 推进下一条 (长按/定时)
     void _applyCarousel();                // 当前轮播条目 → 卡片标签 (LVGL 线程)
+    void _sentenceNext();                 // hero 每日一句: offset+1 轻量重拉 (长按)
     void _updateOpiWidgets();  // 把 _opi 刷进右缘 OPi 卡; 调用方需已持有 _dash_mutex
 
     // Weather detail popup (tap the status-bar weather). A worker fetches the
