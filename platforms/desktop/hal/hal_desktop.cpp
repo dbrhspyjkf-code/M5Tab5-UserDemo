@@ -8,10 +8,63 @@
 #include <mooncake_log.h>
 #include <random>
 #include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <thread>
 #include <curl/curl.h>
+#include <nlohmann/json.hpp>
 
 static const std::string _tag = "hal";
+
+/* -------------------------------------------------------------------------- */
+/*                        Persistent config (device: NVS)                     */
+/* -------------------------------------------------------------------------- */
+// Desktop stand-in for the device's NVS key/value store. Without this, every
+// getConfig() call returned the caller's default — e.g. ha_host was "" so the
+// home screen weather card silently never loaded in the simulator (2026-10-30).
+
+static std::string sim_config_path()
+{
+    const char* env = getenv("TAB5_SIM_CONFIG");
+    if (env && *env) return env;
+    const char* home = getenv("HOME");
+    return std::string(home ? home : ".") + "/.tab5_sim_config.json";
+}
+
+static nlohmann::json sim_config_load()
+{
+    std::ifstream f(sim_config_path());
+    if (!f) return nlohmann::json::object();
+    try {
+        auto j = nlohmann::json::parse(f);
+        if (j.is_object()) return j;
+    } catch (...) {
+    }
+    return nlohmann::json::object();
+}
+
+static std::mutex& sim_config_mutex()
+{
+    static std::mutex mu;
+    return mu;
+}
+
+std::string HalDesktop::getConfig(const std::string& key, const std::string& defaultValue)
+{
+    std::lock_guard<std::mutex> lk(sim_config_mutex());
+    auto j = sim_config_load();
+    if (j.contains(key) && j[key].is_string()) return j[key].get<std::string>();
+    return defaultValue;
+}
+
+void HalDesktop::setConfig(const std::string& key, const std::string& value)
+{
+    std::lock_guard<std::mutex> lk(sim_config_mutex());
+    auto j = sim_config_load();
+    j[key] = value;
+    std::ofstream f(sim_config_path());
+    if (f) f << j.dump(2) << std::endl;
+}
 
 void HalDesktop::init()
 {

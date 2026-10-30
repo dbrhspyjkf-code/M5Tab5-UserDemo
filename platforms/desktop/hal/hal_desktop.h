@@ -62,6 +62,13 @@ public:
 
     void uartMonitorSend(std::string msg, bool newLine = true) override;
 
+    /* Persistent config — device uses NVS; desktop persists to a JSON file
+     * (~/.tab5_sim_config.json, override with TAB5_SIM_CONFIG) so NVS-backed
+     * features (ha_host, theme persistence, screensaver settings…) behave
+     * the same in the simulator. */
+    std::string getConfig(const std::string& key, const std::string& defaultValue = "") override;
+    void setConfig(const std::string& key, const std::string& value) override;
+
     HttpResponse_t httpGet(const std::string& url,
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
     HttpResponse_t httpPost(const std::string& url, const std::string& body,
