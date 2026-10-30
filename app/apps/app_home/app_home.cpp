@@ -227,12 +227,13 @@ void AppHome::onOpen()
     };
     make_tappable(wbox, 4);
 
-    // 每日一句 (2026-10-30 从右列轮播卡移来): 天气下方, 英文 2 行 + 中文 1 行,
-    // 居中淡墨。长按换下一句 (offset+1, 轻量重拉)。可用高度 ~296..396: 底边
-    // 让位给新股行 (满额 4 行时顶到 ~396), 长句极端情况可与之贴近。
+    // 每日一句 (2026-10-30 从右列轮播卡移来): 天气下方, 英文 + 中文均
+    // **不加 1.25x 缩放**——变换后视觉宽会溢出布局盒, 右端"底"字被容器
+    // 裁切 (用户实锤); 直接用卡内全宽 352 排版, sbox 横向居中=卡片居中。
+    // 长按换下一句 (offset+1, 轻量重拉)。
     lv_obj_t* sbox = lv_obj_create(hero);
     lv_obj_set_pos(sbox, 24, 246);
-    lv_obj_set_size(sbox, 352, 150);   // en≤3 行 + cn≤2 行视觉高 (×1.25); 底 396 与新股行满额顶齐
+    lv_obj_set_size(sbox, 352, 150);   // en 3-4 行 + cn 2 行原生行高, 富余充足
     lv_obj_set_style_bg_opa(sbox, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(sbox, 0, 0);
     lv_obj_set_style_pad_all(sbox, 0, 0);
@@ -247,8 +248,7 @@ void AppHome::onOpen()
     lv_obj_set_style_text_line_space(_hero_sent_en, 2, 0);
     lv_obj_set_style_text_align(_hero_sent_en, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(_hero_sent_en, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(_hero_sent_en, 264);   // 264*1.25=330 视觉宽, 卡内 400-2*35
-    lv_obj_set_style_transform_scale(_hero_sent_en, 320, 0);
+    lv_obj_set_width(_hero_sent_en, 352);
     lv_label_set_text(_hero_sent_en, "");
 
     _hero_sent_cn = lv_label_create(sbox);
@@ -257,8 +257,7 @@ void AppHome::onOpen()
     lv_obj_set_style_text_line_space(_hero_sent_cn, 2, 0);
     lv_obj_set_style_text_align(_hero_sent_cn, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(_hero_sent_cn, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(_hero_sent_cn, 264);
-    lv_obj_set_style_transform_scale(_hero_sent_cn, 320, 0);
+    lv_obj_set_width(_hero_sent_cn, 352);
     lv_label_set_text(_hero_sent_cn, "");
 
     lv_obj_add_flag(sbox, LV_OBJ_FLAG_CLICKABLE);
