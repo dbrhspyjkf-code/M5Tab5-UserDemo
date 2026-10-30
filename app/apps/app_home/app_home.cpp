@@ -448,32 +448,39 @@ void AppHome::onOpen()
     {   // 04 AI 新闻轮播宽卡 (hermes /news/ai; 每日一句已移 hero 主卡, 2026-10-30)
         // 长按/每 10s 自动推进下一条; 30 分钟节流拉取
         // 加高 110→140 容纳 1.25x 文字; OPi 卡相应 240→212, 右列仍填满 608
+        // 2026-10-30 内容改水平居中: cross=CENTER + 中心 pivot + text CENTER
+        // (换行宽 636→560: 视觉 700 恰在卡内容区 708 内, 放大不越界)
         lv_obj_t* card = row_card(244, 140, theme::cur().card[3], theme::cur().border);
-        // 垂直均匀分布: 英文中 / 中文底 (行数变化间距恒定)
+        // 垂直均匀分布: 标题/副行随行数变化间距恒定
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_EVENLY,
-                              LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_set_style_pad_left(card, 24, 0);
         lv_obj_set_style_pad_right(card, 24, 0);
         lv_obj_set_style_pad_top(card, 8, 0);
         lv_obj_set_style_pad_bottom(card, 8, 0);
-        // 换行按 1.25x 缩小 (636), 缩放后视觉宽 ≈795 恰好铺回卡内
         _dash_sent_en = lv_label_create(card);
         lv_label_set_text(_dash_sent_en, "--");
         lv_obj_set_style_text_font(_dash_sent_en, zh_font_lg(), 0);
-        big_left(_dash_sent_en);
+        big(_dash_sent_en);
+        lv_obj_set_style_transform_pivot_x(_dash_sent_en, LV_PCT(50), 0);
+        lv_obj_set_style_transform_pivot_y(_dash_sent_en, LV_PCT(50), 0);
+        lv_obj_set_style_text_align(_dash_sent_en, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_color(_dash_sent_en, lv_color_hex(theme::cur().text_hi), 0);
         lv_obj_set_style_text_line_space(_dash_sent_en, 10, 0);
         lv_label_set_long_mode(_dash_sent_en, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(_dash_sent_en, 636);
+        lv_obj_set_width(_dash_sent_en, 560);
         _dash_sent_cn = lv_label_create(card);
         lv_label_set_text(_dash_sent_cn, "");
         lv_obj_set_style_text_font(_dash_sent_cn, zh_font_lg(), 0);
-        big_left(_dash_sent_cn);
+        big(_dash_sent_cn);
+        lv_obj_set_style_transform_pivot_x(_dash_sent_cn, LV_PCT(50), 0);
+        lv_obj_set_style_transform_pivot_y(_dash_sent_cn, LV_PCT(50), 0);
+        lv_obj_set_style_text_align(_dash_sent_cn, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_color(_dash_sent_cn, lv_color_hex(theme::cur().text_dim), 0);
         lv_obj_set_style_text_line_space(_dash_sent_cn, 6, 0);
         lv_label_set_long_mode(_dash_sent_cn, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(_dash_sent_cn, 636);
+        lv_obj_set_width(_dash_sent_cn, 560);
         // 长按 (与股票卡片同款 500ms): outline 闪一下 → 换下一句
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
@@ -720,9 +727,11 @@ void AppHome::onRunning()
             lv_obj_update_layout(_ipo_lbl);
             lv_obj_align_to(_ipo_lbl, _hero_div, LV_ALIGN_OUT_TOP_MID, 0, -6);
         }
-        if (_dash_sent_en && _dash_sent_en_txt.compare(lv_label_get_text(_dash_sent_en)) != 0)
+        if (_dash_sent_en && !_dash_sent_en_txt.empty()
+            && _dash_sent_en_txt.compare(lv_label_get_text(_dash_sent_en)) != 0)
             lv_label_set_text(_dash_sent_en, _dash_sent_en_txt.c_str());
-        if (_dash_sent_cn && _dash_sent_cn_txt.compare(lv_label_get_text(_dash_sent_cn)) != 0)
+        if (_dash_sent_cn && !_dash_sent_cn_txt.empty()
+            && _dash_sent_cn_txt.compare(lv_label_get_text(_dash_sent_cn)) != 0)
             lv_label_set_text(_dash_sent_cn, _dash_sent_cn_txt.c_str());
         if (_hero_sent_en && _hero_sent_en_txt.compare(lv_label_get_text(_hero_sent_en)) != 0)
             lv_label_set_text(_hero_sent_en, _hero_sent_en_txt.c_str());
@@ -927,7 +936,8 @@ void AppHome::_fetch_dashboard()
         std::vector<CarItem> news;
         uint32_t wnow = GetHAL()->millis();
         if (s_news_ms.load() == 0 || wnow - s_news_ms.load() >= 30u * 60 * 1000) {
-            s_news_ms.store(wnow);
+            // 节流只在拿到非空数据时生效 (2026-10-30 修): 请求前先标记会把
+            // 一次瞬时失败放大成 30 分钟无新闻
             if (auto j = pick(GetHAL()->httpGet(base + "/news/ai").body); !j.is_null()) {
                 std::string ndate = j.value("date", std::string());
                 if (j.contains("secs") && j["secs"].is_array())
@@ -943,6 +953,7 @@ void AppHome::_fetch_dashboard()
                         }
                         if (news.size() >= 12) break;
                     }
+                if (!news.empty()) s_news_ms.store(wnow);
             }
         }
         OpiData od;
