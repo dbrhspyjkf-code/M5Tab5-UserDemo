@@ -36,22 +36,35 @@ static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
 #include <cbin_font.h>
 extern const uint8_t font_puhui_common_30_4_bin_start[]
     asm("_binary_font_puhui_common_30_4_bin_start");
-static const lv_font_t* zh_font_any()
+// 2026-10-31 分层终版 (用户确认): 主页基准视觉 = 小智对话 30px——
+//   lg = 内嵌 30px, 无缩放标签直用 (状态栏/每日一句/弹窗);
+//   md = res font_zh_24 (24px), 专供带 1.25x transform 的标签 (hero 日期/
+//        农历/天气/主页按钮): 24×1.25 = 30px 视觉, 缩放架构不动;
+//   sm = res font_zh_20 (20px), 右列密集卡 + IPO + 天气弹窗正文:
+//        20×1.25 = 25px 视觉 (历史观感, 密排不溢出)。
+// res 异常一律回退内嵌 30px。此前 97bf27d 曾把三档全指 res font_zh_20,
+// 首刷后全主页缩成 20px (用户实锤"没变大"), 勿再合并档位。
+static const lv_font_t* zh_font_lg()
+{
+    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
+    return f;
+}
+static const lv_font_t* zh_font_md()
+{
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_24");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+    }();
+    return f ? f : zh_font_lg();
+}
+static const lv_font_t* zh_font_sm()
 {
     static lv_font_t* f = []() -> lv_font_t* {
         const uint8_t* p = assets_part::find("font_zh_20");
-        lv_font_t* r = p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
-        if (!r) {
-            // res 分区异常兜底: 内嵌 30px 全量字体, 保证中文不出豆腐
-            r = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
-        }
-        return r;
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
     }();
-    return f;
+    return f ? f : zh_font_lg();
 }
-static const lv_font_t* zh_font_lg() { return zh_font_any(); }
-static const lv_font_t* zh_font_md() { return zh_font_any(); }
-static const lv_font_t* zh_font_sm() { return zh_font_any(); }
 #endif
 
 AppHome::AppHome()
@@ -138,7 +151,7 @@ void AppHome::onOpen()
         lv_label_set_text(lbl, _apps[i].name.c_str());
         lv_obj_set_align(lbl, LV_ALIGN_CENTER);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);  // 30px
+        lv_obj_set_style_text_font(lbl, zh_font_md(), 0);  // 24px×1.25=30px 视觉
         lv_obj_set_style_transform_scale(lbl, 320, 0);   // ≈1.25x: 按钮文字再大一点 (用户指定)
         // Subtle dark text shadow for legibility over the bright gradient.
         lv_obj_set_style_text_opa(lbl, LV_OPA_COVER, 0);
@@ -173,7 +186,7 @@ void AppHome::onOpen()
     lv_obj_align(_status_time, LV_ALIGN_TOP_MID, 0, 24);
 
     _status_date = lv_label_create(hero);
-    lv_obj_set_style_text_font(_status_date, zh_font_lg(), 0);
+    lv_obj_set_style_text_font(_status_date, zh_font_md(), 0);
     lv_obj_set_style_text_color(_status_date, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_date, "");
     lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 96);
@@ -210,7 +223,7 @@ void AppHome::onOpen()
 
     _status_wtemp = lv_label_create(wbox);
     // 数字用 zh 字体 (与 44.11 元同款): montserrat 同尺寸下笔画粗、视觉偏大 (用户反馈)
-    lv_obj_set_style_text_font(_status_wtemp, zh_font_lg(), 0);
+    lv_obj_set_style_text_font(_status_wtemp, zh_font_md(), 0);
     lv_obj_set_style_text_color(_status_wtemp, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_wtemp, "");
     lv_obj_set_style_transform_scale(_status_wtemp, 320, 0);
@@ -218,7 +231,7 @@ void AppHome::onOpen()
     lv_obj_set_style_transform_pivot_y(_status_wtemp, LV_PCT(50), 0);
 
     _status_wcond = lv_label_create(wbox);
-    lv_obj_set_style_text_font(_status_wcond, zh_font_lg(), 0);
+    lv_obj_set_style_text_font(_status_wcond, zh_font_md(), 0);
     lv_obj_set_style_text_color(_status_wcond, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_wcond, "");
     lv_obj_set_style_transform_scale(_status_wcond, 320, 0);
@@ -241,9 +254,13 @@ void AppHome::onOpen()
     // **不加 1.25x 缩放**——变换后视觉宽会溢出布局盒, 右端"底"字被容器
     // 裁切 (用户实锤); 直接用卡内全宽 352 排版, sbox 横向居中=卡片居中。
     // 长按换下一句 (offset+1, 轻量重拉)。
+    // (2026-10-30 晚: en/cn 升 30px zh_font_lg, 与状态栏农历同大小 (用户两次
+    // 反馈 20px/24px 均嫌小); 原生字号无变换, 换行按 352 真宽计算。最长句
+    // (en 4 行 + cn 2 行 ≈ 218px) 超出 sbox 150 的部分向上下对称溢出, 下距
+    // 分隔线 (512) 仍有 ~80px 余量, 上方极端时贴天气块但不裁切)
     lv_obj_t* sbox = lv_obj_create(hero);
     lv_obj_set_pos(sbox, 24, 246);
-    lv_obj_set_size(sbox, 352, 150);   // en 3-4 行 + cn 2 行原生行高, 富余充足
+    lv_obj_set_size(sbox, 352, 150);
     lv_obj_set_style_bg_opa(sbox, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(sbox, 0, 0);
     lv_obj_set_style_pad_all(sbox, 0, 0);
@@ -253,7 +270,7 @@ void AppHome::onOpen()
     lv_obj_clear_flag(sbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
     _hero_sent_en = lv_label_create(sbox);
-    lv_obj_set_style_text_font(_hero_sent_en, zh_font_sm(), 0);
+    lv_obj_set_style_text_font(_hero_sent_en, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_hero_sent_en, lv_color_hex(theme::cur().text_dim), 0);
     lv_obj_set_style_text_line_space(_hero_sent_en, 2, 0);
     lv_obj_set_style_text_align(_hero_sent_en, LV_TEXT_ALIGN_CENTER, 0);
@@ -262,7 +279,7 @@ void AppHome::onOpen()
     lv_label_set_text(_hero_sent_en, "");
 
     _hero_sent_cn = lv_label_create(sbox);
-    lv_obj_set_style_text_font(_hero_sent_cn, zh_font_sm(), 0);
+    lv_obj_set_style_text_font(_hero_sent_cn, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_hero_sent_cn, lv_color_hex(theme::cur().text_soft), 0);
     lv_obj_set_style_text_line_space(_hero_sent_cn, 2, 0);
     lv_obj_set_style_text_align(_hero_sent_cn, LV_TEXT_ALIGN_CENTER, 0);
@@ -280,7 +297,7 @@ void AppHome::onOpen()
     // 新股申购 (hermes /stocks/ipo; 2026-10-28 用户要求: 第一行"新股申购",
     // 之后每股一行, 最多 3 条; 无申购隐藏)
     _ipo_lbl = lv_label_create(hero);
-    lv_obj_set_style_text_font(_ipo_lbl, zh_font_md(), 0);
+    lv_obj_set_style_text_font(_ipo_lbl, zh_font_sm(), 0);
     lv_obj_set_style_text_color(_ipo_lbl, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_text_line_space(_ipo_lbl, 4, 0);   // 1.25x 后收紧, 防满额 4 行顶到天气行
     lv_obj_set_style_text_align(_ipo_lbl, LV_TEXT_ALIGN_CENTER, 0);   // 居中 (用户指定)
@@ -419,27 +436,27 @@ void AppHome::onOpen()
         const uint32_t NAME = theme::cur().text_soft;   // soft text
         const uint32_t VAL  = theme::cur().text_hi;   // bright value
         lv_obj_t* c = row_card(0, 110, theme::cur().card[0], theme::cur().border);
-        big_left(mk_lbl(c, zh_font_lg(), NAME, "GLM 用量", LV_ALIGN_LEFT_MID, 26, 0));
+        big_left(mk_lbl(c, zh_font_md(), NAME, "GLM 用量", LV_ALIGN_LEFT_MID, 26, 0));
         // 左右分区: 左=GLM (5H/7D 剩余% + 重置时间), 右=DeepSeek 余额 (小标+数值)。
         // 全卡 1.25x 后数据列 x280 会顶到右栏, 左移 x200 腾位 (名称放大后到 ~178)。
-        _dash_glm  = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_LEFT, 200, 12);
-        _dash_glm2 = mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 200, 54);
+        _dash_glm  = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_LEFT, 200, 12);
+        _dash_glm2 = mk_lbl(c, zh_font_md(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 200, 54);
         big_tl(_dash_glm);
         big_tl(_dash_glm2);
-        big_right(mk_lbl(c, zh_font_lg(), NAME, "DeepSeek 余额",
+        big_right(mk_lbl(c, zh_font_md(), NAME, "DeepSeek 余额",
                          LV_ALIGN_TOP_RIGHT, -28, 12));
-        _dash_ds   = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 50);
+        _dash_ds   = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 50);
         big_right(_dash_ds);
 
         c = row_card(122, 110, theme::cur().card[2], theme::cur().border);
-        big_left(mk_lbl(c, zh_font_lg(), NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 26, 0));
+        big_left(mk_lbl(c, zh_font_md(), NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 26, 0));
         // 内容居中 (2026-10-28 用户: 太靠右); 放大后中心 pivot 保持居中不跑位
-        _dash_ag1 = mk_lbl(c, zh_font_lg(), VAL, "--", LV_ALIGN_TOP_MID, 0, 14);
+        _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_MID, 0, 14);
         lv_obj_set_width(_dash_ag1, 844 - 200);
         lv_label_set_long_mode(_dash_ag1, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_align(_dash_ag1, LV_TEXT_ALIGN_CENTER, 0);
         big(_dash_ag1);
-        _dash_ag2 = mk_lbl(c, zh_font_lg(), theme::cur().text_dim, "", LV_ALIGN_TOP_MID, 0, 56);
+        _dash_ag2 = mk_lbl(c, zh_font_md(), theme::cur().text_dim, "", LV_ALIGN_TOP_MID, 0, 56);
         lv_obj_set_width(_dash_ag2, 844 - 200);
         lv_label_set_long_mode(_dash_ag2, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_align(_dash_ag2, LV_TEXT_ALIGN_CENTER, 0);
@@ -461,7 +478,9 @@ void AppHome::onOpen()
         lv_obj_set_style_pad_bottom(card, 8, 0);
         _dash_sent_en = lv_label_create(card);
         lv_label_set_text(_dash_sent_en, "--");
-        lv_obj_set_style_text_font(_dash_sent_en, zh_font_lg(), 0);
+        // 2026-10-31: 字号 sm→md (24×1.25=30px 视觉, 与 hero 每日一句同大);
+        // 底部「AI 新闻 · 日期」副行按用户要求移除, 单标签 SPACE_EVENLY 居中
+        lv_obj_set_style_text_font(_dash_sent_en, zh_font_md(), 0);
         big(_dash_sent_en);
         lv_obj_set_style_transform_pivot_x(_dash_sent_en, LV_PCT(50), 0);
         lv_obj_set_style_transform_pivot_y(_dash_sent_en, LV_PCT(50), 0);
@@ -470,17 +489,6 @@ void AppHome::onOpen()
         lv_obj_set_style_text_line_space(_dash_sent_en, 10, 0);
         lv_label_set_long_mode(_dash_sent_en, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(_dash_sent_en, 560);
-        _dash_sent_cn = lv_label_create(card);
-        lv_label_set_text(_dash_sent_cn, "");
-        lv_obj_set_style_text_font(_dash_sent_cn, zh_font_lg(), 0);
-        big(_dash_sent_cn);
-        lv_obj_set_style_transform_pivot_x(_dash_sent_cn, LV_PCT(50), 0);
-        lv_obj_set_style_transform_pivot_y(_dash_sent_cn, LV_PCT(50), 0);
-        lv_obj_set_style_text_align(_dash_sent_cn, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_color(_dash_sent_cn, lv_color_hex(theme::cur().text_dim), 0);
-        lv_obj_set_style_text_line_space(_dash_sent_cn, 6, 0);
-        lv_label_set_long_mode(_dash_sent_cn, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(_dash_sent_cn, 560);
         // 长按 (与股票卡片同款 500ms): outline 闪一下 → 换下一句
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
@@ -504,9 +512,9 @@ void AppHome::onOpen()
         lv_obj_set_style_shadow_width(_opi_dot, 8, 0);
         lv_obj_clear_flag(_opi_dot, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
-        big_tl(mk_lbl(card, zh_font_lg(), theme::cur().text_hi, "OPi", LV_ALIGN_TOP_LEFT, 46, 16));
-        _opi_ip     = mk_lbl(card, zh_font_lg(), theme::cur().text_dim, "--", LV_ALIGN_TOP_LEFT, 132, 16);
-        _opi_uptime = mk_lbl(card, zh_font_lg(), theme::cur().text_dim, "--", LV_ALIGN_TOP_RIGHT, -24, 16);
+        big_tl(mk_lbl(card, zh_font_sm(), theme::cur().text_hi, "OPi", LV_ALIGN_TOP_LEFT, 46, 16));
+        _opi_ip     = mk_lbl(card, zh_font_sm(), theme::cur().text_dim, "--", LV_ALIGN_TOP_LEFT, 132, 16);
+        _opi_uptime = mk_lbl(card, zh_font_sm(), theme::cur().text_dim, "--", LV_ALIGN_TOP_RIGHT, -24, 16);
         big_tl(_opi_ip);
         big_right(_opi_uptime);
 
@@ -517,13 +525,13 @@ void AppHome::onOpen()
             OpiModule& m = _opi_mod[i];
             int x = CELL_X[i % 3], y = (i / 3) == 0 ? 66 : 134;
             lv_obj_t* lbl = lv_label_create(card);
-            lv_obj_set_style_text_font(lbl, zh_font_lg(), 0);
+            lv_obj_set_style_text_font(lbl, zh_font_sm(), 0);
             lv_obj_set_style_text_color(lbl, lv_color_hex(theme::cur().text_dim), 0);
             lv_label_set_text(lbl, MOD_LABELS[i]);
             lv_obj_set_pos(lbl, x, y + 2);
             big_tl(lbl);
             m.val = lv_label_create(card);
-            lv_obj_set_style_text_font(m.val, zh_font_lg(), 0);
+            lv_obj_set_style_text_font(m.val, zh_font_sm(), 0);
             lv_obj_set_style_text_color(m.val, lv_color_hex(theme::cur().text_hi), 0);
             lv_label_set_text(m.val, "--");
             lv_obj_set_pos(m.val, x, y + 2);
@@ -546,13 +554,13 @@ void AppHome::onOpen()
 
         // 温度格（第 6 格）: 数值按阈值变色 (风扇状态 2026-10-28 用户要求去掉)
         lv_obj_t* tl = lv_label_create(card);
-        lv_obj_set_style_text_font(tl, zh_font_lg(), 0);
+        lv_obj_set_style_text_font(tl, zh_font_sm(), 0);
         lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_dim), 0);
         lv_label_set_text(tl, "温度");
         lv_obj_set_pos(tl, CELL_X[2], 134 + 2);
         big_tl(tl);
         _opi_temp = lv_label_create(card);
-        lv_obj_set_style_text_font(_opi_temp, zh_font_lg(), 0);
+        lv_obj_set_style_text_font(_opi_temp, zh_font_sm(), 0);
         lv_obj_set_style_text_color(_opi_temp, lv_color_hex(theme::cur().ok), 0);
         lv_label_set_text(_opi_temp, "--℃");
         lv_obj_set_pos(_opi_temp, CELL_X[2] + 84, 134 + 2);   // 紧跟放大的"温度"标签
@@ -730,9 +738,6 @@ void AppHome::onRunning()
         if (_dash_sent_en && !_dash_sent_en_txt.empty()
             && _dash_sent_en_txt.compare(lv_label_get_text(_dash_sent_en)) != 0)
             lv_label_set_text(_dash_sent_en, _dash_sent_en_txt.c_str());
-        if (_dash_sent_cn && !_dash_sent_cn_txt.empty()
-            && _dash_sent_cn_txt.compare(lv_label_get_text(_dash_sent_cn)) != 0)
-            lv_label_set_text(_dash_sent_cn, _dash_sent_cn_txt.c_str());
         if (_hero_sent_en && _hero_sent_en_txt.compare(lv_label_get_text(_hero_sent_en)) != 0)
             lv_label_set_text(_hero_sent_en, _hero_sent_en_txt.c_str());
         if (_hero_sent_cn && _hero_sent_cn_txt.compare(lv_label_get_text(_hero_sent_cn)) != 0)
@@ -786,8 +791,7 @@ void AppHome::_applyCarousel()
     std::lock_guard<std::mutex> lk(_dash_mutex);
     if (_carousel.empty()) return;
     if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
-    _dash_sent_en_txt = _carousel[_car_idx].l1;
-    _dash_sent_cn_txt = _carousel[_car_idx].l2;
+    _dash_sent_en_txt = _carousel[_car_idx].l1;   // l2 日期副行已移除 (2026-10-31)
 }
 
 void AppHome::_sentenceNext()
@@ -1201,7 +1205,7 @@ void AppHome::_openWeatherDialog()
     lv_obj_set_pos(_wx_body, 32, 74);
     lv_obj_set_width(_wx_body, 392);   // (546-32-24)/1.25 换算回名义宽
     lv_obj_set_style_text_color(_wx_body, lv_color_hex(theme::cur().text_hi), 0);
-    lv_obj_set_style_text_font(_wx_body, zh_font_lg(), 0);
+    lv_obj_set_style_text_font(_wx_body, zh_font_sm(), 0);
     lv_obj_set_style_text_line_space(_wx_body, 12, 0);
     lv_obj_set_style_transform_scale(_wx_body, 320, 0);   // 1.25x 与主页卡片平齐
     lv_obj_set_style_transform_pivot_x(_wx_body, 0, 0);

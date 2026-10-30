@@ -1903,6 +1903,28 @@ void AppRfid::_crcA(const uint8_t* data, size_t n, uint8_t out[2])
 AppRfid* AppRfid::s_instance = nullptr;
 std::atomic<bool> AppRfid::s_ui_owns{false};
 std::atomic<bool> AppRfid::s_bg_reinit{false};
+std::atomic<bool> AppRfid::s_porta_requested{false};
+std::atomic<bool> AppRfid::s_bg_paused_ack{false};
+
+// ── PORT A 仲裁 (AppEmailLed::setPortAOwnedByApp 转发) ──────────────────────
+// 待机时后台寻卡任务独占 PORT A. 前台 app (灯阵/LoRa) 抢占: 置位后等 bg 确认
+// 停手 (一轮寻卡+嘀声最长 ~300ms, 预算 500ms; 超时仅见于 bg 还在 3s 启动
+// 等待期 —— 那时它从未碰过引脚, 不挡前台接管). 退出: 触发 bg 重走 _bgHwInit
+// (gpio_reset_pin 清 RMT/UART 引脚残留) 恢复寻卡. 幂等, 多释放无害.
+void AppRfid::requestPortA()
+{
+    if (s_ui_owns.load()) return;  // RFID UI 自己接管时 bg 已让位, 无需握手
+    s_porta_requested.store(true);
+    for (int i = 0; i < 50 && !s_bg_paused_ack.load(); i++) vTaskDelay(pdMS_TO_TICKS(10));
+    if (!s_bg_paused_ack.load()) mclog::tagWarn(TAG, "porta request: bg ack timeout");
+}
+
+void AppRfid::releasePortA()
+{
+    s_porta_requested.store(false);
+    s_bg_paused_ack.store(false);
+    s_bg_reinit.store(true);
+}
 
 void AppRfid::_bgStart()
 {
@@ -1982,6 +2004,7 @@ void AppRfid::_bgLoop()
     uint8_t cur_uid[10] = {0};
     int cur_len = 0;
     int health_div = 0;  // 每 ~10min 打一次堆水位 (长期运行碎化排查用)
+    bool pins_owned = false;  // bg 是否配置过 53/54 (从未配置则让位时不碰引脚)
 
     for (;;) {
         if (++health_div >= 2000) {  // 2000 × ~300ms ≈ 10min
@@ -1989,21 +2012,37 @@ void AppRfid::_bgLoop()
             mclog::tagInfo(TAG, "bg health: heap={} min={} largest8bit={}",
                            heap_caps_get_free_size(MALLOC_CAP_8BIT),
                            heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),
-                           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+                           heap_caps_get_free_size(MALLOC_CAP_8BIT));
         }
-        // UI 打开期间完全停手 (引脚方向都被 UI 重配过)
-        if (s_ui_owns.load()) {
+        // PORT A 让位: RFID UI 打开 (s_ui_owns, 引脚随后由 UI 自己重配, bg 不碰)
+        // 或前台 app 抢占 (s_porta_requested: 仅首次进入让位时把引脚放回高阻再
+        // 回 ack —— 抢占方等 ack 后才配 RMT/UART, 顺序有保证; 之后引脚归对方,
+        // 绝不能再动). releasePortA 会清 ack, 下次抢占周期重新走一遍释放.
+        bool porta_req = s_porta_requested.load();
+        if (s_ui_owns.load() || porta_req) {
+            if (porta_req && !s_ui_owns.load() && pins_owned &&
+                !s_bg_paused_ack.load()) {
+                gpio_reset_pin(BB_SDA);
+                gpio_reset_pin(BB_SCL);
+                pins_owned = false;
+            }
             hw_ready = false;
             present  = false;
-            vTaskDelay(pdMS_TO_TICKS(500));
+            if (porta_req) s_bg_paused_ack.store(true);
+            vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        s_bg_paused_ack.store(false);
         if (s_bg_reinit.exchange(false)) hw_ready = false;
 
         if (!hw_ready) {
             hw_ready = _bgHwInit();
+            pins_owned = true;  // _bgHwInit 第一步就配了引脚 (探测失败也算)
             if (!hw_ready) {
-                vTaskDelay(pdMS_TO_TICKS(2000));  // Unit 未插/上电晚, 慢速重试
+                for (int i = 0; i < 40; i++) {  // 2s 慢速重试, 50ms 分片可被抢占打断
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                    if (s_ui_owns.load() || s_porta_requested.load()) break;
+                }
                 continue;
             }
             _reader_ok = true;  // 供 UI 打开时参考 (UI 会自行重查)
@@ -2052,7 +2091,11 @@ void AppRfid::_bgLoop()
             mclog::tagInfo(TAG, "bg card removed");
         }
 
-        vTaskDelay(pdMS_TO_TICKS(300));
+        // 尾部休眠按 50ms 分片, 抢占/让位请求最多 50ms 内被看到
+        for (int i = 0; i < 6; i++) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            if (s_ui_owns.load() || s_porta_requested.load()) break;
+        }
     }
 }
 

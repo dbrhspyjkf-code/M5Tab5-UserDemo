@@ -36,10 +36,6 @@ public:
     // Called when the user backs out, so the launcher can restore its screen.
     void setCloseCallback(std::function<void()> cb) { _close_cb = std::move(cb); }
 
-    // AppUnitPuzzle (灯阵) 的 mooncake app id, 由 app_installer 注入.
-    // _toolPuzzle_cb 用它启动外部 AppUnitPuzzle.
-    void setPuzzleAppId(int id) { _puzzle_id = id; }
-
     // AppLoraChat 的 mooncake app id, 由 app_installer 注入.
     void setLoraChatAppId(int id) { _lora_chat_id = id; }
 
@@ -58,6 +54,10 @@ public:
 
     // AppSsh (SSH 终端) 的 mooncake app id, 由 app_installer 注入.
     void setSshAppId(int id) { _ssh_id = id; }
+
+    // AppHealth (健康) 的 mooncake app id, 由 app_installer 注入.
+    void setHealthAppId(int id) { _health_id = id; }
+    void openHealth();  // 工具页 tile → 打开健康 app
 
     // ── Shared email cache (status-bar poll + sub-page both read these) ──
     // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
@@ -83,13 +83,13 @@ public:
 
 private:
     std::function<void()> _close_cb;
-    int _puzzle_id    = -1;
     int _lora_chat_id = -1;
     int _stocks_id    = -1;
     int _calendar_id  = -1;
     int _reachy_id    = -1;
     int _rfid_id      = -1;
     int _ssh_id       = -1;
+    int _health_id    = -1;
 
     lv_indev_t* _gesture_indev = nullptr;
     lv_obj_t*   _scr        = nullptr;
@@ -161,7 +161,6 @@ private:
     static void _toolBtn_cb(lv_event_t* e);  // tools tile → open calculator
     static void _calcKey_cb(lv_event_t* e);  // a calculator key
     static void _back_cb(lv_event_t* e);     // calculator → tools page
-    static void _toolPuzzle_cb(lv_event_t* e);    // tools 第 2 行 tile → open 灯阵
     static void _toolLoraChat_cb(lv_event_t* e);  // tools tile → open LoRa 聊天
 
     static void _toolFx_cb(lv_event_t* e);   // tools tile → open converter
@@ -184,4 +183,5 @@ private:
     static void _toolReachy_cb(lv_event_t* e); // tools tile → open Reachy app
     static void _toolRfid_cb(lv_event_t* e);   // tools tile → open RFID 读写器
     static void _toolSsh_cb(lv_event_t* e);    // tools tile → open SSH 终端
+    static void _toolHealth_cb(lv_event_t* e); // tools tile → open 健康
 };

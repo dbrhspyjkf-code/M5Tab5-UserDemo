@@ -105,6 +105,17 @@ void HalEsp32::init()
     i2c_master_bus_handle_t i2c_bus_handle = bsp_i2c_get_handle();
     bsp_io_expander_pi4ioe_init(i2c_bus_handle);
 
+    // 2026-10-30 灯阵 Brownout 重启循环修复: 若上次在 WS2812 点亮状态崩溃/掉电,
+    // EXT5V 跨复位保持导通, 矩阵锁存的图案持续吃 1~2A, 开机到背光 100% 一叠加
+    // 就再次 Brownout → 无限重启 (实测连刷 67 次). 开机先断放一次 EXT5V 清掉
+    // WS2812 锁存, 保证每次都从矩阵全灭状态起背光; 口上设备 (NFC 等) 之后
+    // 各自重新初始化, 不受影响.
+    mclog::tagInfo(_tag, "ext5v power cycle (clear ws2812 latch)");
+    bsp_set_ext_5v_en(false);
+    delay(200);
+    bsp_set_ext_5v_en(true);
+    delay(50);
+
     mclog::tagInfo(_tag, "wifi power on");
     bsp_set_wifi_power_enable(true);
     delay(500);  // give C6 time to boot before SDIO transport connects

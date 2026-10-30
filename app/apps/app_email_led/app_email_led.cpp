@@ -9,6 +9,7 @@
 #include <cstring>
 #include <ctime>
 #include "../app_settings/app_settings.h"
+#include "../app_rfid/app_rfid.h"  // requestPortA/releasePortA (PORT A 仲裁转发)
 #endif
 
 static const char* TAG = "email_led";
@@ -145,6 +146,11 @@ void AppEmailLed::setPortAOwnedByApp(bool owned)
     s_app_owns_porta.store(owned);
     // 立即把硬件让出去, 这样 app 的 _stripInit / _uartInit 不会撞 RMT/GPIO.
     if (owned && s_instance) s_instance->_standDown();
+    // 同步转发给后台寻卡任务 (PORT A 待机时的默认主人):
+    // true  = 等它确认停手后才返回, 抢占方随后才配 RMT/UART, 不会互相踩;
+    // false = 触发它重走初始化 (gpio_reset_pin 清引脚残留) 恢复嘀卡.
+    if (owned) AppRfid::requestPortA();
+    else       AppRfid::releasePortA();
 #else
     (void)owned;
 #endif

@@ -5,8 +5,9 @@
  * AppRfid — RFID Reader 工具 App, 读写 M5Stack Unit NFC U216 (ST25R3916, I2C 0x50).
  *
  * 接线: Unit NFC → Tab5 PORT A (Grove 红口, SDA=GPIO53, SCL=GPIO54, 5V).
- *   与「灯阵」/「自选股 LED」/「邮件 LED」共用 GPIO53, 打开时通过
- *   AppEmailLed::setPortAOwnedByApp(true) 让后台邮件通知器先释放, 关闭归还.
+ *   PORT A 仲裁: 待机时本 app 的后台寻卡任务独占 (嘀卡关灯); 灯阵/LoRa 等
+ *   前台 app 打开时经 AppEmailLed::setPortAOwnedByApp 抢占 (内部转发本类
+ *   requestPortA/releasePortA), 退出自动归还, 后台重新接管寻卡.
  *
  * 通信: 软件 I2C (bitbang) on GPIO53/54. 不用硬件控制器 —— ESP32-P4 只有
  *   2 个 HP I2C 控制器, 启动时已被内部总线 (port0, GPIO31/32) 和键盘
@@ -39,6 +40,14 @@ public:
     void onOpen()    override;
     void onRunning() override;
     void onClose()   override;
+
+#ifndef PLATFORM_BUILD_DESKTOP
+    // ── PORT A 仲裁 (AppEmailLed::setPortAOwnedByApp 转发调用) ──────────────
+    // 待机时后台寻卡任务独占 PORT A (嘀卡关灯); 灯阵/LoRa 等前台 app 打开时
+    // 抢占、退出时归还, 后台自动重新接管.
+    static void requestPortA();  // 置抢占位并等 bg 确认停手后才返回 (500ms 兜底)
+    static void releasePortA();  // 触发 bg 重走 _bgHwInit (清 RMT/UART 引脚残留)
+#endif
 
 private:
     // ── Layout / 配色 (与 app_stocks 一致) ───────────────────────────────────
@@ -192,6 +201,8 @@ private:
     static AppRfid* s_instance;
     static std::atomic<bool> s_ui_owns;    // true = UI 正在独占 GPIO/芯片
     static std::atomic<bool> s_bg_reinit;  // UI 关闭后置位, 后台任务重新 init 引脚
+    static std::atomic<bool> s_porta_requested;  // 前台 app 抢占 PORT A (仲裁入口置位)
+    static std::atomic<bool> s_bg_paused_ack;    // bg 已停手并释放引脚的确认 (握手用)
     void _bgStart();                       // 建后台任务 + 让邮件 LED 退休 PORT A
     static void _bgTaskEntry(void* arg);
     void _bgLoop();                        // 常驻寻卡 + 触发关灯 (不返回)

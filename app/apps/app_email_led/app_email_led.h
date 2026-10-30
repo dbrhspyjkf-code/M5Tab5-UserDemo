@@ -37,8 +37,10 @@ public:
     void onDestroy() override;
 
     // 「灯阵」/「LoRa」app 在 onOpen(true 之前自行 init 硬件) / onClose(false) 调用.
-    // true: 标记 PORT A 归 app 所有, 并立即释放本通知器持有的 led_strip.
-    // false: 解除标记, 下一 tick 若仍有未读会自动重新接管.
+    // true: 标记 PORT A 归 app 所有: 立即释放本通知器持有的 led_strip, 并转发
+    //       AppRfid::requestPortA() —— 等后台寻卡任务确认停手后才返回.
+    // false: 解除标记并转发 AppRfid::releasePortA(), 后台寻卡重新接管 PORT A.
+    //       本通知器仍处 retired 时不会回来 (retirePortA 见下).
     static void setPortAOwnedByApp(bool owned);
 
     // RFID 后台服务 (嘀卡关灯) 常驻占用 PORT A 后调用一次: 本通知器永久

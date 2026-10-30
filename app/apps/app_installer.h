@@ -16,7 +16,6 @@
 #include "app_settings/app_settings.h"
 #include "app_reachy/app_reachy.h"
 #include "app_voice_input/app_voice_input.h"
-#include "app_unit_puzzle/app_unit_puzzle.h"
 #include "app_lora_chat/app_lora_chat.h"
 #include "app_email_led/app_email_led.h"
 #include "app_stocks/app_stocks.h"
@@ -26,6 +25,7 @@
 #include "app_player/app_player.h"
 #include "app_timer/app_timer.h"
 #include "app_calendar/app_calendar.h"
+#include "app_health/app_health.h"
 #include <cstdlib>
 #include "app_idle_screen/app_idle_screen.h"
 #include "xiaozhi_ctl.h"
@@ -71,9 +71,6 @@ inline void on_install_apps()
     auto set_uptr  = std::make_unique<AppSettings>();
     AppSettings* settings = set_uptr.get();
 
-    auto up_uptr = std::make_unique<AppUnitPuzzle>();
-    AppUnitPuzzle* unit_puzzle = up_uptr.get();
-
     auto lc_uptr = std::make_unique<AppLoraChat>();
     AppLoraChat* lora_chat = lc_uptr.get();
 
@@ -101,6 +98,9 @@ inline void on_install_apps()
     auto cal_uptr = std::make_unique<AppCalendar>();
     AppCalendar* calendar = cal_uptr.get();  // 万年历: 工具页入口
 
+    auto hl_uptr = std::make_unique<AppHealth>();
+    AppHealth* health = hl_uptr.get();       // 健康: 工具页入口
+
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
 
@@ -109,7 +109,6 @@ inline void on_install_apps()
     int ha_id = mooncake::GetMooncake().installApp(std::move(ha_uptr));
     int xz_id = mooncake::GetMooncake().installApp(std::move(xz_uptr));
     int set_id = mooncake::GetMooncake().installApp(std::move(set_uptr));
-    int up_id = mooncake::GetMooncake().installApp(std::move(up_uptr));
     int lc_id = mooncake::GetMooncake().installApp(std::move(lc_uptr));
     int st_id = mooncake::GetMooncake().installApp(std::move(st_uptr));
     int re_id = mooncake::GetMooncake().installApp(std::move(re_uptr));
@@ -119,16 +118,12 @@ inline void on_install_apps()
     int pl_id = mooncake::GetMooncake().installApp(std::move(pl_uptr));
     int ti_id = mooncake::GetMooncake().installApp(std::move(ti_uptr));
     int cal_id = mooncake::GetMooncake().installApp(std::move(cal_uptr));
+    int hl_id  = mooncake::GetMooncake().installApp(std::move(hl_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
     xz->setCloseCallback([home]() { home->restoreScreen(); });
     settings->setCloseCallback([home]() { home->restoreScreen(); });
-    // 灯阵是从「工具」页 (AppSettings) 打开的, 上拨返回到工具页而非主屏.
-    unit_puzzle->setCloseCallback([settings, set_id]() {
-        (void)settings;
-        mooncake::GetMooncake().openApp(set_id);
-    });
     // LoRa 聊天同样从「工具」页打开, 上拨返回工具页.
     lora_chat->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
@@ -139,6 +134,10 @@ inline void on_install_apps()
     });
     // 万年历同样从「工具」页打开, 上拨返回工具页.
     calendar->setCloseCallback([set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+    });
+    // 健康 (hermes /api/health) 同从「工具」页打开, 上拨返回工具页.
+    health->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
     // Reachy 同样从「工具」页打开, 返回 (← / 上拨) 回到工具页.
@@ -164,11 +163,10 @@ inline void on_install_apps()
     // 后台播放: 主页状态栏音符图标读收音机流状态 (在播→显示, 点按回收音机)
     home->setNowPlayingGetter([radio]() -> std::string { return radio->streamInfo(); });
 
-    // 灯阵入口放到「工具」页第 2 行 (由 AppSettings 持有), 不再占 home 一格.
-    settings->setPuzzleAppId(up_id);
     settings->setLoraChatAppId(lc_id);
     settings->setStocksAppId(st_id);
     settings->setCalendarAppId(cal_id);
+    settings->setHealthAppId(hl_id);
     settings->setReachyAppId(re_id);
     settings->setRfidAppId(rf_id);
     settings->setSshAppId(sh_id);

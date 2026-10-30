@@ -548,6 +548,25 @@ void AppSettings::_buildToolsPage()
                 tool_accent_line(tile, C_ACCENT, fx + 14, fy + 36, chevron_pts, 3, 5);
                 tool_accent_rect(tile, C_ACCENT, fx + 32, fy + 50, 22, 5, 2);    // "_"
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 11) {
+                // 健康 — 心形 + 贯穿的心电脉搏线 (iOS 健康图标意象).
+                // 图标盒 96x96.
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int cx = start + IW / 2, cy = TH / 2;
+                // 心形 = 左右两圆环 + 下尖 V
+                tool_accent_frame(tile, C_ACCENT, cx - 25, cy - 26, 26, 26, 13, 6);
+                tool_accent_frame(tile, C_ACCENT, cx - 1,  cy - 26, 26, 26, 13, 6);
+                static const lv_point_precise_t heart_v[] = {
+                    {0, 0}, {25, 38}, {50, 0}
+                };
+                tool_accent_line(tile, C_ACCENT, cx - 25, cy - 16, heart_v, 3, 6);
+                // 贯穿心形的脉搏线 (ECG)
+                static const lv_point_precise_t pulse[] = {
+                    {-20, 0}, {-8, 0}, {-2, -12}, {6, 14}, {11, 0}, {20, 0}
+                };
+                tool_accent_line(tile, C_ACCENT, cx - 20, cy - 8, pulse, 6, 5);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -581,12 +600,15 @@ void AppSettings::_buildToolsPage()
         }
     };
 
-    // 行 0: 计算器 / 汇率 / 单位换算 / 灯阵 — 图标全部走 make_tile 图形分支
-    // (kind 5/6/7/0), 线条随主题强调色, 原静态图 calc_icon/fx_icon/unit_icon 已弃用.
+    // 行 0: 计算器 / 汇率 / 单位换算 — 图标全部走 make_tile 图形分支
+    // (kind 5/6/7), 线条随主题强调色, 原静态图 calc_icon/fx_icon/unit_icon 已弃用.
+    // (2026-10-30: 灯阵 tile 已随 app_unit_puzzle 整体移除)
     make_tile(0, 0, nullptr, 130, "计算器",  _toolBtn_cb, 256, 12, -1, 5);
     make_tile(1, 0, nullptr, 130, "汇率",    _toolFx_cb, 256, 12, -1, 6);
     make_tile(2, 0, nullptr, 130, "单位换算", _toolUnit_cb, 256, 12, -1, 7);
-    make_tile(3, 0, nullptr, 130, "灯  阵", _toolPuzzle_cb);
+    // (2026-10-31: 健康 app — hermes /api/health iPhone 快捷指令推送数据,
+    //  kind=11 心形+脉搏分支, 补 (3,0) 空位)
+    make_tile(3, 0, nullptr, 130, "健康", _toolHealth_cb, 256, 12, -1, 11);
 
     // 第 2 行第 1 列: LoRa 聊天 (Unit C6L SX1262, PORT.A UART) — kind=8 电波分支,
     // 线条随主题强调色 (原 lora_logo 静态图 + 手写 tile 块已弃用).
@@ -617,14 +639,6 @@ void AppSettings::_buildToolsPage()
 void AppSettings::_toolBtn_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->_openCalculator();
-}
-
-void AppSettings::_toolPuzzle_cb(lv_event_t* e)
-{
-    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
-    if (self->_puzzle_id > 0) {
-        mooncake::GetMooncake().openApp(self->_puzzle_id);
-    }
 }
 
 void AppSettings::_toolLoraChat_cb(lv_event_t* e)
@@ -666,6 +680,19 @@ void AppSettings::openCalendar()
 void AppSettings::_toolCalendar_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->openCalendar();
+}
+
+void AppSettings::openHealth()
+{
+    if (_health_id > 0) {
+        _tools_page = nullptr;   // 子 app 打开后本页随 _scr 一起由 onClose 清
+        mooncake::GetMooncake().openApp(_health_id);
+    }
+}
+
+void AppSettings::_toolHealth_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->openHealth();
 }
 
 void AppSettings::openStocks()

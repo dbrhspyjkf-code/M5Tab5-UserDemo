@@ -99,8 +99,8 @@ private:
     // orange-pi.widget). Same pattern as the weather: a detached worker
     // writes strings/struct, onRunning copies them to widgets.
     lv_obj_t*  _dash_scroll = nullptr;  // 右列滚动容器 (5 卡)
-    lv_obj_t*  _dash_sent_en = nullptr;  // AI 新闻轮播·标题行 (原每日一句卡)
-    lv_obj_t*  _dash_sent_cn = nullptr;  // AI 新闻轮播·副行 (来源·日期)
+    lv_obj_t*  _dash_sent_en = nullptr;  // AI 新闻轮播·标题行 (原每日一句卡;
+                                         // 底部日期副行 2026-10-31 按用户要求移除)
     lv_obj_t*  _ipo_lbl = nullptr;     // 新股申购行 (hero, 无新股隐藏)
     lv_obj_t*  _hero_div = nullptr;    // hero 分隔线 (新股行对齐锚点)
     lv_obj_t*  _dash_glm = nullptr;
@@ -110,7 +110,7 @@ private:
     lv_obj_t*  _dash_ag2 = nullptr;
     uint32_t   _last_dash_ms = 0;
     std::string _dash_glm_txt, _dash_glm2_txt, _dash_ds_txt, _dash_ag1_txt, _dash_ag2_txt;
-    std::string _dash_sent_en_txt, _dash_sent_cn_txt;
+    std::string _dash_sent_en_txt;
     std::string _hero_sent_en_txt, _hero_sent_cn_txt;  // hero 每日一句 (独立于轮播数据源)
     // 轮播: AI 新闻条目 (每日一句已移 hero 主卡, 2026-10-30; guarded by _dash_mutex)
     struct CarItem { std::string l1, l2; };

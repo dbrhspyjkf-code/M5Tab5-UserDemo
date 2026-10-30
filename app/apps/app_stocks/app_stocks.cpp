@@ -15,7 +15,7 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 #include "../app_email_led/app_email_led.h"     // setPortAOwnedByApp (PORT A 仲裁)
-#include "../app_unit_puzzle/font5x7.h"          // 共享 5x7 点阵字体
+#include "../utils/font5x7.h"                   // 5x7 点阵字体 (原 app_unit_puzzle, 灯阵移除后挪 utils)
 #endif
 
 static const char* TAG = "stocks";
