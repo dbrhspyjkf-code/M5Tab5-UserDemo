@@ -623,6 +623,9 @@ void AppSsh::_buildSession()
     lv_obj_set_style_border_width(_mic_btn, 2, 0);
     lv_obj_set_style_border_color(_mic_btn, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_shadow_width(_mic_btn, 0, 0);
+    // LVGL 自动套默认主题, 按钮自带 ~10px padding——简笔画是绝对坐标, 会被
+    // 往右下顶出圆圈 (2026-10-30 用户实锤"图标在圆圈外面"); 清零后归位
+    lv_obj_set_style_pad_all(_mic_btn, 0, 0);
     lv_obj_add_event_cb(_mic_btn, [](lv_event_t* ev) {
         auto* self = static_cast<AppSsh*>(lv_event_get_user_data(ev));
         AppVoiceInput::requestVoiceText([self](const std::string& t) {
