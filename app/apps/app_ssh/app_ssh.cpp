@@ -107,6 +107,9 @@ void AppSsh::onRunning()
         // 状态跃迁: 表单 ⇄ 会话屏 的屏切换都在 LVGL 线程做
         if (st == 2) {
             if (_form) { lv_obj_delete(_form); _form = nullptr; }
+            // _form_status 挂在 _scr 上不随 _form 删除——不清理会在会话屏残留,
+            // 断开重进表单时新旧两层叠字 (2026-10-30 用户实锤)
+            if (_form_status) { lv_obj_delete(_form_status); _form_status = nullptr; }
             _buildSession();
             mclog::tagInfo(TAG, "ui: session screen up");
         } else {
@@ -217,6 +220,8 @@ void AppSsh::_buildForm()
     lv_obj_align(dh, LV_ALIGN_TOP_MID, 0, 440);
 #endif
 
+    // 防御: 重进表单时若残留旧状态标签(挂 _scr, 不随 _form 删)先清掉
+    if (_form_status) { lv_obj_delete(_form_status); _form_status = nullptr; }
     _form_status = lv_label_create(_scr);
     lv_label_set_text(_form_status, "");
     lv_obj_set_style_text_font(_form_status, zh_font_md(), 0);
