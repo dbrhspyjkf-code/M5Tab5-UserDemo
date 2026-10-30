@@ -178,6 +178,10 @@ void AppHome::onOpen()
     lv_label_set_text(_status_date, "");
     lv_obj_align(_status_date, LV_ALIGN_TOP_MID, 0, 96);
     lv_obj_set_style_transform_scale(_status_date, 320, 0);   // 1.25x 与右列卡片一致 (时钟不动, 2026-10-28 用户指定)
+    // transform 默认 pivot=左上角: 放大后整体右移 ~25% 自宽, 视觉不居中
+    // (2026-10-30 用户实锤); 锁中心 pivot 后 TOP_MID 对齐即真水平居中
+    lv_obj_set_style_transform_pivot_x(_status_date, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(_status_date, LV_PCT(50), 0);
 
     _status_lunar = lv_label_create(hero);
     lv_obj_set_style_text_font(_status_lunar, zh_font_md(), 0);
@@ -185,6 +189,8 @@ void AppHome::onOpen()
     lv_label_set_text(_status_lunar, "");
     lv_obj_align(_status_lunar, LV_ALIGN_TOP_MID, 0, 148);
     lv_obj_set_style_transform_scale(_status_lunar, 320, 0);
+    lv_obj_set_style_transform_pivot_x(_status_lunar, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(_status_lunar, LV_PCT(50), 0);
 
     // Weather row (tap → detailed weather dialog): temperature (latin font,
     // has °) + condition (zh font), centered in dark ink.
@@ -208,12 +214,16 @@ void AppHome::onOpen()
     lv_obj_set_style_text_color(_status_wtemp, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_wtemp, "");
     lv_obj_set_style_transform_scale(_status_wtemp, 320, 0);
+    lv_obj_set_style_transform_pivot_x(_status_wtemp, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(_status_wtemp, LV_PCT(50), 0);
 
     _status_wcond = lv_label_create(wbox);
     lv_obj_set_style_text_font(_status_wcond, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_status_wcond, lv_color_hex(theme::cur().text_hi), 0);
     lv_label_set_text(_status_wcond, "");
     lv_obj_set_style_transform_scale(_status_wcond, 320, 0);
+    lv_obj_set_style_transform_pivot_x(_status_wcond, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(_status_wcond, LV_PCT(50), 0);
 
     // Helper: make a hero-card item tappable. tag routes the click:
     // 1 = battery → power dialog, 2 = wifi → network dialog,
