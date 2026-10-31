@@ -108,8 +108,13 @@ private:
     lv_obj_t*  _dash_ds  = nullptr;
     lv_obj_t*  _dash_ag1 = nullptr;
     lv_obj_t*  _dash_ag2 = nullptr;
+    // 健康卡 (hermes /api/health): 3x2 六指标 — 步数/步行距离/心率/血氧/
+    // 呼吸速率/活动能量; worker 写 _dash_h_txt, onRunning 应用 (同 _dash 模式)
+    static constexpr int kHealthCells = 6;
+    lv_obj_t*  _dash_h_val[kHealthCells] = {};
     uint32_t   _last_dash_ms = 0;
     std::string _dash_glm_txt, _dash_glm2_txt, _dash_ds_txt, _dash_ag1_txt, _dash_ag2_txt;
+    std::string _dash_h_txt[kHealthCells];   // 已格式化含单位; 缺数据 "-"
     std::string _dash_sent_en_txt;
     std::string _hero_sent_en_txt, _hero_sent_cn_txt;  // hero 每日一句 (独立于轮播数据源)
     // 轮播: AI 新闻条目 (每日一句已移 hero 主卡, 2026-10-30; guarded by _dash_mutex)

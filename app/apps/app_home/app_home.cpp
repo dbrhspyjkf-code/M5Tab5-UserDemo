@@ -496,10 +496,25 @@ void AppHome::onOpen()
                 ->_carouselNext(lv_event_get_current_target_obj(e));
         }, LV_EVENT_LONG_PRESSED, this);
     }
-    {   // 05 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
+    {   // 05 健康卡 (hermes /api/health, iPhone 快捷指令推送; 2026-10-31 用户
+        // 指定加在 OPi 卡上方): 3x2 六指标 — 标签 sm 暗色 + 数值 md 放大 1.25x
+        lv_obj_t* card = row_card(396, 110, theme::cur().card[3], theme::cur().border);
+        static const char* const kHLabels[kHealthCells] = {
+            "步数", "步行距离", "心率", "血氧", "呼吸速率", "活动能量"};
+        for (int i = 0; i < kHealthCells; i++) {
+            const int col = i % 3, row = i / 3;
+            const int cx = 26 + col * 282, cy = 14 + row * 52;
+            mk_lbl(card, zh_font_sm(), theme::cur().text_dim, kHLabels[i],
+                   LV_ALIGN_TOP_LEFT, cx, cy);
+            _dash_h_val[i] = mk_lbl(card, zh_font_md(), theme::cur().text_hi, "-",
+                                    LV_ALIGN_TOP_LEFT, cx, cy + 22);
+            big_tl(_dash_h_val[i]);   // 与 GLM/日程数值同观感 (pivot 左上)
+        }
+    }
+    {   // 06 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
-        // 04 卡加高后本卡 240→212 (y396), 网格行距收紧, 右列仍填满 608
-        lv_obj_t* card = row_card(396, 212, theme::cur().card[3], theme::cur().border);
+        // 健康卡插入后右列内容 608→730 (滚动 122px 看 OPi, 2026-10-31)
+        lv_obj_t* card = row_card(518, 212, theme::cur().card[3], theme::cur().border);
 
         _opi_dot = lv_obj_create(card);
         lv_obj_set_size(_opi_dot, 12, 12);
@@ -745,6 +760,10 @@ void AppHome::onRunning()
         if (_dash_ds)  lv_label_set_text(_dash_ds,  _dash_ds_txt.c_str());
         if (_dash_ag1) lv_label_set_text(_dash_ag1, _dash_ag1_txt.c_str());
         if (_dash_ag2) lv_label_set_text(_dash_ag2, _dash_ag2_txt.c_str());
+        for (int i = 0; i < kHealthCells; i++)
+            if (_dash_h_val[i]
+                && _dash_h_txt[i].compare(lv_label_get_text(_dash_h_val[i])) != 0)
+                lv_label_set_text(_dash_h_val[i], _dash_h_txt[i].c_str());
 
         if (_opi_mod[0].val) _updateOpiWidgets();
     }
@@ -992,6 +1011,36 @@ void AppHome::_fetch_dashboard()
             if (j.contains("second") && j["second"].is_object())
                 ag2 = j["second"].value("text", std::string());
         }
+        // 健康卡 6 指标 (hermes /api/health; 缺类型显示 "-", 拉取失败保持旧值)
+        std::string h_txt[kHealthCells];
+        if (auto j = pick(GetHAL()->httpGet(base + "/api/health").body); !j.is_null()) {
+            auto types = (j.contains("types") && j["types"].is_object())
+                         ? j["types"] : nlohmann::json::object();
+            // {type, 单位, 小数位}: 与卡内 3x2 顺序一致
+            struct HM { const char* t; const char* u; int dec; };
+            static const HM hm[kHealthCells] = {
+                {"step_count", " 步", 0},
+                {"walking_running_distance", " km", 2},
+                {"heart_rate", " bpm", 0},
+                {"blood_oxygen_saturation", " %", 0},
+                {"respiratory_rate", " 次/分", 1},
+                {"active_energy_burned", " kcal", 0},
+            };
+            for (int i = 0; i < kHealthCells; i++) {
+                h_txt[i] = "-";
+                if (!types.contains(hm[i].t) || !types[hm[i].t].is_object()) continue;
+                const auto& e = types[hm[i].t];
+                if (!e.contains("value")) continue;
+                double v = 0;
+                if (e["value"].is_number()) v = e["value"].get<double>();
+                else if (e["value"].is_string()) v = atof(e["value"].get<std::string>().c_str());
+                else continue;
+                char buf[24];
+                if (hm[i].dec == 0) snprintf(buf, sizeof(buf), "%d%s", (int)llround(v), hm[i].u);
+                else snprintf(buf, sizeof(buf), "%.*f%s", hm[i].dec, v, hm[i].u);
+                h_txt[i] = buf;
+            }
+        }
 
         std::lock_guard<std::mutex> lk(_dash_mutex);
         _dash_glm_txt = glm_txt;
@@ -1006,6 +1055,8 @@ void AppHome::_fetch_dashboard()
         _dash_ds_txt  = ds_txt;
         _dash_ag1_txt = ag1.empty() ? "今日无提醒/行程" : ag1;
         _dash_ag2_txt = ag2;
+        for (int i = 0; i < kHealthCells; i++)
+            if (!h_txt[i].empty()) _dash_h_txt[i] = h_txt[i];   // 空=拉取失败保旧值
         _opi          = od;
     });
 }
