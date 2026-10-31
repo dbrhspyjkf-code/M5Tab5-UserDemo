@@ -161,6 +161,10 @@ inline void on_install_apps()
     timer->setCloseCallback([home]() { home->restoreScreen(); });
     // 独占模式: 收音机打开期间抑制屏保(流媒体 app, 不被时钟遮盖/省轮询)
     radio->setSuppressor([idle](bool s) { idle->setSuppressed(s); });
+    // 前台独占(2026-10-31): 收音机/播放器界面期间完全不进屏保(不弹照片/
+    // 时钟遮盖, 也不熄屏); 收音机后台播放仍保留"不弹遮盖但允许熄屏"语义
+    radio->setBlocker([idle](bool b) { idle->setBlocked(b); });
+    player->setBlocker([idle](bool b) { idle->setBlocked(b); });
     // 后台播放: 主页状态栏音符图标读收音机流状态 (在播→显示, 点按回收音机)
     home->setNowPlayingGetter([radio]() -> std::string { return radio->streamInfo(); });
 
@@ -194,6 +198,8 @@ inline void on_install_apps()
         else if (strcmp(want, "tools") == 0) mooncake::GetMooncake().openApp(set_id);
         else if (strcmp(want, "calendar") == 0) mooncake::GetMooncake().openApp(cal_id);
         else if (strcmp(want, "stocks") == 0) mooncake::GetMooncake().openApp(st_id);
+        else if (strcmp(want, "radio") == 0) mooncake::GetMooncake().openApp(ra_id);
+        else if (strcmp(want, "player") == 0) mooncake::GetMooncake().openApp(pl_id);
     }
 #endif
 

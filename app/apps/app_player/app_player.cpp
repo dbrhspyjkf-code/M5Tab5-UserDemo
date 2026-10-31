@@ -128,6 +128,8 @@ void AppPlayer::onOpen()
     if (_scr) return;   // 防御: 重复 onOpen 不叠屏
     mclog::tagInfo(TAG, "on open");
     snap_theme();
+    // 前台独占(2026-10-31): 播放器界面期间完全不进屏保(不弹遮盖也不熄屏)
+    if (_block) _block(true);
 
     // HA 客户端: 每次打开重建(Settings 改地址后重开即生效,同 app_ha)
     _ha = std::make_shared<HaClient>();
@@ -652,6 +654,8 @@ void AppPlayer::onRunning()
 void AppPlayer::onClose()
 {
     mclog::tagInfo(TAG, "on close");
+    // 前台独占解除(2026-10-31): 离开播放器界面恢复常规屏保语义
+    if (_block) _block(false);
     // 先回主屏再删对象 —— 删除 active screen 会让 LVGL 悬空(app_radio/AppHA 同序)
     if (_close_cb) _close_cb();
     *_alive = false;

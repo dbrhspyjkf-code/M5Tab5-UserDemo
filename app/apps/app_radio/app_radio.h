@@ -29,6 +29,10 @@ public:
     // 关掉后流任务继续, 时钟遮盖依旧不弹(熄屏仍允许, 听歌熄屏更合理)。
     void setSuppressor(std::function<void(bool)> cb) { _suppress = std::move(cb); }
 
+    // 前台独占屏保抑制(2026-10-31): 收音机界面期间完全不进屏保(不弹遮盖
+    // 也不熄屏), 与播放状态无关; 最小化/关闭后恢复常规屏保语义。
+    void setBlocker(std::function<void(bool)> cb) { _block = std::move(cb); }
+
     // ── 后台播放状态 (主页状态栏入口用; UI 关掉后流任务仍活着) ──
     bool streamActive() const;                 // 流任务在播/重连中
     std::string streamInfo() const;            // 播放中的台名, 未播返回 ""
@@ -41,6 +45,7 @@ public:
 private:
     std::function<void()> _close_cb;
     std::function<void(bool)> _suppress;
+    std::function<void(bool)> _block;
     // ── UI ──
     lv_obj_t* _scr        = nullptr;
     lv_obj_t* _status_lbl = nullptr;   // 顶栏右侧状态

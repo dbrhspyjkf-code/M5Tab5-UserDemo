@@ -25,10 +25,14 @@ public:
     // that instead of running a second HTTP poller.
     void setHomeApp(AppHome* home) { _home = home; }
     void dismiss();
-    // 独占模式: 收音机等流媒体 app 打开期间抑制屏保(不弹时钟遮盖 + 省其轮询)
+    // 在播抑制(收音机后台播放): 不弹遮盖, 但闲置熄屏仍允许 —— 听歌熄屏更省电
     void setSuppressed(bool s);
+    // 前台独占(2026-10-31): 收音机/播放器界面打开期间完全不进屏保 ——
+    // 不弹照片/时钟遮盖, 也不熄屏(用户要求: 界面期间保持可见)
+    void setBlocked(bool b);
 private:
     bool _suppressed = false;
+    bool _blocked    = false;
 public:
 
     void onCreate()  override;

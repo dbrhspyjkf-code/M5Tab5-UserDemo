@@ -29,6 +29,10 @@ public:
     // 关闭回调(app_installer 注入: 回主屏)
     void setCloseCallback(std::function<void()> cb) { _close_cb = std::move(cb); }
 
+    // 前台独占屏保抑制(2026-10-31): 播放器界面期间完全不进屏保(不弹遮盖
+    // 也不熄屏); 关闭后恢复常规屏保语义。app_radio 同款。
+    void setBlocker(std::function<void(bool)> cb) { _block = std::move(cb); }
+
     void onCreate()  override;
     void onOpen()    override;
     void onRunning() override;
@@ -36,6 +40,7 @@ public:
 
 private:
     std::function<void()> _close_cb;
+    std::function<void(bool)> _block;
 
     // ── 页配置(Sonos/HomePod 双页) ──
     struct PageCfg {

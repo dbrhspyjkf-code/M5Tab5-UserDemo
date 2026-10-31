@@ -493,6 +493,8 @@ void AppRadio::onOpen()
     // 后台播放(2026-10-28): 抑制时钟遮盖的条件是"在播"而非"页面前台"。
     // 重开收音机时若流任务还在播, 这里即刻恢复抑制。
     if (_suppress) _suppress(streamActive());
+    // 前台独占(2026-10-31): 收音机界面期间完全不进屏保(不弹遮盖也不熄屏)
+    if (_block) _block(true);
     _app_closing.store(false);
     _ui_state    = -1;
     _ui_station  = -1;
@@ -822,6 +824,9 @@ void AppRadio::onClose()
     // 原子量恢复显示当前播放状态。彻底停止 = 在收音机页按暂停 (want=-1)。
     // 抑制条件跟随播放状态: 在播则时钟遮盖继续压制, 未播则解除。
     if (_suppress) _suppress(streamActive());
+    // 前台独占解除(2026-10-31): 离开收音机界面恢复常规屏保语义
+    // (后台在播 → 不弹遮盖但允许熄屏; 已停 → 完全常规屏保)
+    if (_block) _block(false);
     // 先切回主屏再删对象 —— 删除 active screen 会让 LVGL 悬空(AppHA 同序)
     if (_close_cb) _close_cb();
     *_alive = false;

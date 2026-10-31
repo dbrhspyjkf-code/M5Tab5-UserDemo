@@ -156,6 +156,14 @@ void AppIdleScreen::onPause()
 
 void AppIdleScreen::onRunning()
 {
+    // 前台独占(2026-10-31): 收音机/播放器界面期间完全不进屏保 ——
+    // 不弹照片/时钟遮盖也不熄屏, 界面保持可见
+    if (_blocked) {
+        if (_overlay) _hide();
+        _undim();
+        return;
+    }
+
     // 播放抑制(收音机后台播放): 不弹时钟遮盖(会盖住别的 app), 但闲置熄屏
     // 仍然允许 —— 听歌熄屏更合理也更省电 (2026-10-28 语义调整)
     if (_suppressed) {
@@ -207,6 +215,19 @@ void AppIdleScreen::setSuppressed(bool s)
     _suppressed = s;
     if (s && _overlay) _hide();
     if (s) _undim();
+}
+
+void AppIdleScreen::setBlocked(bool b)
+{
+    if (_blocked == b) return;
+    _blocked = b;
+    if (b) {   // 进入收音机/播放器界面: 撤掉已弹的屏保并恢复亮度
+        if (_overlay) _hide();
+        _undim();
+    } else {
+        // 离开界面: 重置闲置计时, 从新窗口起算(防非触摸路径关闭时立即弹屏保)
+        lv_display_trigger_activity(NULL);
+    }
 }
 
 void AppIdleScreen::_refreshConfig()
