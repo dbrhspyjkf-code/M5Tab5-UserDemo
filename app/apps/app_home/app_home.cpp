@@ -504,16 +504,19 @@ void AppHome::onOpen()
             "呼吸速率", "活动能量", "爬楼层", "睡眠"};
         for (int i = 0; i < kHealthCells; i++) {
             const int col = i % 4, row = i / 4;   // 4x2 (2026-10-31 加爬楼/睡眠)
-            const int cx = 26 + col * 205, cy = 20 + row * 56;
-            mk_lbl(card, zh_font_sm(), theme::cur().text_dim, kHLabels[i],
-                   LV_ALIGN_TOP_LEFT, cx, cy);
+            const int cx = 26 + col * 205, cy = 8 + row * 70;
+            // 项目名 24px×1.25=30px 视觉 (2026-10-31 用户嫌 20px 太小;
+            // 与数值同尺寸, 靠 dim/hi 颜色分主次)
+            lv_obj_t* lb = mk_lbl(card, zh_font_md(), theme::cur().text_dim,
+                                  kHLabels[i], LV_ALIGN_TOP_LEFT, cx, cy);
+            big_tl(lb);
             _dash_h_val[i] = mk_lbl(card, zh_font_md(), theme::cur().text_hi, "-",
-                                    LV_ALIGN_TOP_LEFT, cx, cy + 22);
+                                    LV_ALIGN_TOP_LEFT, cx, cy + 32);
             big_tl(_dash_h_val[i]);   // 与 GLM/日程数值同观感 (pivot 左上)
         }
-        // 右下角数据时间 (updated_at 的 HH:MM, 数据新鲜度一眼可见)
+        // 数据时间 (updated_at 的 HH:MM) — 右上角 (行距放大后右下会撞睡眠值)
         _dash_h_time = mk_lbl(card, zh_font_sm(), theme::cur().text_dim, "--:--",
-                              LV_ALIGN_BOTTOM_RIGHT, -24, -6);
+                              LV_ALIGN_TOP_RIGHT, -24, 8);
         // 长按打开健康 app (app_installer 注入回调; 新闻卡长按同款接法)
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
