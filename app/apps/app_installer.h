@@ -168,6 +168,10 @@ inline void on_install_apps()
     settings->setStocksAppId(st_id);
     settings->setCalendarAppId(cal_id);
     settings->setHealthAppId(hl_id);
+    // 主页健康卡长按 → 打开健康 app (工具页同款入口)
+    home->setOpenHealthHandler([hl_id]() {
+        mooncake::GetMooncake().openApp(hl_id);
+    });
     settings->setReachyAppId(re_id);
     settings->setRfidAppId(rf_id);
     settings->setSshAppId(sh_id);

@@ -35,6 +35,7 @@ public:
 
     // 收音机后台播放状态 (app_installer 注入): 返回播放中的台名, 未播返回
     // 空串。主页状态栏据此显示/隐藏音符图标 (点按回收音机页)。
+    void setOpenHealthHandler(std::function<void()> cb) { _open_health_cb = std::move(cb); }
     void setNowPlayingGetter(std::function<std::string()> g) { _np_getter = std::move(g); }
 
     // Cached weather (refreshed every 15 min by AppHome's own status bar) —
@@ -110,9 +111,10 @@ private:
     lv_obj_t*  _dash_ag2 = nullptr;
     // 健康卡 (hermes /api/health): 3x2 六指标 — 步数/步行距离/心率/血氧/
     // 呼吸速率/活动能量; worker 写 _dash_h_txt, onRunning 应用 (同 _dash 模式)
-    static constexpr int kHealthCells = 6;
+    static constexpr int kHealthCells = 8;
     lv_obj_t*  _dash_h_val[kHealthCells] = {};
     lv_obj_t*  _dash_h_time = nullptr;   // 卡右下角数据时间 (updated_at HH:MM)
+    std::function<void()> _open_health_cb;    // 健康卡长按 → 打开健康 app (installer 注入)
     uint32_t   _last_dash_ms = 0;
     std::string _dash_glm_txt, _dash_glm2_txt, _dash_ds_txt, _dash_ag1_txt, _dash_ag2_txt;
     std::string _dash_h_txt[kHealthCells];   // 已格式化含单位; 缺数据 "-"

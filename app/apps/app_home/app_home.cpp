@@ -500,10 +500,11 @@ void AppHome::onOpen()
         // 指定加在 OPi 卡上方): 3x2 六指标 — 标签 sm 暗色 + 数值 md 放大 1.25x
         lv_obj_t* card = row_card(465, 143, theme::cur().card[3], theme::cur().border);
         static const char* const kHLabels[kHealthCells] = {
-            "步数", "步行距离", "心率", "血氧", "呼吸速率", "活动能量"};
+            "步数", "步行距离", "心率", "血氧",
+            "呼吸速率", "活动能量", "爬楼层", "睡眠"};
         for (int i = 0; i < kHealthCells; i++) {
-            const int col = i % 3, row = i / 3;
-            const int cx = 26 + col * 282, cy = 22 + row * 56;
+            const int col = i % 4, row = i / 4;   // 4x2 (2026-10-31 加爬楼/睡眠)
+            const int cx = 26 + col * 205, cy = 20 + row * 56;
             mk_lbl(card, zh_font_sm(), theme::cur().text_dim, kHLabels[i],
                    LV_ALIGN_TOP_LEFT, cx, cy);
             _dash_h_val[i] = mk_lbl(card, zh_font_md(), theme::cur().text_hi, "-",
@@ -513,6 +514,12 @@ void AppHome::onOpen()
         // 右下角数据时间 (updated_at 的 HH:MM, 数据新鲜度一眼可见)
         _dash_h_time = mk_lbl(card, zh_font_sm(), theme::cur().text_dim, "--:--",
                               LV_ALIGN_BOTTOM_RIGHT, -24, -6);
+        // 长按打开健康 app (app_installer 注入回调; 新闻卡长按同款接法)
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, [](lv_event_t* e) {
+            auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+            if (self->_open_health_cb) self->_open_health_cb();
+        }, LV_EVENT_LONG_PRESSED, this);
     }
     {   // 06 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
@@ -1033,6 +1040,8 @@ void AppHome::_fetch_dashboard()
                 {"blood_oxygen_saturation", " %", 0},
                 {"respiratory_rate", " 次/分", 1},
                 {"active_energy_burned", " kcal", 0},
+                {"flights_climbed", " 层", 0},
+                {"sleep_analysis", "", -2},   // 分钟 → "h:mm 小时"
             };
             {
                 std::string ua = j.value("updated_at", std::string());
@@ -1048,7 +1057,10 @@ void AppHome::_fetch_dashboard()
                 else if (e["value"].is_string()) v = atof(e["value"].get<std::string>().c_str());
                 else continue;
                 char buf[24];
-                if (hm[i].dec == 0) snprintf(buf, sizeof(buf), "%d%s", (int)llround(v), hm[i].u);
+                if (hm[i].dec == -2)   // 睡眠: 分钟 → "7:32 小时"
+                    snprintf(buf, sizeof(buf), "%d:%02d 小时",
+                             (int)(v / 60), ((int)v) % 60);
+                else if (hm[i].dec == 0) snprintf(buf, sizeof(buf), "%d%s", (int)llround(v), hm[i].u);
                 else snprintf(buf, sizeof(buf), "%.*f%s", hm[i].dec, v, hm[i].u);
                 h_txt[i] = buf;
             }
