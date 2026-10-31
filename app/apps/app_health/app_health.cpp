@@ -16,7 +16,7 @@ static const lv_font_t* zh30()
     static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
     return f;
 }
-// 20px (指标名/单位/时间)
+// 20px (单位/时间)
 static const lv_font_t* zh20()
 {
     static lv_font_t* f = []() -> lv_font_t* {
@@ -25,9 +25,19 @@ static const lv_font_t* zh20()
     }();
     return f;
 }
+// 24px (指标名; 2026-10-31 用户嫌 20px 太小)
+static const lv_font_t* zh24()
+{
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_24");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p)) : nullptr;
+    }();
+    return f ? f : (lv_font_t*)nullptr;
+}
 #else
 extern "C" const lv_font_t font_puhui_20_4;
 static const lv_font_t* zh30() { return &font_puhui_20_4; }
+static const lv_font_t* zh24() { return &font_puhui_20_4; }
 static const lv_font_t* zh20() { return &font_puhui_20_4; }
 #endif
 
@@ -250,12 +260,12 @@ void AppHealth::_buildUi()
         lv_obj_set_style_image_recolor(ic, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_image_recolor_opa(ic, LV_OPA_COVER, 0);
 
-        // 指标名 (图标右侧)
+        // 指标名 (图标右侧; 2026-10-31 用户嫌 20px 太小 → 24px md)
         lv_obj_t* name = lv_label_create(card);
         lv_label_set_text(name, m.name);
-        lv_obj_set_style_text_font(name, zh20(), 0);
+        lv_obj_set_style_text_font(name, zh24(), 0);
         lv_obj_set_style_text_color(name, lv_color_hex(COL_GRAY), 0);
-        lv_obj_align(name, LV_ALIGN_TOP_LEFT, 76, 30);
+        lv_obj_align(name, LV_ALIGN_TOP_LEFT, 74, 26);
 
         // 大数值 (montserrat_38) + 单位 (占位用 ASCII "-", montserrat 无 U+2014)
         _val_lbl[i] = lv_label_create(card);
