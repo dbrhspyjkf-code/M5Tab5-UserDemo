@@ -27,6 +27,7 @@
 #include "app_calendar/app_calendar.h"
 #include "app_health/app_health.h"
 #include <cstdlib>
+#include <cstring>
 #include "app_idle_screen/app_idle_screen.h"
 #include "xiaozhi_ctl.h"
 /* Header files locator (Don't remove) */
@@ -180,6 +181,16 @@ inline void on_install_apps()
         mooncake::GetMooncake().openApp(set_id);
         settings->openEmailPage();
     });
+
+    // ── Desktop debug hook: TAB5_OPEN_APP=<name> 启动直达 app ──────────────
+    // 模拟器手势/点击自动化不稳定时用它做 UI 冒烟 (与 TAB5_THEME 同款惯例)。
+#ifdef PLATFORM_BUILD_DESKTOP
+    if (const char* want = std::getenv("TAB5_OPEN_APP")) {
+        if (strcmp(want, "health") == 0) mooncake::GetMooncake().openApp(hl_id);
+        else if (strcmp(want, "calendar") == 0) mooncake::GetMooncake().openApp(cal_id);
+        else if (strcmp(want, "stocks") == 0) mooncake::GetMooncake().openApp(st_id);
+    }
+#endif
 
     // ── Global wake-word callback ─────────────────────────────────────
     // When the always-on AFE detects "你好小智", switch to the xiaozhi app

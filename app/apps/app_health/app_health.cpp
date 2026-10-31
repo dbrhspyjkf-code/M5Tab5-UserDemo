@@ -73,7 +73,7 @@ static constexpr int CARD_W = 402, CARD_H = 138;
 static constexpr int CARD_X0 = 21, CARD_Y0 = 8;
 static constexpr int CARD_GAP_X = 16, CARD_GAP_Y = 16;
 
-// ── 图形 4 原语 (app_settings.cpp tool_accent_* 同款拷贝, 白色线条版) ────────
+// ── 彩色圆角块 (承载预渲染字形) ─────────────────────────────────────────────
 static lv_obj_t* gh_rect(lv_obj_t* parent, uint32_t color,
                          int x, int y, int w, int h, int radius)
 {
@@ -91,127 +91,31 @@ static lv_obj_t* gh_rect(lv_obj_t* parent, uint32_t color,
     return r;
 }
 
-static lv_obj_t* gh_frame(lv_obj_t* parent, uint32_t color,
-                          int x, int y, int w, int h, int radius, int border_w)
-{
-    lv_obj_t* f = lv_obj_create(parent);
-    lv_obj_set_size(f, w, h);
-    lv_obj_set_pos(f, x, y);
-    lv_obj_set_style_bg_opa(f, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_radius(f, radius, 0);
-    lv_obj_set_style_border_width(f, border_w, 0);
-    lv_obj_set_style_border_color(f, lv_color_hex(color), 0);
-    lv_obj_set_style_shadow_width(f, 0, 0);
-    lv_obj_set_style_pad_all(f, 0, 0);
-    lv_obj_clear_flag(f, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(f, LV_OBJ_FLAG_CLICKABLE);
-    return f;
-}
-
-static lv_obj_t* gh_line(lv_obj_t* parent, uint32_t color, int x, int y,
-                         const lv_point_precise_t pts[], uint32_t n, int width)
-{
-    lv_obj_t* line = lv_line_create(parent);
-    lv_line_set_points(line, pts, n);
-    lv_obj_set_pos(line, x, y);
-    lv_obj_set_style_line_color(line, lv_color_hex(color), 0);
-    lv_obj_set_style_line_width(line, width, 0);
-    lv_obj_set_style_line_rounded(line, true, 0);
-    lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(line, LV_OBJ_FLAG_CLICKABLE);
-    return line;
-}
-
-// 33 段折线近似圆弧 (0°=右, 顺时针; cx/cy 为父内绝对坐标)
-static lv_obj_t* gh_arc(lv_obj_t* parent, uint32_t color, int cx, int cy,
-                        int radius, float a0_deg, float a1_deg, int width)
-{
-    static lv_point_precise_t pool[8][33];
-    static int used = 0;
-    lv_point_precise_t* pts = pool[used];
-    used = (used + 1) % 8;
-    for (int i = 0; i <= 32; i++) {
-        const float a = (a0_deg + (a1_deg - a0_deg) * i / 32.0f) * 3.14159265f / 180.0f;
-        pts[i].x = cx + radius * cosf(a);
-        pts[i].y = cy + radius * sinf(a);
-    }
-    return gh_line(parent, color, 0, 0, pts, 33, width);
-}
-
-// ── 白色线条图形 (画在 44x44 彩色块内, 视觉中心 22,22) ───────────────────────
-static void draw_glyph(lv_obj_t* sq, int glyph)
-{
-    switch (glyph) {
-    case 0: {  // 步数: 两枚脚印 (竖胶囊错位)
-        gh_rect(sq, COL_WHITE, 10, 7, 9, 17, 4);
-        gh_rect(sq, COL_WHITE, 25, 20, 9, 17, 4);
-        break;
-    }
-    case 1: {  // 距离: 导航箭头 (纸飞机向右上)
-        static const lv_point_precise_t arrow[] = {
-            {6, 24}, {38, 6}, {22, 38}, {18, 25}
-        };
-        gh_line(sq, COL_WHITE, 0, 0, arrow, 4, 3);
-        break;
-    }
-    case 2:    // 心率: 心形 (两圆环 + 下尖) — 与静息共用
-    case 3: {  // 静息心率: 心形 + 底部横线 (静息)
-        gh_frame(sq, COL_WHITE, 8, 9, 13, 13, 6, 3);
-        gh_frame(sq, COL_WHITE, 23, 9, 13, 13, 6, 3);
-        static const lv_point_precise_t vside[] = {{7, 18}, {22, 37}, {37, 18}};
-        gh_line(sq, COL_WHITE, 0, 0, vside, 3, 3);
-        if (glyph == 3) gh_rect(sq, COL_WHITE, 8, 37, 28, 3, 1);
-        break;
-    }
-    case 4: {  // HRV: 心电锯齿
-        static const lv_point_precise_t ecg[] = {
-            {4, 24}, {12, 24}, {17, 14}, {23, 34}, {28, 20}, {32, 24}, {40, 24}
-        };
-        gh_line(sq, COL_WHITE, 0, 0, ecg, 7, 3);
-        break;
-    }
-    case 5: {  // 血氧: 水滴 (圆 + 下尖)
-        gh_frame(sq, COL_WHITE, 13, 6, 18, 18, 9, 3);
-        static const lv_point_precise_t drop[] = {{13, 18}, {22, 38}, {31, 18}};
-        gh_line(sq, COL_WHITE, 0, 0, drop, 3, 3);
-        break;
-    }
-    case 6: {  // 呼吸: 三段波
-        gh_arc(sq, COL_WHITE, 10, 22, 7, 90, 270, 3);
-        gh_arc(sq, COL_WHITE, 22, 22, 7, 270, 450, 3);
-        gh_arc(sq, COL_WHITE, 34, 22, 7, 90, 270, 3);
-        break;
-    }
-    case 7: {  // 活动能量: 火苗 (外焰折线 + 内芯点)
-        static const lv_point_precise_t flame[] = {
-            {22, 4}, {30, 14}, {34, 22}, {33, 30}, {27, 38},
-            {17, 38}, {11, 30}, {10, 22}, {14, 14}
-        };
-        gh_line(sq, COL_WHITE, 0, 0, flame, 9, 3);
-        gh_rect(sq, COL_WHITE, 18, 27, 8, 9, 4);
-        break;
-    }
-    case 8: {  // 锻炼时间: 圆环 + 指针
-        gh_frame(sq, COL_WHITE, 8, 8, 28, 28, 14, 3);
-        static const lv_point_precise_t hand[] = {{22, 22}, {22, 13}, {22, 22}, {29, 26}};
-        gh_line(sq, COL_WHITE, 0, 0, hand, 4, 3);
-        break;
-    }
-    case 9: {  // 爬楼: 阶梯折线
-        static const lv_point_precise_t stair[] = {
-            {6, 38}, {6, 28}, {17, 28}, {17, 18}, {28, 18}, {28, 8}, {38, 8}
-        };
-        gh_line(sq, COL_WHITE, 0, 0, stair, 7, 3);
-        break;
-    }
-    case 10: {  // 腕温: 温度计 (胶囊 + 底球 + 汞柱)
-        gh_frame(sq, COL_WHITE, 17, 5, 10, 24, 5, 3);
-        gh_frame(sq, COL_WHITE, 14, 26, 16, 16, 8, 3);
-        gh_rect(sq, COL_WHITE, 20, 16, 4, 18, 2);
-        break;
-    }
-    }
-}
+// ── 预渲染抗锯齿字形 (health_icons.c, PIL 4x 超采样生成, 白色 recolor) ────────
+// glyph 下标与 kMetrics 对齐: 2/3 共用心形 (Apple 同款, 靠块色区分)
+extern const lv_image_dsc_t hl_steps;
+extern const lv_image_dsc_t hl_distance;
+extern const lv_image_dsc_t hl_heart;
+extern const lv_image_dsc_t hl_hrv;
+extern const lv_image_dsc_t hl_oxygen;
+extern const lv_image_dsc_t hl_breath;
+extern const lv_image_dsc_t hl_flame;
+extern const lv_image_dsc_t hl_exercise;
+extern const lv_image_dsc_t hl_stairs;
+extern const lv_image_dsc_t hl_temp;
+static const lv_image_dsc_t* const kGlyphs[] = {
+    &hl_steps,      // 0 步数
+    &hl_distance,   // 1 距离
+    &hl_heart,      // 2 心率
+    &hl_heart,      // 3 静息心率 (同字形, 粉色块区分)
+    &hl_hrv,        // 4 HRV
+    &hl_oxygen,     // 5 血氧
+    &hl_breath,     // 6 呼吸
+    &hl_flame,      // 7 能量
+    &hl_exercise,   // 8 锻炼
+    &hl_stairs,     // 9 爬楼
+    &hl_temp,       // 10 腕温
+};
 
 // ── 生命周期 ────────────────────────────────────────────────────────────────
 AppHealth::AppHealth()
@@ -334,9 +238,14 @@ void AppHealth::_buildUi()
         lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE);
 
-        // 彩色圆角图标块 + 白色图形
+        // 彩色圆角图标块 + 预渲染白色字形 (88x88 A8 缩半显示)
         lv_obj_t* sq = gh_rect(card, m.color, 20, 18, 44, 44, 12);
-        draw_glyph(sq, m.glyph);
+        lv_obj_t* ic = lv_image_create(sq);
+        lv_image_set_src(ic, kGlyphs[m.glyph]);
+        lv_image_set_scale(ic, 128);   // 50%: 88 → 44
+        lv_obj_align(ic, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_style_image_recolor(ic, lv_color_hex(COL_WHITE), 0);
+        lv_obj_set_style_image_recolor_opa(ic, LV_OPA_COVER, 0);
 
         // 指标名 (图标右侧)
         lv_obj_t* name = lv_label_create(card);
