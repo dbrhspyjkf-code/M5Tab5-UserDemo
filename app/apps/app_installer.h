@@ -187,6 +187,7 @@ inline void on_install_apps()
 #ifdef PLATFORM_BUILD_DESKTOP
     if (const char* want = std::getenv("TAB5_OPEN_APP")) {
         if (strcmp(want, "health") == 0) mooncake::GetMooncake().openApp(hl_id);
+        else if (strcmp(want, "tools") == 0) mooncake::GetMooncake().openApp(set_id);
         else if (strcmp(want, "calendar") == 0) mooncake::GetMooncake().openApp(cal_id);
         else if (strcmp(want, "stocks") == 0) mooncake::GetMooncake().openApp(st_id);
     }

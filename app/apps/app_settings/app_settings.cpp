@@ -40,6 +40,9 @@ extern lv_font_t font_zh_36;
 // LoRa/RFID/邮件/Reachy 同日弃用 calc_icon/fx_icon/unit_icon/lora_logo/reachy_icon.
 // 上述 .c 图片源文件仅存档, 不再被引用 (真机 gc-sections 自动剔除).
 
+// 健康 tile 用预渲染字形 (app_health/health_icons.c, PIL 生成)
+extern const lv_image_dsc_t hl_tile_health;
+
 // 工具页图形分支共用: 画一块纯色小矩形 (图标线条/圆点), 自动冒泡点击到父 tile.
 static lv_obj_t* tool_accent_rect(lv_obj_t* parent, uint32_t color,
                                   int x, int y, int w, int h, int radius)
@@ -549,23 +552,18 @@ void AppSettings::_buildToolsPage()
                 tool_accent_rect(tile, C_ACCENT, fx + 32, fy + 50, 22, 5, 2);    // "_"
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else if (kind == 11) {
-                // 健康 — 心形 + 贯穿的心电脉搏线 (iOS 健康图标意象).
-                // 图标盒 96x96.
+                // 健康 — 预渲染实心心形 + ECG 镂空 (gen_health_icons.py, 96x96 A8,
+                // 2026-10-31 折线版被用户嫌粗糙后重制), recolor 取主题强调色.
                 const int IW = 96;
                 const int start = (TW - IW - ICON_GAP - name_w) / 2;
-                const int cx = start + IW / 2, cy = TH / 2;
-                // 心形 = 左右两圆环 + 下尖 V
-                tool_accent_frame(tile, C_ACCENT, cx - 25, cy - 26, 26, 26, 13, 6);
-                tool_accent_frame(tile, C_ACCENT, cx - 1,  cy - 26, 26, 26, 13, 6);
-                static const lv_point_precise_t heart_v[] = {
-                    {0, 0}, {25, 38}, {50, 0}
-                };
-                tool_accent_line(tile, C_ACCENT, cx - 25, cy - 16, heart_v, 3, 6);
-                // 贯穿心形的脉搏线 (ECG)
-                static const lv_point_precise_t pulse[] = {
-                    {-20, 0}, {-8, 0}, {-2, -12}, {6, 14}, {11, 0}, {20, 0}
-                };
-                tool_accent_line(tile, C_ACCENT, cx - 20, cy - 8, pulse, 6, 5);
+                lv_obj_t* ic = lv_image_create(tile);
+                lv_image_set_src(ic, &hl_tile_health);
+                lv_obj_set_pos(ic, start, TH / 2 - IW / 2);
+                lv_obj_set_style_image_recolor(ic, lv_color_hex(C_ACCENT), 0);
+                lv_obj_set_style_image_recolor_opa(ic, LV_OPA_COVER, 0);
+                lv_obj_clear_flag(ic, LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_clear_flag(ic, LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_add_flag(ic, LV_OBJ_FLAG_EVENT_BUBBLE);
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.

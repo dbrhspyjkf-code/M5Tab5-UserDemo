@@ -13,8 +13,8 @@ S = 4            # 超采样倍数
 W = SZ * S       # 画布
 
 
-def new_canvas():
-    img = Image.new('L', (W, W), 0)
+def new_canvas(sz=SZ):
+    img = Image.new('L', (sz * S, sz * S), 0)
     return img, ImageDraw.Draw(img)
 
 
@@ -181,6 +181,24 @@ def g_temp():
     return img
 
 
+def g_tile_health():
+    """工具页健康 tile: 实心心形 + ECG 镂空穿过 (Apple 健康 App 图标意象, 96x96)"""
+    img, d = new_canvas(96)
+    pts = []
+    for i in range(128):
+        t = math.pi * 2 * i / 128
+        x = 16 * math.sin(t) ** 3
+        y = 13 * math.cos(t) - 5 * math.cos(2*t) - 2 * math.cos(3*t) - math.cos(4*t)
+        pts.append((sc(48 + x * 2.5), sc(47 - y * 2.85)))   # x 压扁 y 拉高 = 圆润两瓣
+    d.polygon(pts, fill=255)
+    # ECG 镂空 (P-QRS-T 完整节奏, 圆头粗线, 不出心形边界)
+    ecg = [(16, 48), (28, 48), (34, 42), (40, 48),   # P 波
+           (50, 48), (56, 33), (63, 63), (68, 45),   # QRS
+           (74, 48), (80, 48)]                       # T 波
+    thick_polyline(d, [(sc(x), sc(y)) for x, y in ecg], 8 * S, fill=0)
+    return img
+
+
 GLYPHS = {
     'hl_steps': g_steps,
     'hl_distance': g_distance,
@@ -192,6 +210,7 @@ GLYPHS = {
     'hl_exercise': g_exercise,
     'hl_stairs': g_stairs,
     'hl_temp': g_temp,
+    'hl_tile_health': g_tile_health,
 }
 
 OUT_C = '/Users/leenzhou/Projects/M5Tab5/M5Tab5-UserDemo-yrobot-cockpit/app/apps/app_health/health_icons.c'
@@ -201,11 +220,14 @@ rows = []
 names = list(GLYPHS.keys())
 preview = Image.new('L', (SZ * len(names), SZ), 0)
 for idx, name in enumerate(names):
-    img = GLYPHS[name]().resize((SZ, SZ), Image.LANCZOS)
-    preview.paste(img, (idx * SZ, 0))
+    img0 = GLYPHS[name]()
+    sz = img0.width // S
+    img = img0.resize((sz, sz), Image.LANCZOS)
+    if sz == SZ:
+        preview.paste(img, (idx * SZ, 0))
     data = img.tobytes()
-    assert len(data) == SZ * SZ
-    rows.append((name, data))
+    assert len(data) == sz * sz
+    rows.append((name, data, sz))
 
 preview.save(OUT_PNG)
 
@@ -218,8 +240,8 @@ with open(OUT_C, 'w') as f:
 #include <lvgl.h>
 
 """)
-    for name, data in rows:
-        f.write(f"static const uint8_t {name}_map[{SZ * SZ}] = {{\n")
+    for name, data, sz in rows:
+        f.write(f"static const uint8_t {name}_map[{sz * sz}] = {{\n")
         for i in range(0, len(data), 16):
             chunk = ','.join(f'0x{b:02X}' for b in data[i:i+16])
             f.write(f"  {chunk},\n")
@@ -227,7 +249,7 @@ with open(OUT_C, 'w') as f:
         f.write(f"const lv_image_dsc_t {name} = {{\n")
         f.write(f"  .header.cf = LV_COLOR_FORMAT_A8,\n")
         f.write(f"  .header.magic = LV_IMAGE_HEADER_MAGIC,\n")
-        f.write(f"  .header.w = {SZ},\n  .header.h = {SZ},\n")
-        f.write(f"  .data_size = {SZ * SZ},\n  .data = {name}_map,\n}};\n\n")
+        f.write(f"  .header.w = {sz},\n  .header.h = {sz},\n")
+        f.write(f"  .data_size = {sz * sz},\n  .data = {name}_map,\n}};\n\n")
 
 print(f"wrote {OUT_C}, preview {OUT_PNG}, glyphs: {len(rows)}")
