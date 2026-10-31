@@ -510,6 +510,9 @@ void AppHome::onOpen()
                                     LV_ALIGN_TOP_LEFT, cx, cy + 22);
             big_tl(_dash_h_val[i]);   // 与 GLM/日程数值同观感 (pivot 左上)
         }
+        // 右下角数据时间 (updated_at 的 HH:MM, 数据新鲜度一眼可见)
+        _dash_h_time = mk_lbl(card, zh_font_sm(), theme::cur().text_dim, "--:--",
+                              LV_ALIGN_BOTTOM_RIGHT, -24, -6);
     }
     {   // 06 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
@@ -765,6 +768,9 @@ void AppHome::onRunning()
             if (_dash_h_val[i]
                 && _dash_h_txt[i].compare(lv_label_get_text(_dash_h_val[i])) != 0)
                 lv_label_set_text(_dash_h_val[i], _dash_h_txt[i].c_str());
+        if (_dash_h_time
+            && _dash_h_time_txt.compare(lv_label_get_text(_dash_h_time)) != 0)
+            lv_label_set_text(_dash_h_time, _dash_h_time_txt.c_str());
 
         if (_opi_mod[0].val) _updateOpiWidgets();
     }
@@ -1014,6 +1020,7 @@ void AppHome::_fetch_dashboard()
         }
         // 健康卡 6 指标 (hermes /api/health; 缺类型显示 "-", 拉取失败保持旧值)
         std::string h_txt[kHealthCells];
+        std::string h_time = "--:--";
         if (auto j = pick(GetHAL()->httpGet(base + "/api/health").body); !j.is_null()) {
             auto types = (j.contains("types") && j["types"].is_object())
                          ? j["types"] : nlohmann::json::object();
@@ -1027,6 +1034,10 @@ void AppHome::_fetch_dashboard()
                 {"respiratory_rate", " 次/分", 1},
                 {"active_energy_burned", " kcal", 0},
             };
+            {
+                std::string ua = j.value("updated_at", std::string());
+                if (ua.size() >= 16) h_time = ua.substr(11, 5);
+            }
             for (int i = 0; i < kHealthCells; i++) {
                 h_txt[i] = "-";
                 if (!types.contains(hm[i].t) || !types[hm[i].t].is_object()) continue;
@@ -1058,6 +1069,7 @@ void AppHome::_fetch_dashboard()
         _dash_ag2_txt = ag2;
         for (int i = 0; i < kHealthCells; i++)
             if (!h_txt[i].empty()) _dash_h_txt[i] = h_txt[i];   // 空=拉取失败保旧值
+        if (h_time != "--:--") _dash_h_time_txt = h_time;
         _opi          = od;
     });
 }
