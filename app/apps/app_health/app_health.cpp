@@ -57,6 +57,7 @@ static const MetricDef kMetrics[] = {
     {"apple_exercise_time",      "锻炼时间", 0x30D158, "分钟",   8,  0},
     {"flights_climbed",          "爬楼层",   0x5856D6, "层",     9, -1},
     {"wrist_temperature",        "手腕温度", 0xFF6B00, "°C",    10,  1},
+    {"sleep_analysis",           "睡眠",     0x5E5CE6, "小时",   11, -2},  // -2=h:mm
 };
 static constexpr int kMetricCount = (int)(sizeof(kMetrics) / sizeof(kMetrics[0]));
 
@@ -103,6 +104,7 @@ extern const lv_image_dsc_t hl_flame;
 extern const lv_image_dsc_t hl_exercise;
 extern const lv_image_dsc_t hl_stairs;
 extern const lv_image_dsc_t hl_temp;
+extern const lv_image_dsc_t hl_moon;
 static const lv_image_dsc_t* const kGlyphs[] = {
     &hl_steps,      // 0 步数
     &hl_distance,   // 1 距离
@@ -115,6 +117,7 @@ static const lv_image_dsc_t* const kGlyphs[] = {
     &hl_exercise,   // 8 锻炼
     &hl_stairs,     // 9 爬楼
     &hl_temp,       // 10 腕温
+    &hl_moon,       // 11 睡眠
 };
 
 // ── 生命周期 ────────────────────────────────────────────────────────────────
@@ -348,7 +351,10 @@ void AppHealth::_fetch()
                     continue;
                 }
                 char buf[32];
-                if (m.decimals < 0) snprintf(buf, sizeof(buf), "%d", (int)llround(v));
+                if (m.decimals == -2)   // 睡眠: 分钟 → "7:32" (时:分)
+                    snprintf(buf, sizeof(buf), "%d:%02d",
+                             (int)(v / 60), ((int)v) % 60);
+                else if (m.decimals < 0) snprintf(buf, sizeof(buf), "%d", (int)llround(v));
                 else snprintf(buf, sizeof(buf), "%.*f", m.decimals, v);  // 浮点必须 snprintf
                 out[i].value = buf;
                 // at: "2026-10-31T06:59:59+08:00" → "06:59"

@@ -199,6 +199,14 @@ def g_tile_health():
     return img
 
 
+def g_moon():
+    """睡眠: 月牙 (满圆擦去偏移圆)"""
+    img, d = new_canvas()
+    d.ellipse([sc(14), sc(16), sc(70), sc(72)], fill=255)          # 满月
+    d.ellipse([sc(34), sc(8), sc(88), sc(62)], fill=0)             # 擦出月牙
+    return img
+
+
 GLYPHS = {
     'hl_steps': g_steps,
     'hl_distance': g_distance,
@@ -211,6 +219,7 @@ GLYPHS = {
     'hl_stairs': g_stairs,
     'hl_temp': g_temp,
     'hl_tile_health': g_tile_health,
+    'hl_moon': g_moon,
 }
 
 OUT_C = '/Users/leenzhou/Projects/M5Tab5/M5Tab5-UserDemo-yrobot-cockpit/app/apps/app_health/health_icons.c'
