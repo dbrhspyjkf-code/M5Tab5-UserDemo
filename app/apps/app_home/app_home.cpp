@@ -1252,6 +1252,10 @@ lv_obj_t* AppHome::_openModal(int card_w, int card_h, const char* title)
     lv_obj_set_style_text_color(t, lv_color_hex(T_ACCENT()), 0);
     lv_obj_set_style_text_font(t, zh_font_lg(), 0);
     lv_obj_set_style_transform_scale(t, 320, 0);   // 1.25x 与主页卡片平齐
+    // 基准点须设中心: LVGL9 默认 pivot=左上角, 1.25x 放大后文字向右下扩张,
+    // TOP_MID 对齐看着偏右不居中 (状态栏同款写法 L196)
+    lv_obj_set_style_transform_pivot_x(t, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(t, LV_PCT(50), 0);
     return card;
 }
 
