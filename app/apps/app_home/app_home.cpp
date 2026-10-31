@@ -435,28 +435,28 @@ void AppHome::onOpen()
         const uint32_t IDX  = theme::cur().text_dim;   // dim green index
         const uint32_t NAME = theme::cur().text_soft;   // soft text
         const uint32_t VAL  = theme::cur().text_hi;   // bright value
-        lv_obj_t* c = row_card(0, 110, theme::cur().card[0], theme::cur().border);
+        lv_obj_t* c = row_card(0, 143, theme::cur().card[0], theme::cur().border);
         big_left(mk_lbl(c, zh_font_md(), NAME, "GLM 用量", LV_ALIGN_LEFT_MID, 26, 0));
         // 左右分区: 左=GLM (5H/7D 剩余% + 重置时间), 右=DeepSeek 余额 (小标+数值)。
         // 全卡 1.25x 后数据列 x280 会顶到右栏, 左移 x200 腾位 (名称放大后到 ~178)。
-        _dash_glm  = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_LEFT, 200, 12);
-        _dash_glm2 = mk_lbl(c, zh_font_md(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 200, 54);
+        _dash_glm  = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_LEFT, 200, 30);
+        _dash_glm2 = mk_lbl(c, zh_font_md(), theme::cur().text_dim, "", LV_ALIGN_TOP_LEFT, 200, 72);
         big_tl(_dash_glm);
         big_tl(_dash_glm2);
         big_right(mk_lbl(c, zh_font_md(), NAME, "DeepSeek 余额",
-                         LV_ALIGN_TOP_RIGHT, -28, 12));
-        _dash_ds   = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 50);
+                         LV_ALIGN_TOP_RIGHT, -28, 30));
+        _dash_ds   = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_RIGHT, -28, 70);
         big_right(_dash_ds);
 
-        c = row_card(122, 110, theme::cur().card[2], theme::cur().border);
+        c = row_card(155, 143, theme::cur().card[2], theme::cur().border);
         big_left(mk_lbl(c, zh_font_md(), NAME, "提醒 / 日程", LV_ALIGN_LEFT_MID, 26, 0));
         // 内容居中 (2026-10-28 用户: 太靠右); 放大后中心 pivot 保持居中不跑位
-        _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_MID, 0, 14);
+        _dash_ag1 = mk_lbl(c, zh_font_md(), VAL, "--", LV_ALIGN_TOP_MID, 0, 30);
         lv_obj_set_width(_dash_ag1, 844 - 200);
         lv_label_set_long_mode(_dash_ag1, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_align(_dash_ag1, LV_TEXT_ALIGN_CENTER, 0);
         big(_dash_ag1);
-        _dash_ag2 = mk_lbl(c, zh_font_md(), theme::cur().text_dim, "", LV_ALIGN_TOP_MID, 0, 56);
+        _dash_ag2 = mk_lbl(c, zh_font_md(), theme::cur().text_dim, "", LV_ALIGN_TOP_MID, 0, 74);
         lv_obj_set_width(_dash_ag2, 844 - 200);
         lv_label_set_long_mode(_dash_ag2, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_align(_dash_ag2, LV_TEXT_ALIGN_CENTER, 0);
@@ -467,7 +467,7 @@ void AppHome::onOpen()
         // 加高 110→140 容纳 1.25x 文字; OPi 卡相应 240→212, 右列仍填满 608
         // 2026-10-30 内容改水平居中: cross=CENTER + 中心 pivot + text CENTER
         // (换行宽 636→560: 视觉 700 恰在卡内容区 708 内, 放大不越界)
-        lv_obj_t* card = row_card(244, 140, theme::cur().card[3], theme::cur().border);
+        lv_obj_t* card = row_card(310, 143, theme::cur().card[3], theme::cur().border);
         // 垂直均匀分布: 标题/副行随行数变化间距恒定
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_EVENLY,
@@ -498,12 +498,12 @@ void AppHome::onOpen()
     }
     {   // 05 健康卡 (hermes /api/health, iPhone 快捷指令推送; 2026-10-31 用户
         // 指定加在 OPi 卡上方): 3x2 六指标 — 标签 sm 暗色 + 数值 md 放大 1.25x
-        lv_obj_t* card = row_card(396, 110, theme::cur().card[3], theme::cur().border);
+        lv_obj_t* card = row_card(465, 143, theme::cur().card[3], theme::cur().border);
         static const char* const kHLabels[kHealthCells] = {
             "步数", "步行距离", "心率", "血氧", "呼吸速率", "活动能量"};
         for (int i = 0; i < kHealthCells; i++) {
             const int col = i % 3, row = i / 3;
-            const int cx = 26 + col * 282, cy = 14 + row * 52;
+            const int cx = 26 + col * 282, cy = 22 + row * 56;
             mk_lbl(card, zh_font_sm(), theme::cur().text_dim, kHLabels[i],
                    LV_ALIGN_TOP_LEFT, cx, cy);
             _dash_h_val[i] = mk_lbl(card, zh_font_md(), theme::cur().text_hi, "-",
@@ -513,8 +513,9 @@ void AppHome::onOpen()
     }
     {   // 06 OrangePi 宽卡: header + 3x2 module grid（阈值变色条, 参考
         // Mac 的 orange-pi.widget; 温度格无条, 显示风扇状态）— 渐变最深一张
-        // 健康卡插入后右列内容 608→730 (滚动 122px 看 OPi, 2026-10-31)
-        lv_obj_t* card = row_card(518, 212, theme::cur().card[3], theme::cur().border);
+        // 2026-10-31 用户定稿: 首屏 4 卡 (各 143, 总高含行距 = 主卡 608),
+        // OPi 卡 y=620 滚动露出 (滚动容器本为此设计)
+        lv_obj_t* card = row_card(620, 212, theme::cur().card[3], theme::cur().border);
 
         _opi_dot = lv_obj_create(card);
         lv_obj_set_size(_opi_dot, 12, 12);
