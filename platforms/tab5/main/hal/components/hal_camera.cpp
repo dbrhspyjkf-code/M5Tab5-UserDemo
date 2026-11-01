@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal/hal_esp32.h"
+#include "hal/hal.h"
 #include "../utils/task_controller/task_controller.h"
 #include <mooncake_log.h>
 #include <vector>
@@ -233,6 +234,9 @@ static int  s_gain_max      = 0;
 static bool s_gain_ok       = false;
 static int  s_isp_fd        = -1;
 static bool s_wb_warned     = false;
+static int  s_gain_saved    = -1;   // 已写 NVS 的收敛值 (去重)
+
+static void cam_3a_set_gain(int fd);
 
 static void cam_3a_init(int fd)
 {
@@ -245,6 +249,21 @@ static void cam_3a_init(int fd)
         ESP_LOGI(TAG, "gain ctrl: idx %d..%d def %d", s_gain_min, s_gain_max, s_gain_idx);
     } else {
         ESP_LOGW(TAG, "query gain ctrl failed (AE off)");
+    }
+    // NVS 记忆的收敛值做起始: sensor 每次上电 gain 回 0 近黑, 固定步进 2
+    // 从 0 爬到收敛要 60s+ (2026-11-01 17 时段照片中位 54 实锤 — 用户预览
+    // 几秒就拍, AE 远未爬到位); 从上次收敛值起步 + 比例大步, 数秒内到位。
+    if (s_gain_ok) {
+        const std::string saved = GetHAL()->getConfig("cam_gain_idx");
+        if (!saved.empty()) {
+            const long v = atol(saved.c_str());
+            if (v > s_gain_min && v <= s_gain_max) {
+                s_gain_idx = (int)v;
+                s_gain_saved = (int)v;
+                cam_3a_set_gain(fd);   // STREAMON 后尽早设
+                ESP_LOGI(TAG, "AE warm start: gain idx=%d (NVS)", s_gain_idx);
+            }
+        }
     }
     // ISP 节点 (WB 控件在 ISP 设备, 不需开流)。一次性固定 WB —— 实测偏色
     // R53/G89/B52 → rg≈1.68, bg≈1.71; 闭环版因 WB 增益语义未验证而振荡
@@ -277,7 +296,7 @@ static void cam_3a_set_gain(int fd)
     }
 }
 
-// 预览帧统计 + 闭环步进 (每 ~0.5s 调用; data=RGB565 mirror 后帧)
+// 预览帧统计 + 闭环步进 (每 5 帧调用 ~0.8s; data=RGB565 mirror 后帧)
 static void cam_3a_step(int fd, const uint8_t* frame, size_t frame_bytes)
 {
     const uint16_t* px = (const uint16_t*)frame;
@@ -296,17 +315,33 @@ static void cam_3a_step(int fd, const uint8_t* frame, size_t frame_bytes)
     // Rec.601 luma (565 分量归一到 8bit)
     const int luma = (r * 8 * 77 + g * 4 * 151 + b * 8 * 28) / 256;
 
-    // AE: 死区 90-150 (宽死区防振荡), 步进 2 索引 (~6%/步), 到边界即稳。
-    // 2026-11-01 首版 死区95-160+步进4 实测在带边来回过冲 (画面忽白忽暗)。
+    // AE: 死区 90-150 (宽死区防振荡)。比例步进 — 距目标越远步越大
+    // (luma 34→+21/步, 3 步内收敛; 首版固定 +2/步×2.3s 从 0 爬到收敛
+    // 要 60s+, 用户预览几秒就拍全是大暗片), 靠近死区自动衰减防过冲。
     if (s_gain_ok) {
         int old = s_gain_idx;
-        if (luma < 90) s_gain_idx += 2;
-        else if (luma > 150) s_gain_idx -= 2;
+        int step = 0;
+        if (luma < 90) {
+            step = (120 - luma) / 4;
+            if (step < 1) step = 1;
+            if (step > 24) step = 24;
+            s_gain_idx += step;
+        } else if (luma > 150) {
+            step = (luma - 130) / 4;
+            if (step < 1) step = 1;
+            if (step > 24) step = 24;
+            s_gain_idx -= step;
+        }
         if (s_gain_idx < s_gain_min) s_gain_idx = s_gain_min;
         if (s_gain_idx > s_gain_max) s_gain_idx = s_gain_max;
         if (s_gain_idx != old) {
             cam_3a_set_gain(fd);
             ESP_LOGI(TAG, "AE: luma=%d gain idx %d→%d", luma, old, s_gain_idx);
+        } else if (luma >= 90 && luma <= 150 && s_gain_idx != s_gain_saved) {
+            // 收敛进死区 → NVS 记忆 (下次上电 warm start; 调用频度=收敛时一次)
+            s_gain_saved = s_gain_idx;
+            GetHAL()->setConfig("cam_gain_idx", std::to_string(s_gain_idx));
+            ESP_LOGI(TAG, "AE converged: gain idx=%d saved", s_gain_idx);
         }
     }
 
@@ -418,7 +453,7 @@ void app_camera_display(void* arg)
         const int dq = ioctl(camera->fd, VIDIOC_DQBUF, &buf);
         if (dq == 0) {
             static int s_3a_cnt = 0;
-            if (++s_3a_cnt >= 15) {
+            if (++s_3a_cnt >= 5) {
                 s_3a_cnt = 0;
                 cam_3a_step(camera->fd, img_show_data, img_show_size);
             }
