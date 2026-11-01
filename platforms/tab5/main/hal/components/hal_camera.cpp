@@ -246,9 +246,24 @@ static void cam_3a_init(int fd)
     } else {
         ESP_LOGW(TAG, "query gain ctrl failed (AE off)");
     }
-    // ISP 节点 (WB 控件在 ISP 设备, 不需开流)
+    // ISP 节点 (WB 控件在 ISP 设备, 不需开流)。一次性固定 WB —— 实测偏色
+    // R53/G89/B52 → rg≈1.68, bg≈1.71; 闭环版因 WB 增益语义未验证而振荡
+    // (画面红绿白循环), 改固定值一次设定 (服务端灰世界校正兜底识别)。
     s_isp_fd = open(ESP_VIDEO_ISP1_DEVICE_NAME, O_RDWR);
-    if (s_isp_fd < 0) ESP_LOGW(TAG, "open ISP dev failed (AWB off)");
+    if (s_isp_fd >= 0) {
+        esp_video_isp_wb_t wb = {.enable = true, .red_gain = 1.65f, .blue_gain = 1.7f};
+        struct v4l2_ext_control ec = {.id = V4L2_CID_USER_ESP_ISP_WB, .size = sizeof(wb)};
+        ec.p_u8 = (uint8_t*)&wb;
+        struct v4l2_ext_controls ecs = {.ctrl_class = V4L2_CTRL_CLASS_USER,
+                                        .count = 1, .controls = &ec};
+        if (ioctl(s_isp_fd, VIDIOC_S_EXT_CTRLS, &ecs) != 0) {
+            ESP_LOGW(TAG, "set ISP WB failed (AWB off)");
+        } else {
+            ESP_LOGI(TAG, "fixed WB set: rg=1.65 bg=1.70");
+        }
+    } else {
+        ESP_LOGW(TAG, "open ISP dev failed (AWB off)");
+    }
 }
 
 static void cam_3a_set_gain(int fd)
@@ -281,11 +296,12 @@ static void cam_3a_step(int fd, const uint8_t* frame, size_t frame_bytes)
     // Rec.601 luma (565 分量归一到 8bit)
     const int luma = (r * 8 * 77 + g * 4 * 151 + b * 8 * 28) / 256;
 
-    // AE: 目标 110-130, 步进 4 索引 (~12%/步)
+    // AE: 死区 90-150 (宽死区防振荡), 步进 2 索引 (~6%/步), 到边界即稳。
+    // 2026-11-01 首版 死区95-160+步进4 实测在带边来回过冲 (画面忽白忽暗)。
     if (s_gain_ok) {
         int old = s_gain_idx;
-        if (luma < 95) s_gain_idx += 4;
-        else if (luma > 160) s_gain_idx -= 4;
+        if (luma < 90) s_gain_idx += 2;
+        else if (luma > 150) s_gain_idx -= 2;
         if (s_gain_idx < s_gain_min) s_gain_idx = s_gain_min;
         if (s_gain_idx > s_gain_max) s_gain_idx = s_gain_max;
         if (s_gain_idx != old) {
@@ -294,31 +310,6 @@ static void cam_3a_step(int fd, const uint8_t* frame, size_t frame_bytes)
         }
     }
 
-    // AWB: R/B 拉到 G 水平 (565 域: R/B 5bit vs G 6bit, 先归一 8bit)
-    if (s_isp_fd >= 0) {
-        const float rf = r * 255.0f / 31.0f;
-        const float gf = g * 255.0f / 63.0f;
-        const float bf = b * 255.0f / 31.0f;
-        if (rf > 2 && bf > 2) {
-            float rg = gf / rf, bg = gf / bf;
-            if (rg > 4) rg = 4;
-            if (rg < 0.25f) rg = 0.25f;
-            if (bg > 4) bg = 4;
-            if (bg < 0.25f) bg = 0.25f;
-            // 仅失衡 >12% 时调 (防抖动)
-            esp_video_isp_wb_t wb = {.enable = true, .red_gain = rg, .blue_gain = bg};
-            struct v4l2_ext_control ec = {.id = V4L2_CID_USER_ESP_ISP_WB, .size = sizeof(wb)};
-            ec.p_u8 = (uint8_t*)&wb;
-            struct v4l2_ext_controls ecs = {.ctrl_class = V4L2_CTRL_CLASS_USER,
-                                            .count = 1, .controls = &ec};
-            if (ioctl(s_isp_fd, VIDIOC_S_EXT_CTRLS, &ecs) != 0) {
-                if (!s_wb_warned) {
-                    s_wb_warned = true;
-                    ESP_LOGW(TAG, "set ISP WB failed (AWB off): rg=%.2f bg=%.2f", rg, bg);
-                }
-            }
-        }
-    }
 }
 
 // task 统一收尾: 置状态 + 通知 stop 等待者 + 自删 (调用后不得再碰栈上变量;
