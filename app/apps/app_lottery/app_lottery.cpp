@@ -1620,9 +1620,33 @@ void AppLottery::_applyRemoteBets()
         return;
     }
     if (bets.empty() && partials.empty()) return;
-    mclog::tagInfo(TAG, "confirm: building (bets={} partial={})", bets.size(), partials.size());
-    _confirmModal(bets, partials);
-    mclog::tagInfo(TAG, "confirm: built");
+
+#ifndef PLATFORM_BUILD_DESKTOP
+    // 堆完整性探针 (2026-11-01 崩溃读 bets 堆数据踩空 = heap corruption 延迟爆炸;
+    // 检查器会在损坏块处直接 abort 并打印地址, 比随机崩点信息量大得多)
+    {
+        extern bool heap_caps_check_integrity_all(bool print);
+        heap_caps_check_integrity_all(true);
+        mclog::tagInfo(TAG, "confirm: heap integrity ok (bets={} partial={})", bets.size(), partials.size());
+    }
+#endif
+
+    // 确认页创建挪 async: bets/partials move 进堆 ctx (app 实例 mooncake 常驻,
+    // this 捕获安全), 避开 onRunning→mooncake update 同步深链上的时序/栈交互
+    struct ConfirmCtx {
+        AppLottery* app;
+        std::vector<ssq::Pick> bets;
+        std::vector<ssq::Pick> partials;
+    };
+    auto* ctx = new ConfirmCtx{this, std::move(bets), std::move(partials)};
+    lv_async_call([](void* ud) {
+        auto* c = static_cast<ConfirmCtx*>(ud);
+        if (c && c->app) {
+            c->app->_confirmModal(c->bets, c->partials);
+        }
+        delete c;
+    }, ctx);
+    mclog::tagInfo(TAG, "confirm: scheduled");
 }
 
 // 识别确认 modal: 逐注展示 + 「改」(填入手动选号) + 「对奖」;
