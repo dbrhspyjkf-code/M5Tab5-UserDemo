@@ -5,6 +5,8 @@
  * 数据链路与 Passport 相同：OrangePi 8769 端口的 radio_relay.py 用 ffmpeg 把
  * 电台流转码成 16kHz 单声道 s16le PCM，设备 HTTP 直读 → PSRAM 环形缓冲 →
  * I2S 直写，零解码。播放期间必须关 WiFi 省电（Passport 实测：省电开着必断流）。
+ * 2026-11-01 多输出播放：输出可选 本机 / 客厅 Sonos / 起居室 HomePod ——
+ * 外部播放经 relay → Music Assistant(player_queues/play_media) 转投。
  *
  * UI 差异：Tab5 是 1280×720 触摸屏 —— 左侧电台列表（点击换台），右侧播放
  * 控制（上一台/播放暂停/下一台 + 音量滑条），上拨回主屏（后台继续播放，
@@ -96,6 +98,32 @@ private:
     static void _prevClick_cb(lv_event_t* e);
     static void _nextClick_cb(lv_event_t* e);
     static void _vol_cb(lv_event_t* e);
+
+    // ── 播放输出选择(2026-11-01): 本机 / 客厅 Sonos / 起居室 HomePod ──
+    // 外部播放经 relay(:8769)→Music Assistant 转投; 命令一律在 detach
+    // 短线程里发(阻塞 HTTP), UI 回调只写原子量。外部播放期间 _want_station
+    // 仍指向所选台(♪/歌名/屏保语义复用), 流任务靠 _ext_on 抑制本机拉流。
+    int               _output_sel = 0;   // 当前输出(0=本机; NVS radio_out)
+    std::atomic<bool> _ext_on{false};    // 外部设备正在播(流任务读)
+    std::atomic<int>  _ext_dev{-1};      // 正在播的外部设备下标
+    std::atomic<int>  _ext_vol{-1};      // 外部音量查询结果(消费即清 -1)
+    std::atomic<bool> _ext_vol_wait{false};
+    std::atomic<bool> _np_kick{false};   // 请求流任务立即刷新歌名
+    lv_obj_t* _out_chip = nullptr;       // 顶栏输出 chip
+    lv_obj_t* _out_modal = nullptr;      // 输出选择弹窗(layer_top, delete_async 关)
+    void _openOutputModal();
+    void _closeOutputModal();
+    void _setOutput(int i);
+    void _refreshOutputUi();
+    void _extStart(int station);
+    void _extStop();
+    void _extVolSync();
+    bool _extPlay(const char* pid, const char* path);   // 以下三个阻塞, 只在 detach 线程用
+    bool _extSimple(const char* pid, const char* cmd, int v = -1);
+    static void _outChip_cb(lv_event_t* e);
+    static void _outRow_cb(lv_event_t* e);
+    static void _modalBg_cb(lv_event_t* e);
+    static void _modalDel_cb(lv_event_t* e);
 
     // ── 上拨手势退出（app_stocks 同款）──
     struct SwipeCtx {

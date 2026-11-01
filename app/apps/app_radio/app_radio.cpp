@@ -96,6 +96,16 @@ static const RadioStation kStations[] = {
 static const int kStationCount = sizeof(kStations) / sizeof(kStations[0]);
 static const char* kRelayBase  = "http://192.168.1.200:8769/radio/";
 
+// 播放输出(2026-11-01): pid=nullptr 即本机 I2S 直放; 外部经 relay→MA 转投。
+// player_id 是 Music Assistant 内的 ID(与播放器 app 的两页同一对设备)。
+struct RadioOutput { const char* name; const char* full; const char* pid; };
+static const RadioOutput kOutputs[] = {
+    {"本机",   "本机播放",       nullptr},
+    {"客厅",   "客厅 Sonos",     "RINCON_804AF273361501400"},
+    {"起居室", "起居室 HomePod", "ap464e4403a588"},
+};
+static const int kOutputCount = sizeof(kOutputs) / sizeof(kOutputs[0]);
+
 // 配色: 主题快照(onOpen 时从全局主题取, 见 utils/theme/theme.h);
 // 绘制回调在 LVGL 线程里读这些全局, 零锁。
 static uint32_t C_BG, C_CARD, C_CARD_ON, C_ACCENT, C_TEXT, C_TEXT2,
@@ -127,6 +137,8 @@ struct TaskCtx {
     std::atomic<int>*  lvl_b;   // 低/中/高频段能量 0..100
     std::atomic<int>*  lvl_m;
     std::atomic<int>*  lvl_t;
+    std::atomic<bool>* ext_on;  // 外部设备在播: 抑制本机拉流
+    std::atomic<bool>* np_kick; // UI 请求立即清+拉歌名(外部换台用)
 };
 
 // 一阶 IIR 分频能量(16k 采样率): bass≈<230Hz, mid≈230-3k, treble=>3k。
@@ -340,7 +352,38 @@ void radio_task_fn(TaskCtx ctx)
 
     int64_t diag_t0 = esp_timer_get_time();
     while (!ctx.closing->load()) {
+        bool ext = ctx.ext_on->load();
         int want = ctx.want->load();
+
+        // ①外部换台的歌名刷新请求: 清旧值 + 本轮立即拉新台
+        if (ctx.np_kick->exchange(false)) {
+            s_np_seq.store(0);
+            s_np_title[0] = 0;
+            s_np_seq.store(++s_np_gen);
+            np_last = 0;
+        }
+        // ①ICY 歌名: 每 20s 一次(relay 收割+缓存; 失败静默, 下轮再试)。
+        // 本机拉流中(cur>=0) 或 外部播放中(want>=0) 都轮询 —— 端点独立于
+        // PCM 流, 外部转投时歌名栏照常走
+        {
+            int np_idx = ext ? want : (http ? cur : -1);
+            if (np_idx >= 0 && esp_timer_get_time() - np_last >= 20000000LL) {
+                np_last = esp_timer_get_time();
+                fetch_nowplaying(np_idx);
+            }
+        }
+
+        // ①外部播放中(2026-11-01): 本机流急停、VU 清零; want<0(外部暂停)
+        // 同步待机态。本机建连逻辑整体跳过 —— 音频归外部设备
+        if (ext) {
+            if (http) { teardown_stream(http); cur = -1; }
+            if (want < 0 && ctx.state->load() != 0)
+                ctx.state->store(0);
+            ctx.lvl_b->store(0); ctx.lvl_m->store(0); ctx.lvl_t->store(0);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         if (want != last_want) {
             last_want = want;
             want_changed_at = esp_timer_get_time();
@@ -419,12 +462,6 @@ void radio_task_fn(TaskCtx ctx)
 
         if (!http) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
 
-        // ①ICY 歌名: 每 20s 一次(relay 收割+缓存; 失败静默, 下轮再试)
-        if (cur >= 0 && esp_timer_get_time() - np_last >= 20000000LL) {
-            np_last = esp_timer_get_time();
-            fetch_nowplaying(cur);
-        }
-
         int n = esp_http_client_read(http, (char*)inbuf, sizeof(inbuf));
         if (n == 0) {                    // 服务端关闭
             mark_fail(cur, "stream ended");
@@ -461,7 +498,8 @@ void AppRadio::_startTask()
     if (_task_running.load()) return;
     _task_running.store(true);
     GetHAL()->tryRunDetached([this]() {
-        radio_task_fn({&_want_station, &_app_closing, &_state, &_lvl_b, &_lvl_m, &_lvl_t});
+        radio_task_fn({&_want_station, &_app_closing, &_state,
+                       &_lvl_b, &_lvl_m, &_lvl_t, &_ext_on, &_np_kick});
         _task_running.store(false);
     });
 }
@@ -498,6 +536,9 @@ void AppRadio::onOpen()
     _app_closing.store(false);
     _ui_state    = -1;
     _ui_station  = -1;
+    // 输出选择恢复(NVS; 只记选择, 不自动恢复播放 —— 按播放才播)
+    _output_sel = atoi(GetHAL()->getConfig("radio_out", "0").c_str());
+    if (_output_sel < 0 || _output_sel >= kOutputCount) _output_sel = 0;
 
     _scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
@@ -574,6 +615,34 @@ void AppRadio::onOpen()
     lv_obj_set_style_text_font(_now_freq, zh_font_md(), 0);   // 含中文"网络电台"
     lv_obj_set_style_text_color(_now_freq, lv_color_hex(C_AMBER), 0);
     lv_obj_align(_now_freq, LV_ALIGN_TOP_RIGHT, -40, 14);
+
+    // ── 输出 chip(2026-11-01): 状态行与频率读数之间, 点开输出选择弹窗 ──
+    _out_chip = lv_obj_create(panel);
+    lv_obj_set_pos(_out_chip, 330, 12);
+    lv_obj_set_size(_out_chip, 190, 42);
+    lv_obj_set_style_radius(_out_chip, 21, 0);
+    lv_obj_set_style_bg_color(_out_chip, lv_color_hex(C_CARD_ON), 0);
+    lv_obj_set_style_bg_opa(_out_chip, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_out_chip, 1, 0);
+    lv_obj_set_style_border_color(_out_chip, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_border_opa(_out_chip, LV_OPA_70, 0);
+    lv_obj_set_style_pad_all(_out_chip, 0, 0);
+    lv_obj_clear_flag(_out_chip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(_out_chip, LV_OBJ_FLAG_CLICKABLE);
+    {
+        lv_obj_t* ic = lv_label_create(_out_chip);
+        lv_obj_set_style_text_font(ic, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(ic, lv_color_hex(C_ACCENT), 0);
+        lv_label_set_text(ic, LV_SYMBOL_AUDIO);
+        lv_obj_align(ic, LV_ALIGN_LEFT_MID, 18, 0);
+        lv_obj_t* tl = lv_label_create(_out_chip);   // 文字部分(_refreshOutputUi 刷新)
+        lv_obj_set_style_text_font(tl, zh_font_md(), 0);
+        lv_obj_set_style_text_color(tl, lv_color_hex(C_TEXT), 0);
+        lv_obj_align(tl, LV_ALIGN_LEFT_MID, 48, 0);
+        lv_obj_set_user_data(_out_chip, tl);
+    }
+    lv_obj_add_event_cb(_out_chip, _outChip_cb, LV_EVENT_CLICKED, this);
+    _refreshOutputUi();
 
     _now_name = lv_label_create(panel);
     lv_label_set_text(_now_name, "—");
@@ -717,6 +786,9 @@ void AppRadio::onOpen()
     _installSwipeGesture();
     lv_screen_load(_scr);
 
+    // 外部输出在播中重进: 音量滑条同步外部设备音量(异步拉取, onRunning 应用)
+    if (_output_sel > 0 && _ext_on.load()) _extVolSync();
+
     // 几何版本标记: 从串口确证当前固件的布局参数(排查改了没生效)
     mclog::tagInfo(TAG, "ui-geom: name_y=58 title_y=98 vu_base=384 vu_max=152 btn_play_y=388 vol_y=532");
 
@@ -737,6 +809,12 @@ void AppRadio::onRunning()
         lv_label_set_text(_now_title, s_np_title);   // 任务 20s 才写一次, 拷贝窗口安全
     }
 
+    // ①外部音量查询结果落地(切输出/重进时拉取; 消费即清)
+    if (int ev = _ext_vol.exchange(-1); ev >= 0 && _output_sel > 0 && _vol_slider) {
+        lv_slider_set_value(_vol_slider, ev, LV_ANIM_OFF);
+        if (_vol_lbl) lv_label_set_text_fmt(_vol_lbl, "%d%%", ev);
+    }
+
     uint32_t now = GetHAL()->millis();
     if (now - _vu_ms >= 120) {             // 8fps: CPU 让路音频(Passport 电平表教训)
         _vu_ms = now;
@@ -750,6 +828,7 @@ void AppRadio::_updateVu()
 {
     if (!_vu_strip) return;
     float b = _lvl_b.load(), m = _lvl_m.load(), t = _lvl_t.load();
+    if (_ext_on.load()) { b = m = t = 0; }   // 外部播放: 无本机电平, 条带自然衰减到底
     bool changed = false;
     for (int i = 0; i < 20; i++) {
         float w = i / 19.0f;
@@ -829,6 +908,8 @@ void AppRadio::onClose()
     if (_block) _block(false);
     // 先切回主屏再删对象 —— 删除 active screen 会让 LVGL 悬空(AppHA 同序)
     if (_close_cb) _close_cb();
+    // 输出弹窗挂在 layer_top(不在 _scr 树上), 关页必须显式收掉
+    _closeOutputModal();
     *_alive = false;
     _removeSwipeGesture();
     if (_scr) {
@@ -927,7 +1008,11 @@ void AppRadio::_refreshStateUi()
     static const uint32_t kCol[4] = {C_TEXT2, C_WARN, C_OK, C_DANGER};
     _ui_state = _state.load();
     if (_status_lbl) {
-        lv_label_set_text(_status_lbl, kTxt[_ui_state]);
+        // 外部播放中: 状态带上输出名("正在播放 · 客厅")
+        if (_ui_state == 2 && _output_sel > 0 && _output_sel < kOutputCount)
+            lv_label_set_text_fmt(_status_lbl, "%s · %s", kTxt[2], kOutputs[_output_sel].name);
+        else
+            lv_label_set_text(_status_lbl, kTxt[_ui_state]);
         lv_obj_set_style_text_color(_status_lbl, lv_color_hex(kCol[_ui_state]), 0);
     }
     if (_play_icon) {
@@ -976,6 +1061,7 @@ void AppRadio::_play(int idx)
     if (idx < 0 || idx >= kStationCount) return;
     _last_station = idx;
     _want_station.store(idx);
+    if (_output_sel > 0) _extStart(idx);   // 外部模式: 转投(本机流被 _ext_on 抑制)
 }
 
 void AppRadio::_rowClick_cb(lv_event_t* e)
@@ -989,7 +1075,10 @@ void AppRadio::_playClick_cb(lv_event_t* e)
 {
     auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
     int st = app->_state.load();
-    if (st == 1 || st == 2) app->_want_station.store(-1);   // 暂停(断流)
+    if (st == 1 || st == 2) {
+        if (app->_ext_on.load()) app->_extStop();   // 外部: 停投(流任务见 ext_on=false+want<0 置待机)
+        app->_want_station.store(-1);               // 暂停(本机断流)
+    }
     else                    app->_play(app->_last_station); // 播放/重试
 }
 
@@ -1009,8 +1098,225 @@ void AppRadio::_vol_cb(lv_event_t* e)
 {
     auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
     int v = lv_slider_get_value(app->_vol_slider);
-    xiaozhi_set_speaker_volume(v);
     lv_label_set_text_fmt(app->_vol_lbl, "%d%%", v);
+    if (app->_output_sel > 0 && app->_output_sel < kOutputCount) {
+        int sel = app->_output_sel;
+        GetHAL()->tryRunDetached([app, sel, v]() {   // 外部: 音量转发给 MA
+            app->_extSimple(kOutputs[sel].pid, "volume_set", v);
+        });
+    } else {
+        xiaozhi_set_speaker_volume(v);
+    }
+}
+
+// ── 外部播放命令(relay :8769 → Music Assistant; 阻塞 HTTP) ────────────
+bool AppRadio::_extPlay(const char* pid, const char* path)
+{
+    char url[192];
+    snprintf(url, sizeof(url), "%s%s/play_on?p=%s", kRelayBase, path, pid);
+    auto r = GetHAL()->httpGet(url);
+    bool ok = r.status == 200 && r.body.find("\"ok\":true") != std::string::npos;
+    if (!ok) mclog::tagWarn(TAG, "ext play_on failed: sc={} body={}",
+                            r.status, r.body.substr(0, 80));
+    return ok;
+}
+
+bool AppRadio::_extSimple(const char* pid, const char* cmd, int v)
+{
+    char url[160];
+    if (v >= 0) snprintf(url, sizeof(url), "%scmd?p=%s&c=%s&v=%d",
+                         kRelayBase, pid, cmd, v);
+    else        snprintf(url, sizeof(url), "%scmd?p=%s&c=%s", kRelayBase, pid, cmd);
+    auto r = GetHAL()->httpGet(url);
+    return r.status == 200 && r.body.find("\"ok\":true") != std::string::npos;
+}
+
+void AppRadio::_extStart(int station)
+{
+    int sel = _output_sel;
+    if (sel <= 0 || sel >= kOutputCount || station < 0 || station >= kStationCount)
+        return;
+    _ext_on.store(true);        // 立即抑制本机拉流(流任务下一轮 teardown)
+    _state.store(1);            // 连接中
+    _np_kick.store(true);       // 清旧台歌名 + 立即拉新台
+    GetHAL()->tryRunDetached([this, sel, station]() {
+        int old = _ext_dev.exchange(-1);          // 先摘牌: 线程内独占设备状态
+        if (old >= 0 && old != sel)
+            _extSimple(kOutputs[old].pid, "stop");   // 换设备: 旧的停
+        bool ok = _extPlay(kOutputs[sel].pid, kStations[station].path);
+        if (ok) {
+            _ext_dev.store(sel);
+            mclog::tagInfo(TAG, "ext play: {} -> {}",
+                           kStations[station].name, kOutputs[sel].full);
+        } else {
+            // 失败不接播本机(外放失败≠改本机): want 置 -1 防流任务自动拉流,
+            // 回待机态, 播放键重试(仍走外部)
+            _ext_on.store(false);
+            _want_station.store(-1);
+        }
+        _state.store(ok ? 2 : 3);
+    });
+}
+
+void AppRadio::_extStop()
+{
+    _ext_on.store(false);
+    int dev = _ext_dev.exchange(-1);
+    if (dev >= 0 && dev < kOutputCount)
+        GetHAL()->tryRunDetached([this, dev]() { _extSimple(kOutputs[dev].pid, "stop"); });
+}
+
+void AppRadio::_extVolSync()
+{
+    int sel = _output_sel;
+    if (sel <= 0 || sel >= kOutputCount) return;
+    if (_ext_vol_wait.exchange(true)) return;   // 已有查询在途
+    GetHAL()->tryRunDetached([this, sel]() {
+        // {"ok":true,"state":"..","volume":35} → 取 volume
+        char url[160];
+        snprintf(url, sizeof(url), "%scmd?p=%s&c=volume_get",
+                 kRelayBase, kOutputs[sel].pid);
+        auto r = GetHAL()->httpGet(url);
+        if (r.status == 200) {
+            auto pos = r.body.find("\"volume\":");
+            if (pos != std::string::npos) {
+                int v = atoi(r.body.c_str() + pos + 9);
+                if (v >= 0 && v <= 100) _ext_vol.store(v);
+            }
+        }
+        _ext_vol_wait.store(false);
+    });
+}
+
+// ── 输出选择 chip / 弹窗 ────────────────────────────────────────────────
+void AppRadio::_refreshOutputUi()
+{
+    if (!_out_chip) return;
+    auto* tl = static_cast<lv_obj_t*>(lv_obj_get_user_data(_out_chip));
+    if (tl && _output_sel >= 0 && _output_sel < kOutputCount)
+        lv_label_set_text(tl, kOutputs[_output_sel].name);
+}
+
+void AppRadio::_setOutput(int i)
+{
+    if (i < 0 || i >= kOutputCount || i == _output_sel) return;
+    _output_sel = i;
+    GetHAL()->setConfig("radio_out", std::to_string(i));
+    _refreshOutputUi();
+    bool playing = _want_station.load() >= 0;   // 本机在播/外部在播/连接中
+    if (i == 0) {
+        // 切回本机: 停外部(异步); want>=0 时流任务见 ext_on=false 自动接播
+        _extStop();
+    } else if (playing) {
+        _extStart(_last_station);               // 外部接播(先停旧设备)
+    } else {
+        _extVolSync();                          // 待机切换: 仅同步外部音量显示
+    }
+}
+
+void AppRadio::_openOutputModal()
+{
+    if (_out_modal) return;
+    lv_obj_t* bg = lv_obj_create(lv_layer_top());
+    lv_obj_set_pos(bg, 0, 0);
+    lv_obj_set_size(bg, 1280, 720);
+    lv_obj_set_style_bg_color(bg, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(bg, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(bg, 0, 0);
+    lv_obj_set_style_radius(bg, 0, 0);
+    lv_obj_set_style_pad_all(bg, 0, 0);
+    lv_obj_clear_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(bg, LV_OBJ_FLAG_CLICKABLE);           // 点背景=关
+    lv_obj_add_event_cb(bg, _modalBg_cb, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(bg, _modalDel_cb, LV_EVENT_DELETE, this);  // 任何路径删除都清指针
+
+    lv_obj_t* card = lv_obj_create(bg);
+    lv_obj_set_size(card, 560, 500);
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(C_BORDER), 0);
+    lv_obj_set_style_radius(card, 20, 0);
+    lv_obj_set_style_pad_all(card, 0, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* title = lv_label_create(card);
+    lv_obj_set_style_text_font(title, zh_font_md(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_label_set_text(title, "播放输出");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 26);
+
+    for (int i = 0; i < kOutputCount; i++) {
+        lv_obj_t* row = lv_obj_create(card);
+        lv_obj_set_pos(row, 40, 84 + i * 128);
+        lv_obj_set_size(row, 480, 108);
+        lv_obj_set_style_radius(row, 14, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(
+            i == _output_sel ? C_CARD_ON : C_BG), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(row, i == _output_sel ? 2 : 1, 0);
+        lv_obj_set_style_border_color(row, lv_color_hex(
+            i == _output_sel ? C_ACCENT : C_BORDER), 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(row, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(row, _outRow_cb, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* ic = lv_label_create(row);
+        lv_obj_set_style_text_font(ic, &lv_font_montserrat_24, 0);
+        lv_obj_set_style_text_color(ic, lv_color_hex(
+            i == _output_sel ? C_ACCENT : C_TEXT2), 0);
+        lv_label_set_text(ic, LV_SYMBOL_AUDIO);
+        lv_obj_align(ic, LV_ALIGN_LEFT_MID, 28, 0);
+
+        lv_obj_t* nm = lv_label_create(row);
+        lv_obj_set_style_text_font(nm, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(nm, lv_color_hex(C_TEXT), 0);
+        lv_label_set_text(nm, kOutputs[i].full);
+        lv_obj_align(nm, LV_ALIGN_LEFT_MID, 76, 0);
+
+        if (i == _output_sel) {   // 当前项: 尾部勾
+            lv_obj_t* ck = lv_label_create(row);
+            lv_obj_set_style_text_font(ck, &lv_font_montserrat_24, 0);
+            lv_obj_set_style_text_color(ck, lv_color_hex(C_OK), 0);
+            lv_label_set_text(ck, LV_SYMBOL_OK);
+            lv_obj_align(ck, LV_ALIGN_RIGHT_MID, -28, 0);
+        }
+    }
+    _out_modal = bg;
+}
+
+void AppRadio::_closeOutputModal()
+{
+    // delete_async: 回调上下文里删祖先 modal 必须异步; DELETE 回调清 _out_modal
+    if (!_out_modal) return;
+    lv_obj_delete_async(_out_modal);   // _out_modal 由 _modalDel_cb 置空
+}
+
+void AppRadio::_outChip_cb(lv_event_t* e)
+{
+    static_cast<AppRadio*>(lv_event_get_user_data(e))->_openOutputModal();
+}
+
+void AppRadio::_outRow_cb(lv_event_t* e)
+{
+    auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
+    app->_closeOutputModal();
+    app->_setOutput((int)(intptr_t)lv_obj_get_user_data(
+        static_cast<lv_obj_t*>(lv_event_get_target(e))));
+}
+
+void AppRadio::_modalBg_cb(lv_event_t* e)
+{
+    static_cast<AppRadio*>(lv_event_get_user_data(e))->_closeOutputModal();
+}
+
+void AppRadio::_modalDel_cb(lv_event_t* e)
+{
+    // modal 被 delete_async/任何路径删除时清指针, 防 onClose 后悬空判断
+    static_cast<AppRadio*>(lv_event_get_user_data(e))->_out_modal = nullptr;
 }
 
 // ── 上拨手势退出(app_stocks 同款) ──────────────────────────────────────
@@ -1038,6 +1344,12 @@ void AppRadio::_installSwipeGesture()
                     // 双守卫: 只在本 app 前台 + 屏幕最下缘 (y>650) 起手
                     // (indev 手势广播给所有注册回调, 2026-10-27 实锤)
                     if (!ctx->app->_scr || lv_screen_active() != ctx->app->_scr) return;
+                    // 输出弹窗开着: 上拨只收弹窗, 不关 app(弹窗在 layer_top,
+                    // 不关的话 app 删除后它仍悬在屏幕上)
+                    if (ctx->app->_out_modal) {
+                        ctx->app->_closeOutputModal();
+                        return;
+                    }
                     if (s_gpress.y <= 650) return;
                     auto* defer = new SwipeCtx{ctx->app, ctx->alive};
                     lv_async_call([](void* u) {
