@@ -59,6 +59,10 @@ public:
     void setHealthAppId(int id) { _health_id = id; }
     void openHealth();  // 工具页 tile → 打开健康 app
 
+    // AppLottery (双色球) 的 mooncake app id, 由 app_installer 注入.
+    void setLotteryAppId(int id) { _lottery_id = id; }
+    void openLottery();  // 工具页 tile → 打开双色球 app
+
     // ── Shared email cache (status-bar poll + sub-page both read these) ──
     // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
     // and reads email_unread_total to decide whether to show the icon.
@@ -90,6 +94,7 @@ private:
     int _rfid_id      = -1;
     int _ssh_id       = -1;
     int _health_id    = -1;
+    int _lottery_id   = -1;
 
     lv_indev_t* _gesture_indev = nullptr;
     lv_obj_t*   _scr        = nullptr;
@@ -184,4 +189,5 @@ private:
     static void _toolRfid_cb(lv_event_t* e);   // tools tile → open RFID 读写器
     static void _toolSsh_cb(lv_event_t* e);    // tools tile → open SSH 终端
     static void _toolHealth_cb(lv_event_t* e); // tools tile → open 健康
+    static void _toolLottery_cb(lv_event_t* e); // tools tile → open 双色球
 };

@@ -26,6 +26,7 @@
 #include "app_timer/app_timer.h"
 #include "app_calendar/app_calendar.h"
 #include "app_health/app_health.h"
+#include "app_lottery/app_lottery.h"
 #include <cstdlib>
 #include <cstring>
 #include "app_idle_screen/app_idle_screen.h"
@@ -102,6 +103,9 @@ inline void on_install_apps()
     auto hl_uptr = std::make_unique<AppHealth>();
     AppHealth* health = hl_uptr.get();       // 健康: 工具页入口
 
+    auto lo_uptr = std::make_unique<AppLottery>();
+    AppLottery* lottery = lo_uptr.get();     // 双色球: 工具页入口
+
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
 
@@ -120,6 +124,7 @@ inline void on_install_apps()
     int ti_id = mooncake::GetMooncake().installApp(std::move(ti_uptr));
     int cal_id = mooncake::GetMooncake().installApp(std::move(cal_uptr));
     int hl_id  = mooncake::GetMooncake().installApp(std::move(hl_uptr));
+    int lo_id  = mooncake::GetMooncake().installApp(std::move(lo_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
@@ -139,6 +144,10 @@ inline void on_install_apps()
     });
     // 健康 (hermes /api/health) 同从「工具」页打开, 上拨返回工具页.
     health->setCloseCallback([set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+    });
+    // 双色球同从「工具」页打开, 上拨返回工具页.
+    lottery->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
     // Reachy 同样从「工具」页打开, 返回 (← / 上拨) 回到工具页.
@@ -172,6 +181,7 @@ inline void on_install_apps()
     settings->setStocksAppId(st_id);
     settings->setCalendarAppId(cal_id);
     settings->setHealthAppId(hl_id);
+    settings->setLotteryAppId(lo_id);
     // 主页健康卡长按 → 打开健康 app (工具页同款入口)
     home->setOpenHealthHandler([hl_id]() {
         mooncake::GetMooncake().openApp(hl_id);
@@ -195,6 +205,7 @@ inline void on_install_apps()
 #ifdef PLATFORM_BUILD_DESKTOP
     if (const char* want = std::getenv("TAB5_OPEN_APP")) {
         if (strcmp(want, "health") == 0) mooncake::GetMooncake().openApp(hl_id);
+        else if (strcmp(want, "lottery") == 0) mooncake::GetMooncake().openApp(lo_id);
         else if (strcmp(want, "tools") == 0) mooncake::GetMooncake().openApp(set_id);
         else if (strcmp(want, "calendar") == 0) mooncake::GetMooncake().openApp(cal_id);
         else if (strcmp(want, "stocks") == 0) mooncake::GetMooncake().openApp(st_id);
