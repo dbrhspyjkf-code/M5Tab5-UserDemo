@@ -181,6 +181,13 @@ public:
     {
         return false;
     }
+    // 快门: 抓最新预览帧编码 JPEG (RGB565 720p, q80 约 150-250KB)。
+    // 须在 startCameraCapture 预览运行期间调用; 无预览/桌面平台返回空。
+    virtual std::string capturePhotoJpeg(int quality = 80)
+    {
+        (void)quality;
+        return "";
+    }
 
     /* ---------------------------------- USB-A --------------------------------- */
     struct HidMouseData_t {

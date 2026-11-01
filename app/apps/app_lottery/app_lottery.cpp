@@ -9,6 +9,9 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#ifndef PLATFORM_BUILD_DESKTOP
+#include <esp_timer.h>
+#endif
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
@@ -189,6 +192,7 @@ void AppLottery::onRunning()
     // async 删屏防「删除活动屏」崩溃, app_calendar 模式)
     if (_scr && lv_screen_active() != _scr) {
         mclog::tagInfo(TAG, "lost foreground, tearing down screen");
+        if (GetHAL()->isCameraCapturing()) GetHAL()->stopCameraCapture();   // 预览别跨页偷跑
         _removeSwipeGesture();
         if (_trend_pixels) {
             free(_trend_pixels);
@@ -207,6 +211,7 @@ void AppLottery::onRunning()
     if (!_scr) return;
 
     if (_data_ready.exchange(false)) _applyData();
+    if (_bets_ready.exchange(false)) _applyRemoteBets();
 
     // toast (拍照识别占位等短提示), 3s 自清
     if (_toast_lbl) {
@@ -460,6 +465,7 @@ void AppLottery::_nullUiPtrs()
     for (auto& b : _pick_blue_btns) b = nullptr;
     _target_lbl = _target_draws = _pick_summary = _judge_btn = _photo_btn = nullptr;
     _result_modal = nullptr;
+    _cam_modal = _cam_canvas = nullptr;
     _toast_lbl = nullptr;
 }
 
@@ -1132,8 +1138,7 @@ void AppLottery::_buildPickPage()
               }, this);
     _photo_btn = mk_action("拍照识别", 220, 178, 0x2A2C30,
                            [](lv_event_t* e) {
-                               auto* self = static_cast<AppLottery*>(lv_event_get_user_data(e));
-                               self->_toast = "拍照识别即将上线 (OCR 链路部署中)";
+                               static_cast<AppLottery*>(lv_event_get_user_data(e))->_openCamera();
                            }, this);
     _judge_btn = mk_action("判  定", 260, 990, C_ACC(),
                            [](lv_event_t* e) {
@@ -1419,6 +1424,381 @@ void AppLottery::_closeResult()
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  拍照识别 (预览 → 快门 → 上传 → 识别确认 → 判定)
+// ════════════════════════════════════════════════════════════════════════════
+void AppLottery::_openCamera()
+{
+    if (!_scr) return;
+    if (GetHAL()->isCameraCapturing()) {
+        _toast = "相机被其他应用占用";
+        return;
+    }
+#ifdef PLATFORM_BUILD_DESKTOP
+    _toast = "桌面模拟器无摄像头, 请在真机上使用";
+    return;
+#endif
+    _closeResult();
+    _cam_modal = lv_obj_create(_scr);
+    lv_obj_set_size(_cam_modal, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_cam_modal, 0, 0);
+    lv_obj_set_style_bg_color(_cam_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_border_width(_cam_modal, 0, 0);
+    lv_obj_set_style_radius(_cam_modal, 0, 0);
+    lv_obj_set_style_pad_all(_cam_modal, 0, 0);
+    lv_obj_clear_flag(_cam_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    _cam_canvas = lv_canvas_create(_cam_modal);
+    lv_obj_set_size(_cam_canvas, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_cam_canvas, 0, 0);
+    // buffer 由 hal 预览 task lv_canvas_set_buffer 挂 (RGB565 直刷)
+
+    // 快门圆钮 (底部中央) + 取消
+    lv_obj_t* shutter = lv_button_create(_cam_modal);
+    lv_obj_set_size(shutter, 130, 130);
+    lv_obj_align(shutter, LV_ALIGN_BOTTOM_MID, 0, -24);
+    lv_obj_set_style_radius(shutter, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(shutter, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_border_width(shutter, 10, 0);
+    lv_obj_set_style_border_color(shutter, lv_color_hex(0x666666), 0);
+    lv_obj_add_event_cb(shutter, [](lv_event_t* e) {
+        static_cast<AppLottery*>(lv_event_get_user_data(e))->_shutter();
+    }, LV_EVENT_CLICKED, this);
+
+    lv_obj_t* cancel = lv_button_create(_cam_modal);
+    lv_obj_set_size(cancel, 150, 64);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 24, -32);
+    lv_obj_set_style_bg_color(cancel, lv_color_hex(0x2A2C30), 0);
+    lv_obj_set_style_radius(cancel, 14, 0);
+    lv_obj_add_event_cb(cancel, [](lv_event_t* e) {
+        auto* self = static_cast<AppLottery*>(lv_event_get_user_data(e));
+        self->_closeCamera();
+    }, LV_EVENT_CLICKED, this);
+    lv_obj_t* cl = lv_label_create(cancel);
+    lv_label_set_text(cl, "取消");
+    lv_obj_set_style_text_font(cl, zh30(), 0);
+    lv_obj_center(cl);
+
+    GetHAL()->startCameraCapture(_cam_canvas);
+}
+
+void AppLottery::_closeCamera()
+{
+    GetHAL()->stopCameraCapture();
+    if (_cam_modal) {
+        lv_obj_delete(_cam_modal);
+        _cam_modal = nullptr;
+        _cam_canvas = nullptr;
+    }
+}
+
+void AppLottery::_shutter()
+{
+    if (_upload_in_flight.exchange(true)) return;
+    // 预览帧 → JPEG (阻塞 ~0.5s; 主线程做, 期间 LVGL 卡一拍可接受)
+    std::string jpeg = GetHAL()->capturePhotoJpeg(85);
+    if (jpeg.empty()) {
+        _upload_in_flight.store(false);
+        _toast = "拍照失败, 请重试";
+        return;
+    }
+    _closeCamera();
+    auto alive = _alive;
+    bool ok = GetHAL()->tryRunDetached([this, jpeg, alive]() {
+        auto* hal = GetHAL();
+        std::string base = "http://" + hal->getConfig("svc_host", "192.168.1.200") + ":8766";
+        auto resp = hal->httpPost(base + "/api/ssq/ticket", jpeg,
+                                  {{"Content-Type", "image/jpeg"}});
+        {
+            std::lock_guard<std::mutex> lk(_bets_mu);
+            _remote_bets.clear();
+            _remote_err.clear();
+            if (!alive || !*alive) {
+                _upload_in_flight.store(false);
+                return;
+            }
+            try {
+                auto j = nlohmann::json::parse(resp.body);
+                if (j.value("ok", false) && j.contains("bets")) {
+                    for (const auto& b : j["bets"]) {
+                        ssq::Pick p;
+                        for (int r : b.value("reds", std::vector<int>{}))
+                            if (r >= 1 && r <= 33) p.reds.push_back(r);
+                        for (int bl : b.value("blue", std::vector<int>{}))
+                            if (bl >= 1 && bl <= 16) p.blues.push_back(bl);
+                        if (!p.reds.empty() && !p.blues.empty())
+                            _remote_bets.push_back(std::move(p));
+                    }
+                    if (_remote_bets.empty()) _remote_err = "识别结果为空";
+                } else {
+                    _remote_err = j.value("error", "HTTP " + std::to_string(resp.status));
+                }
+            } catch (const std::exception& e) {
+                _remote_err = std::string("响应解析失败: ") + e.what();
+            }
+        }
+        _upload_in_flight.store(false);
+        _bets_ready.store(true);
+    }, 16 * 1024);
+    if (!ok) {
+        _upload_in_flight.store(false);
+        _toast = "上传 worker 启动失败";
+    }
+}
+
+// worker 完成 → 确认 modal (UI 线程)
+void AppLottery::_applyRemoteBets()
+{
+    if (!_scr) return;
+    std::vector<ssq::Pick> bets;
+    std::string err;
+    {
+        std::lock_guard<std::mutex> lk(_bets_mu);
+        bets = _remote_bets;
+        err = _remote_err;
+    }
+    if (!err.empty()) {
+        _toast = "识别失败: " + err;
+        return;
+    }
+    if (bets.empty()) return;
+    _confirmModal(bets);
+}
+
+// 识别确认 modal: 逐注展示 + 「改」(填入手动选号) + 「对奖」
+void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets)
+{
+    LvglLockGuard lock;
+    if (!_scr) return;
+    _closeResult();
+
+    const int rows = (int)bets.size();
+    const int mh = 150 + rows * 72 + 110;
+    _result_modal = lv_obj_create(_scr);
+    lv_obj_set_size(_result_modal, 880, std::min(mh, 640));
+    lv_obj_align(_result_modal, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(_result_modal, lv_color_hex(C_CARD()), 0);
+    lv_obj_set_style_radius(_result_modal, 24, 0);
+    lv_obj_set_style_border_width(_result_modal, 0, 0);
+    lv_obj_set_style_pad_all(_result_modal, 0, 0);
+    lv_obj_clear_flag(_result_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    char buf[96];
+    snprintf(buf, sizeof(buf), "识别到 %d 注 (点「改」可修正后判定)", rows);
+    lv_obj_t* title = lv_label_create(_result_modal);
+    lv_label_set_text(title, buf);
+    lv_obj_set_style_text_font(title, zh30(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+
+    // 保留 bets 供回调 (modal user_data 挂堆拷贝)
+    auto* bets_copy = new std::vector<ssq::Pick>(bets);
+    lv_obj_set_user_data(_result_modal, bets_copy);
+    lv_obj_add_event_cb(_result_modal, [](lv_event_t* e) {
+        delete static_cast<std::vector<ssq::Pick>*>(lv_obj_get_user_data(
+            lv_event_get_current_target_obj(e)));
+    }, LV_EVENT_DELETE, nullptr);
+
+    const int y0 = 80;
+    for (int i = 0; i < rows && i < 5; i++) {
+        const auto& p = bets[i];
+        const int bx = 40;
+        for (size_t k = 0; k < p.reds.size() && k < 12; k++) {
+            lv_obj_t* b = _makeBall(_result_modal, p.reds[k], false, 44, zh20());
+            lv_obj_set_pos(b, bx + k * 50, y0 + i * 72);
+        }
+        for (size_t k = 0; k < p.blues.size() && k < 4; k++) {
+            lv_obj_t* b = _makeBall(_result_modal, p.blues[k], true, 44, zh20());
+            lv_obj_set_pos(b, bx + 12 * 50 + k * 50, y0 + i * 72);
+        }
+        lv_obj_t* edit = lv_button_create(_result_modal);
+        lv_obj_set_size(edit, 100, 52);
+        lv_obj_align(edit, LV_ALIGN_TOP_RIGHT, -40, y0 + i * 72 - 4);
+        lv_obj_set_style_bg_color(edit, lv_color_hex(0x2A2C30), 0);
+        lv_obj_set_style_radius(edit, 12, 0);
+        lv_obj_set_user_data(edit, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(edit, [](lv_event_t* e) {
+            auto* self = static_cast<AppLottery*>(lv_event_get_user_data(e));
+            auto* v = static_cast<std::vector<ssq::Pick>*>(
+                lv_obj_get_user_data(lv_obj_get_parent(lv_event_get_current_target_obj(e))));
+            int idx = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_current_target_obj(e));
+            if (v && idx < (int)v->size()) self->_editBet((*v)[idx]);
+        }, LV_EVENT_CLICKED, this);
+        lv_obj_t* el = lv_label_create(edit);
+        lv_label_set_text(el, "改");
+        lv_obj_set_style_text_font(el, zh20(), 0);
+        lv_obj_center(el);
+    }
+
+    lv_obj_t* ok_btn = lv_button_create(_result_modal);
+    lv_obj_set_size(ok_btn, 240, 68);
+    lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_RIGHT, -32, -24);
+    lv_obj_set_style_bg_color(ok_btn, lv_color_hex(C_ACC()), 0);
+    lv_obj_set_style_radius(ok_btn, 14, 0);
+    lv_obj_add_event_cb(ok_btn, [](lv_event_t* e) {
+        auto* self = static_cast<AppLottery*>(lv_event_get_user_data(e));
+        auto* v = static_cast<std::vector<ssq::Pick>*>(
+            lv_obj_get_user_data(lv_obj_get_parent(lv_event_get_current_target_obj(e))));
+        if (v) {
+            std::vector<ssq::Pick> bets = *v;   // 拷贝 (modal 随后删)
+            self->_closeResult();
+            self->_judgeBets(bets);
+        }
+    }, LV_EVENT_CLICKED, this);
+    lv_obj_t* ol = lv_label_create(ok_btn);
+    lv_label_set_text(ol, "对  奖");
+    lv_obj_set_style_text_font(ol, zh30(), 0);
+    lv_obj_center(ol);
+
+    lv_obj_t* retake = lv_button_create(_result_modal);
+    lv_obj_set_size(retake, 200, 68);
+    lv_obj_align(retake, LV_ALIGN_BOTTOM_LEFT, 32, -24);
+    lv_obj_set_style_bg_color(retake, lv_color_hex(0x2A2C30), 0);
+    lv_obj_set_style_radius(retake, 14, 0);
+    lv_obj_add_event_cb(retake, [](lv_event_t* e) {
+        auto* self = static_cast<AppLottery*>(lv_event_get_user_data(e));
+        self->_closeResult();
+        self->_openCamera();
+    }, LV_EVENT_CLICKED, this);
+    lv_obj_t* rl = lv_label_create(retake);
+    lv_label_set_text(rl, "重  拍");
+    lv_obj_set_style_text_font(rl, zh30(), 0);
+    lv_obj_center(rl);
+}
+
+// 该注填入手动选号网格 (其余注丢弃), 用户在对奖页修正后手动判定
+void AppLottery::_editBet(const ssq::Pick& bet)
+{
+    memset(_pick_red, 0, sizeof(_pick_red));
+    memset(_pick_blue, 0, sizeof(_pick_blue));
+    for (int r : bet.reds)
+        if (r >= 1 && r <= 33) _pick_red[r - 1] = true;
+    for (int b : bet.blues)
+        if (b >= 1 && b <= 16) _pick_blue[b - 1] = true;
+    _closeResult();
+    _setTab(3);
+    _updatePickUi();
+    _toast = "已填入选号网格, 修正后点「判定」";
+}
+
+// 多注/复式混合判定 (拍照路径; 手动路径仍走 _showSingle/MultiResult)
+void AppLottery::_judgeBets(const std::vector<ssq::Pick>& bets)
+{
+    std::vector<ssq::DrawIssue> issues;
+    {
+        std::lock_guard<std::mutex> lk(_mu);
+        issues = _issues;
+    }
+    if (issues.empty()) {
+        _toast = "暂无开奖数据";
+        return;
+    }
+    const ssq::DrawIssue& d = issues[_target_idx < (int)issues.size() ? _target_idx : 0];
+
+    LvglLockGuard lock;
+    if (!_scr) return;
+    _closeResult();
+
+    static const char* names[7] = {"未中", "一等奖", "二等奖", "三等奖", "四等奖", "五等奖", "六等奖"};
+    _result_modal = lv_obj_create(_scr);
+    const int mh = 170 + (int)bets.size() * 64 + 90;
+    lv_obj_set_size(_result_modal, 980, std::min(mh, 660));
+    lv_obj_align(_result_modal, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(_result_modal, lv_color_hex(C_CARD()), 0);
+    lv_obj_set_style_radius(_result_modal, 24, 0);
+    lv_obj_set_style_border_width(_result_modal, 0, 0);
+    lv_obj_set_style_pad_all(_result_modal, 0, 0);
+    lv_obj_clear_flag(_result_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    char buf[128];
+    snprintf(buf, sizeof(buf), "对奖结果 · %s 期 · 共 %d 注", d.code.c_str(), (int)bets.size());
+    lv_obj_t* title = lv_label_create(_result_modal);
+    lv_label_set_text(title, buf);
+    lv_obj_set_style_text_font(title, zh30(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+
+    long total = 0;
+    bool has_floating = false;
+    int y = 90;
+    for (const auto& p : bets) {
+        if (p.reds.size() == 6 && p.blues.size() == 1) {   // 单式逐注
+            int r6[6];
+            for (int i = 0; i < 6; i++) r6[i] = p.reds[i];
+            ssq::PrizeResult r = ssq::judgeOne(d, r6, p.blues[0]);
+            total += r.money;
+            if (r.level >= 1 && r.money == 0) has_floating = true;
+            snprintf(buf, sizeof(buf), "→ %s%s", names[r.level],
+                     r.money > 0 ? ("  ¥" + fmt_thousands(r.money)).c_str() : "");
+            lv_obj_t* res = lv_label_create(_result_modal);
+            lv_label_set_text(res, r.level ? buf : "→ 未中奖");
+            lv_obj_set_style_text_font(res, zh20(), 0);
+            lv_obj_set_style_text_color(res, lv_color_hex(r.level ? 0xFFB300 : C_DIM()), 0);
+            lv_obj_align(res, LV_ALIGN_TOP_RIGHT, -32, y + 12);
+        } else {   // 复式注
+            ssq::MultiResult m = ssq::judgeMulti(d, p);
+            total += m.total_money;
+            if (m.has_floating) has_floating = true;
+            snprintf(buf, sizeof(buf), "复式 %d红%d蓝 = %ld 注", (int)p.reds.size(),
+                     (int)p.blues.size(), m.bet_count);
+            lv_obj_t* info = lv_label_create(_result_modal);
+            lv_label_set_text(info, buf);
+            lv_obj_set_style_text_font(info, zh20(), 0);
+            lv_obj_set_style_text_color(info, lv_color_hex(C_DIM()), 0);
+            lv_obj_align(info, LV_ALIGN_TOP_RIGHT, -32, y);
+            int ly = y + 30;
+            for (int lv = 6; lv >= 1; lv--) {
+                if (m.level_counts[lv] == 0) continue;
+                long gm = ssq::gradeMoney(lv, d) * m.level_counts[lv];
+                snprintf(buf, sizeof(buf), "%s × %ld%s", names[lv], m.level_counts[lv],
+                         gm > 0 ? ("  ¥" + fmt_thousands(gm)).c_str() : "");
+                lv_obj_t* l = lv_label_create(_result_modal);
+                lv_label_set_text(l, buf);
+                lv_obj_set_style_text_font(l, zh20(), 0);
+                lv_obj_set_style_text_color(l, lv_color_hex(0xFFB300), 0);
+                lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -32, ly);
+                ly += 30;
+            }
+        }
+        // 该注球行
+        for (size_t k = 0; k < p.reds.size() && k < 12; k++) {
+            lv_obj_t* b = _makeBall(_result_modal, p.reds[k], false, 40, zh20());
+            lv_obj_set_pos(b, 36 + k * 46, y);
+        }
+        for (size_t k = 0; k < p.blues.size() && k < 4; k++) {
+            lv_obj_t* b = _makeBall(_result_modal, p.blues[k], true, 40, zh20());
+            lv_obj_set_pos(b, 36 + 12 * 46 + k * 46, y);
+        }
+        y += 64 + (p.reds.size() == 6 ? 0 : 60);
+    }
+
+    lv_obj_t* total_lbl = lv_label_create(_result_modal);
+    if (total > 0) {
+        snprintf(buf, sizeof(buf), "合计 ¥%s%s", fmt_thousands(total).c_str(),
+                 has_floating ? " (一/二等奖以当期公告为准)" : "");
+        lv_label_set_text(total_lbl, buf);
+        lv_obj_set_style_text_color(total_lbl, lv_color_hex(0xFFB300), 0);
+    } else {
+        lv_label_set_text(total_lbl, "未中奖");
+        lv_obj_set_style_text_color(total_lbl, lv_color_hex(C_DIM()), 0);
+    }
+    lv_obj_set_style_text_font(total_lbl, zh30(), 0);
+    lv_obj_align(total_lbl, LV_ALIGN_BOTTOM_LEFT, 32, -32);
+
+    lv_obj_t* close = lv_button_create(_result_modal);
+    lv_obj_set_size(close, 200, 64);
+    lv_obj_align(close, LV_ALIGN_BOTTOM_RIGHT, -32, -24);
+    lv_obj_set_style_bg_color(close, lv_color_hex(C_ACC()), 0);
+    lv_obj_set_style_radius(close, 14, 0);
+    lv_obj_add_event_cb(close, [](lv_event_t* e) {
+        static_cast<AppLottery*>(lv_event_get_user_data(e))->_closeResult();
+    }, LV_EVENT_CLICKED, this);
+    lv_obj_t* cl = lv_label_create(close);
+    lv_label_set_text(cl, "知道了");
+    lv_obj_set_style_text_font(cl, zh30(), 0);
+    lv_obj_center(cl);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 //  手势 (上拨退出; 底缘 y>650 起手 + 前台守卫 + 双轨 500ms 去重)
 // ════════════════════════════════════════════════════════════════════════════
 namespace {
@@ -1449,7 +1829,7 @@ void AppLottery::_installSwipeGesture()
                     return;
                 }
                 if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
-                    if (ctx->app->_result_modal) return;   // 结果弹窗期间屏蔽
+                    if (ctx->app->_result_modal || ctx->app->_cam_modal) return;   // 弹窗期间屏蔽
                     if (lv_screen_active() != ctx->app->_scr) return;   // 前台守卫
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
@@ -1471,7 +1851,7 @@ void AppLottery::_installSwipeGesture()
                 auto* ctx = static_cast<SwipeCtx*>(lv_event_get_user_data(e));
                 auto alive = ctx->alive.lock();
                 if (!alive || !*alive) return;
-                if (ctx->app->_result_modal) return;
+                if (ctx->app->_result_modal || ctx->app->_cam_modal) return;
                 if (lv_screen_active() != ctx->app->_scr) return;   // 前台守卫
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {

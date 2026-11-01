@@ -126,6 +126,25 @@ private:
     void _showSingleResult(const ssq::DrawIssue& d, const ssq::Pick& p);
     void _showMultiResult(const ssq::DrawIssue& d, const ssq::Pick& p);
     void _closeResult();
+
+    // ── 拍照识别 (真机链路; 桌面 capturePhotoJpeg 返回空) ──
+    // 预览 modal (hal RGB565 直刷 canvas) → 快门 → JPEG POST /api/ssq/ticket
+    // → 识别确认 modal (逐注可改/直接对奖) → 多注判定结果
+    void _openCamera();
+    void _closeCamera();
+    void _shutter();
+    void _uploadWorker(std::string jpeg, std::shared_ptr<bool> alive);
+    void _applyRemoteBets();     // worker 完成 → 确认 modal (onRunning 消费)
+    void _confirmModal(const std::vector<ssq::Pick>& bets);   // 识别确认
+    void _judgeBets(const std::vector<ssq::Pick>& bets);      // 多注/复式混合判定
+    void _editBet(const ssq::Pick& bet);   // 该注填入手动选号, 切对奖 tab 修正
+    lv_obj_t* _cam_modal  = nullptr;
+    lv_obj_t* _cam_canvas = nullptr;
+    std::mutex _bets_mu;
+    std::vector<ssq::Pick> _remote_bets;
+    std::string _remote_err;
+    std::atomic<bool> _bets_ready{false};
+    std::atomic<bool> _upload_in_flight{false};
     lv_obj_t* _pick_red_btns[33]  = {};
     lv_obj_t* _pick_blue_btns[16] = {};
     bool _pick_red[33]  = {};

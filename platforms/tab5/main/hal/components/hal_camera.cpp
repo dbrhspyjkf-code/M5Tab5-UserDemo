@@ -25,6 +25,7 @@
 #include "linux/videodev2.h"
 #include "esp_video_init.h"
 #include "esp_video_device.h"
+#include "jpg/image_to_jpeg.h"   // RGB565→JPEG (xiaozhi_core, esp_new_jpeg)
 #include "driver/i2c_master.h"
 #include "driver/ppa.h"
 #include "imlib.h"
@@ -43,6 +44,14 @@ static QueueHandle_t queue_camera_ctrl = NULL;
 
 static bool is_camera_capturing = false;
 static std::mutex camera_mutex;
+
+// ── 快门拍照 (capturePhotoJpeg) ────────────────────────────────────────────
+// 预览 task 每帧 PPA 输出后检查请求标志, 命中则把已 mirror 的 RGB565 帧
+// 拷到共享缓冲并给信号量; 调用线程等信号量后编码 JPEG —— 帧数据无跨线程
+// 竞争 (编码期间预览 task 已拿到新帧继续跑)。
+static uint8_t* s_photo_frame   = nullptr;   // 1280*720*2, 首拍时分配
+static SemaphoreHandle_t s_photo_sem = NULL;
+static volatile bool s_photo_req = false;
 
 static const char* TAG = "camera";
 
@@ -316,7 +325,13 @@ void app_camera_display(void* arg)
                                             .mode           = PPA_TRANS_MODE_BLOCKING};
         ppa_do_scale_rotate_mirror(ppa_srm_handle, &srm_config);
 
-        // auto detect_results = human_face_detector->run(dl_img); // format: hwc
+        // 快门请求: 拷贝当前已 mirror 帧 (RGB565) 给 capturePhotoJpeg 编码
+        if (s_photo_req && s_photo_frame) {
+            memcpy(s_photo_frame, img_show_data, img_show_size);
+            s_photo_req = false;
+            xSemaphoreGive(s_photo_sem);
+        }
+
 
         bsp_display_lock(0);
         lv_canvas_set_buffer(camera_canvas, img_show->data, CAMERA_WIDTH, CAMERA_HEIGHT, LV_COLOR_FORMAT_RGB565);
@@ -392,4 +407,47 @@ bool HalEsp32::isCameraCapturing()
 {
     std::lock_guard<std::mutex> lock(camera_mutex);
     return is_camera_capturing;
+}
+
+std::string HalEsp32::capturePhotoJpeg(int quality)
+{
+    if (!isCameraCapturing()) {
+        mclog::tagWarn(TAG, "capturePhotoJpeg: preview not running");
+        return "";
+    }
+    constexpr size_t FRAME_SIZE = (size_t)CAMERA_WIDTH * CAMERA_HEIGHT * 2;
+    if (!s_photo_frame) {
+        s_photo_frame = (uint8_t*)heap_caps_malloc(FRAME_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_photo_frame) {
+            mclog::tagWarn(TAG, "photo frame alloc failed");
+            return "";
+        }
+    }
+    if (s_photo_sem == NULL) {
+        s_photo_sem = xSemaphoreCreateBinary();
+        if (s_photo_sem == NULL) return "";
+    }
+    // 清掉可能残留的旧信号量, 再发请求 (预览 task ~30fps, 等一帧 <50ms)
+    xSemaphoreTake(s_photo_sem, 0);
+    s_photo_req = true;
+    if (xSemaphoreTake(s_photo_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        mclog::tagWarn(TAG, "capturePhotoJpeg: frame wait timeout");
+        s_photo_req = false;
+        return "";
+    }
+
+    // RGB565 720p → JPEG (image_to_jpeg 由 xiaozhi_core 提供, esp_new_jpeg)
+    uint8_t* out     = nullptr;
+    size_t   out_len = 0;
+    if (!image_to_jpeg(s_photo_frame, FRAME_SIZE, CAMERA_WIDTH, CAMERA_HEIGHT,
+                       V4L2_PIX_FMT_RGB565, (uint8_t)quality, &out, &out_len) ||
+        !out || out_len == 0) {
+        mclog::tagWarn(TAG, "jpeg encode failed");
+        if (out) free(out);
+        return "";
+    }
+    mclog::tagInfo(TAG, "photo jpeg: {} bytes", out_len);
+    std::string jpeg((char*)out, out_len);
+    free(out);
+    return jpeg;
 }
