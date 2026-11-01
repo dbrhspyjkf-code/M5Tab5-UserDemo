@@ -1698,7 +1698,10 @@ void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets,
     }, LV_EVENT_DELETE, nullptr);
 
     const int y0 = 80;
-    for (int i = 0; i < rows && i < 5; i++) {
+    // 上限是 bets 自身行数——rows 含 partials, 用 rows 索引 bets[i] 在 partials 非空时
+    // 越界读堆外 (2026-11-01 16:19 PANIC: bets=3 partials=2 → bets[3]/bets[4] 垃圾 Pick
+    // → p.reds[k] 访问 NULL+0x14; 间歇性取决于堆垃圾内容, 只读不坏堆故探针测不出)
+    for (int i = 0; i < (int)bets.size() && i < 5; i++) {
         const auto& p = bets[i];
         const int bx = 40;
         for (size_t k = 0; k < p.reds.size() && k < 8; k++) {
