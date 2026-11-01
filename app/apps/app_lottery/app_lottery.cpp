@@ -11,6 +11,7 @@
 #include <algorithm>
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <esp_timer.h>
+#include <esp_heap_caps.h>
 #endif
 
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -1593,6 +1594,11 @@ void AppLottery::_shutter()
 void AppLottery::_applyRemoteBets()
 {
     if (!_scr) return;
+#ifndef PLATFORM_BUILD_DESKTOP
+    mclog::tagInfo(TAG, "confirm: internal heap free={} largest={}",
+                   heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                   heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+#endif
     if (_ocr_wait_lbl) {
         lv_obj_delete(_ocr_wait_lbl);
         _ocr_wait_lbl = nullptr;

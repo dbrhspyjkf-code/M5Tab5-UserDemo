@@ -526,7 +526,7 @@ void HalEsp32::startCameraCapture(lv_obj_t* imgCanvas)
     is_camera_capturing = true;
     camera_mutex.unlock();
     // 16KB 栈: esp_video_init→sensor probe 调用链深, 8KB 有溢出风险
-    if (xTaskCreatePinnedToCore(app_camera_display, "cam", 16 * 1024, NULL, 5, &camera_task, 1) != pdPASS) {
+    if (xTaskCreatePinnedToCore(app_camera_display, "cam", 12 * 1024, NULL, 5, &camera_task, 1) != pdPASS) {
         mclog::tagWarn(TAG, "camera task create failed");
         camera_task = NULL;
         camera_mutex.lock();
