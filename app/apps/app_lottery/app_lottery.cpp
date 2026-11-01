@@ -213,6 +213,14 @@ void AppLottery::onRunning()
     if (_data_ready.exchange(false)) _applyData();
     if (_bets_ready.exchange(false)) _applyRemoteBets();
 
+    // 相机 modal 开着但预览 task 已死 (init/alloc/ppa 失败走干净退出) →
+    // 关 modal + toast 反馈 (失败原因看串口 [camera] 日志)
+    if (_cam_modal && !GetHAL()->isCameraCapturing()) {
+        _closeCamera();   // task 已死: stop 直接返回, 只删 modal
+        _toast = "相机启动失败, 详见串口日志";
+        _toast_start = 0;
+    }
+
     // toast (拍照识别占位等短提示), 3s 自清
     if (_toast_lbl) {
         if (_toast.empty()) {
