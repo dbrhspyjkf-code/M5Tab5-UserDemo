@@ -473,7 +473,7 @@ void AppLottery::_nullUiPtrs()
     for (auto& b : _pick_blue_btns) b = nullptr;
     _target_lbl = _target_draws = _pick_summary = _judge_btn = _photo_btn = nullptr;
     _result_modal = nullptr;
-    _cam_modal = _cam_canvas = nullptr;
+    _cam_modal = _cam_canvas = _ocr_wait_lbl = nullptr;
     _toast_lbl = nullptr;
 }
 
@@ -1512,6 +1512,14 @@ void AppLottery::_shutter()
         return;
     }
     _closeCamera();
+    // 上传 + 服务端 OCR ~10s, 给「识别中」反馈 (结果页弹出时清除)
+    if (_scr && !_ocr_wait_lbl) {
+        _ocr_wait_lbl = lv_label_create(_scr);
+        lv_label_set_text(_ocr_wait_lbl, "识别中… (约 10 秒)");
+        lv_obj_set_style_text_font(_ocr_wait_lbl, zh30(), 0);
+        lv_obj_set_style_text_color(_ocr_wait_lbl, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(_ocr_wait_lbl, LV_ALIGN_CENTER, 0, 0);
+    }
     auto alive = _alive;
     bool ok = GetHAL()->tryRunDetached([this, frame, alive]() {
         auto* hal = GetHAL();
@@ -1529,6 +1537,7 @@ void AppLottery::_shutter()
         {
             std::lock_guard<std::mutex> lk(_bets_mu);
             _remote_bets.clear();
+            _remote_partial.clear();
             _remote_err.clear();
             if (!alive || !*alive) {
                 _upload_in_flight.store(false);
@@ -1536,7 +1545,7 @@ void AppLottery::_shutter()
             }
             try {
                 auto j = nlohmann::json::parse(resp.body);
-                if (j.value("ok", false) && j.contains("bets")) {
+                if (j.value("ok", false) && (j.contains("bets") || j.contains("partial"))) {
                     for (const auto& b : j["bets"]) {
                         ssq::Pick p;
                         for (int r : b.value("reds", std::vector<int>{}))
@@ -1546,7 +1555,16 @@ void AppLottery::_shutter()
                         if (!p.reds.empty() && !p.blues.empty())
                             _remote_bets.push_back(std::move(p));
                     }
-                    if (_remote_bets.empty()) _remote_err = "识别结果为空";
+                    for (const auto& b : j.value("partial", nlohmann::json::array())) {
+                        ssq::Pick p;
+                        for (int r : b.value("reds", std::vector<int>{}))
+                            if (r >= 1 && r <= 33) p.reds.push_back(r);
+                        for (int bl : b.value("blue", std::vector<int>{}))
+                            if (bl >= 1 && bl <= 16) p.blues.push_back(bl);
+                        _remote_partial.push_back(std::move(p));
+                    }
+                    if (_remote_bets.empty() && _remote_partial.empty())
+                        _remote_err = "识别结果为空";
                 } else {
                     _remote_err = j.value("error", "HTTP " + std::to_string(resp.status));
                 }
@@ -1567,30 +1585,37 @@ void AppLottery::_shutter()
 void AppLottery::_applyRemoteBets()
 {
     if (!_scr) return;
-    std::vector<ssq::Pick> bets;
+    if (_ocr_wait_lbl) {
+        lv_obj_delete(_ocr_wait_lbl);
+        _ocr_wait_lbl = nullptr;
+    }
+    std::vector<ssq::Pick> bets, partials;
     std::string err;
     {
         std::lock_guard<std::mutex> lk(_bets_mu);
         bets = _remote_bets;
+        partials = _remote_partial;
         err = _remote_err;
     }
     if (!err.empty()) {
         _toast = "识别失败: " + err;
         return;
     }
-    if (bets.empty()) return;
-    _confirmModal(bets);
+    if (bets.empty() && partials.empty()) return;
+    _confirmModal(bets, partials);
 }
 
-// 识别确认 modal: 逐注展示 + 「改」(填入手动选号) + 「对奖」
-void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets)
+// 识别确认 modal: 逐注展示 + 「改」(填入手动选号) + 「对奖」;
+// partial 注 (识别不完整) 显示红字标注, 只引导修正不参与判定
+void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets,
+                               const std::vector<ssq::Pick>& partials)
 {
     LvglLockGuard lock;
     if (!_scr) return;
     _closeResult();
 
-    const int rows = (int)bets.size();
-    const int mh = 150 + rows * 72 + 110;
+    const int rows = (int)bets.size() + (int)partials.size();
+    const int mh = 150 + rows * 72 + 110 + (partials.empty() ? 0 : 40);
     _result_modal = lv_obj_create(_scr);
     lv_obj_set_size(_result_modal, 880, std::min(mh, 640));
     lv_obj_align(_result_modal, LV_ALIGN_CENTER, 0, 0);
@@ -1601,7 +1626,10 @@ void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets)
     lv_obj_clear_flag(_result_modal, LV_OBJ_FLAG_SCROLLABLE);
 
     char buf[96];
-    snprintf(buf, sizeof(buf), "识别到 %d 注 (点「改」可修正后判定)", rows);
+    if (partials.empty())
+        snprintf(buf, sizeof(buf), "识别到 %d 注 (点「改」可修正后判定)", rows);
+    else
+        snprintf(buf, sizeof(buf), "完整 %d 注 + 不完整 %d 注 (请点「改」修正)", (int)bets.size(), (int)partials.size());
     lv_obj_t* title = lv_label_create(_result_modal);
     lv_label_set_text(title, buf);
     lv_obj_set_style_text_font(title, zh30(), 0);
@@ -1647,6 +1675,55 @@ void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets)
         lv_obj_center(el);
     }
 
+    // partial 注行 (识别不完整): 球行 + 红字标注 + 「改」修正 (不参与判定)
+    for (size_t pi = 0; pi < partials.size() && pi < 3; pi++) {
+        const int row_y = y0 + ((int)bets.size() + (int)pi) * 72;
+        const auto& p = partials[pi];
+        for (size_t k = 0; k < p.reds.size() && k < 12; k++) {
+            lv_obj_t* b = _makeBall(_result_modal, p.reds[k], false, 44, zh20());
+            lv_obj_set_pos(b, 40 + k * 50, row_y);
+        }
+        for (size_t k = 0; k < p.blues.size() && k < 4; k++) {
+            lv_obj_t* b = _makeBall(_result_modal, p.blues[k], true, 44, zh20());
+            lv_obj_set_pos(b, 40 + 12 * 50 + k * 50, row_y);
+        }
+        lv_obj_t* tag = lv_label_create(_result_modal);
+        lv_label_set_text(tag, "不完整");
+        lv_obj_set_style_text_font(tag, zh20(), 0);
+        lv_obj_set_style_text_color(tag, lv_color_hex(0xE53935), 0);
+        lv_obj_align(tag, LV_ALIGN_TOP_RIGHT, -150, row_y + 8);
+        // 「改」: 每钮挂堆拷贝 (modal 删除事件统一回收到 bets_copy, 这里独立释放)
+        auto* pick_copy = new ssq::Pick(p);
+        lv_obj_t* edit = lv_button_create(_result_modal);
+        lv_obj_set_size(edit, 100, 52);
+        lv_obj_align(edit, LV_ALIGN_TOP_RIGHT, -40, row_y - 4);
+        lv_obj_set_style_bg_color(edit, lv_color_hex(0x8A2E2E), 0);
+        lv_obj_set_style_radius(edit, 12, 0);
+        lv_obj_set_user_data(edit, pick_copy);
+        lv_obj_add_event_cb(edit, [](lv_event_t* e) {
+            auto* self = static_cast<AppLottery*>(lv_event_get_user_data(e));
+            lv_obj_t* btn = lv_event_get_current_target_obj(e);
+            auto* pick = static_cast<ssq::Pick*>(lv_obj_get_user_data(btn));
+            if (pick) {
+                ssq::Pick p = *pick;
+                delete pick;
+                lv_obj_set_user_data(btn, nullptr);
+                self->_editBet(p);
+            }
+        }, LV_EVENT_CLICKED, this);
+        lv_obj_add_event_cb(edit, [](lv_event_t* e) {
+            auto* pick = static_cast<ssq::Pick*>(lv_obj_get_user_data(lv_event_get_current_target_obj(e)));
+            if (pick) {   // modal 被整删时释放 (走「改」路径已置空不会双删)
+                delete pick;
+                lv_obj_set_user_data(lv_event_get_current_target_obj(e), nullptr);
+            }
+        }, LV_EVENT_DELETE, nullptr);
+        lv_obj_t* el = lv_label_create(edit);
+        lv_label_set_text(el, "改");
+        lv_obj_set_style_text_font(el, zh20(), 0);
+        lv_obj_center(el);
+    }
+
     lv_obj_t* ok_btn = lv_button_create(_result_modal);
     lv_obj_set_size(ok_btn, 240, 68);
     lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_RIGHT, -32, -24);
@@ -1657,6 +1734,11 @@ void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets)
         auto* v = static_cast<std::vector<ssq::Pick>*>(
             lv_obj_get_user_data(lv_obj_get_parent(lv_event_get_current_target_obj(e))));
         if (v) {
+            if (v->empty()) {
+                self->_toast = "无完整注, 请点「改」修正后手动判定";
+                self->_toast_start = 0;
+                return;
+            }
             std::vector<ssq::Pick> bets = *v;   // 拷贝 (modal 随后删)
             self->_closeResult();
             self->_judgeBets(bets);

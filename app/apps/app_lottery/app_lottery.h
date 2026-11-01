@@ -134,13 +134,16 @@ private:
     void _closeCamera();
     void _shutter();
     void _applyRemoteBets();     // worker 完成 → 确认 modal (onRunning 消费)
-    void _confirmModal(const std::vector<ssq::Pick>& bets);   // 识别确认
+    void _confirmModal(const std::vector<ssq::Pick>& bets,
+                      const std::vector<ssq::Pick>& partials);   // 识别确认 (partial 行引导修正)
     void _judgeBets(const std::vector<ssq::Pick>& bets);      // 多注/复式混合判定
     void _editBet(const ssq::Pick& bet);   // 该注填入手动选号, 切对奖 tab 修正
     lv_obj_t* _cam_modal  = nullptr;
     lv_obj_t* _cam_canvas = nullptr;
+    lv_obj_t* _ocr_wait_lbl = nullptr;   // 「识别中…」(上传+OCR ~10s)
     std::mutex _bets_mu;
     std::vector<ssq::Pick> _remote_bets;
+    std::vector<ssq::Pick> _remote_partial;   // 识别不完整的注 (引导修正)
     std::string _remote_err;
     std::atomic<bool> _bets_ready{false};
     std::atomic<bool> _upload_in_flight{false};
