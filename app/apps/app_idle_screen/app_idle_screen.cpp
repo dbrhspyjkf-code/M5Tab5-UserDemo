@@ -335,11 +335,14 @@ void AppIdleScreen::_show()
 
     // 行3 (2026-11-01): 下一条提醒/行程, 农历下右对齐; 固定宽 + LONG_DOT
     // 超长自动省略 (事件标题理论可任意长), 无事件时保持空文本=不可见。
+    // 注意: 固定宽 label 的文本默认左对齐, 必须 TEXT_ALIGN_RIGHT 文本
+    // 右缘才与行1/行2 (LV_SIZE_CONTENT 右对齐) 对齐。
     _ph_ag_lbl = lv_label_create(_ph_scrim);
     lv_obj_set_style_text_font(_ph_ag_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_ph_ag_lbl, lv_color_hex(0xC6D6E6), 0);
     lv_obj_set_width(_ph_ag_lbl, 432);
     lv_label_set_long_mode(_ph_ag_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(_ph_ag_lbl, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_align(_ph_ag_lbl, LV_ALIGN_TOP_RIGHT, -24, 96);
     lv_obj_clear_flag(_ph_ag_lbl, LV_OBJ_FLAG_CLICKABLE);
     lv_label_set_text(_ph_ag_lbl, ag0.c_str());
