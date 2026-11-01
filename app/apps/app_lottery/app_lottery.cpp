@@ -618,23 +618,37 @@ void AppLottery::_updateDrawPage()
         lv_label_set_text(c, buf);
         lv_obj_set_style_text_font(c, zh20(), 0);
         lv_obj_set_style_text_color(c, lv_color_hex(C_DIM()), 0);
-        lv_obj_align(c, LV_ALIGN_TOP_LEFT, 24, 16);
+        lv_obj_align(c, LV_ALIGN_TOP_LEFT, 24, 12);
 
         snprintf(buf, sizeof(buf), "%s 周%s", d.date.c_str(), d.week.c_str());
         lv_obj_t* dt = lv_label_create(row);
         lv_label_set_text(dt, buf);
         lv_obj_set_style_text_font(dt, zh20(), 0);
         lv_obj_set_style_text_color(dt, lv_color_hex(C_DIM()), 0);
-        lv_obj_align(dt, LV_ALIGN_TOP_LEFT, 24, 54);
+        lv_obj_align(dt, LV_ALIGN_TOP_LEFT, 24, 46);
 
         // 小球 44px 居中 (数字 zh30)
         const int bx0 = (SCREEN_W - 32 - (6 * 52 + 44)) / 2;
         for (int i = 0; i < 6; i++) {
             lv_obj_t* b = _makeBall(row, d.reds[i], false, 44, zh30());
-            lv_obj_set_pos(b, bx0 + i * 52, 27);
+            lv_obj_set_pos(b, bx0 + i * 52, 14);
         }
         lv_obj_t* bb = _makeBall(row, d.blue, true, 44, zh30());
-        lv_obj_set_pos(bb, bx0 + 6 * 52, 27);
+        lv_obj_set_pos(bb, bx0 + 6 * 52, 14);
+
+        // 奖池 + 一二等奖注数 (与最新期卡同数据, 2026-11-01 用户要求)
+        long n1 = 0, n2 = 0;
+        for (const auto& g : d.grades) {
+            if (g.level == 1) n1 = g.num;
+            if (g.level == 2) n2 = g.num;
+        }
+        snprintf(buf, sizeof(buf), "奖池 %s · 一等奖 %ld 注 · 二等奖 %ld 注",
+                 fmt_yi(d.pool).c_str(), n1, n2);
+        lv_obj_t* info = lv_label_create(row);
+        lv_label_set_text(info, buf);
+        lv_obj_set_style_text_font(info, zh20(), 0);
+        lv_obj_set_style_text_color(info, lv_color_hex(C_DIM()), 0);
+        lv_obj_align(info, LV_ALIGN_BOTTOM_MID, 0, -8);
     }
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -987,18 +1001,18 @@ void AppLottery::_updatePickUi()
         if (_target_draws) {
             lv_obj_delete(_target_draws);
             _target_draws = lv_obj_create(_pages[2]);
-            lv_obj_set_size(_target_draws, 700, 72);
-            lv_obj_align(_target_draws, LV_ALIGN_TOP_RIGHT, -20, 0);
+            lv_obj_set_size(_target_draws, 700, 88);
+            lv_obj_align(_target_draws, LV_ALIGN_TOP_RIGHT, -20, -2);
             lv_obj_set_style_bg_opa(_target_draws, LV_OPA_TRANSP, 0);
             lv_obj_set_style_border_width(_target_draws, 0, 0);
             lv_obj_set_style_pad_all(_target_draws, 0, 0);
             lv_obj_clear_flag(_target_draws, LV_OBJ_FLAG_SCROLLABLE);
             for (int i = 0; i < 6; i++) {
-                lv_obj_t* b = _makeBall(_target_draws, d.reds[i], false, 48, zh20());
-                lv_obj_set_pos(b, 700 - 8 * 56 + i * 56, 12);
+                lv_obj_t* b = _makeBall(_target_draws, d.reds[i], false, 64, zh30());
+                lv_obj_set_pos(b, 700 - (6 * 72 + 64) - 12 + i * 72, 12);
             }
-            lv_obj_t* bb = _makeBall(_target_draws, d.blue, true, 48, zh20());
-            lv_obj_set_pos(bb, 700 - 8 * 56 + 6 * 56, 12);
+            lv_obj_t* bb = _makeBall(_target_draws, d.blue, true, 64, zh30());
+            lv_obj_set_pos(bb, 700 - (6 * 72 + 64) - 12 + 6 * 72, 12);
         }
     }
 }
@@ -1056,15 +1070,15 @@ void AppLottery::_showSingleResult(const ssq::DrawIssue& d, const ssq::Pick& p)
     lv_obj_set_style_text_color(title, lv_color_hex(C_DIM()), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
 
-    // 选号球行 (72px 大球)
-    const int bx0 = 940 / 2 - (7 * 72 + 6 * 14) / 2;
+    // 选号球行 (56px 球, 等距紧排)
+    const int bx0 = (940 - (6 * 66 + 56)) / 2;
     for (int i = 0; i < 6; i++) {
-        lv_obj_t* b = _makeBall(_result_modal, p.reds[i], false, 72, zh30());
-        lv_obj_set_pos(b, bx0 + i * 86, 110);
+        lv_obj_t* b = _makeBall(_result_modal, p.reds[i], false, 56, zh30());
+        lv_obj_set_pos(b, bx0 + i * 66, 120);
     }
     {
-        lv_obj_t* b = _makeBall(_result_modal, p.blues[0], true, 72, zh30());
-        lv_obj_set_pos(b, bx0 + 6 * 86, 110);
+        lv_obj_t* b = _makeBall(_result_modal, p.blues[0], true, 56, zh30());
+        lv_obj_set_pos(b, bx0 + 6 * 66, 120);
     }
 
     static const char* names[7] = {"", "一等奖", "二等奖", "三等奖", "四等奖", "五等奖", "六等奖"};
@@ -1703,14 +1717,15 @@ void AppLottery::_judgeBets(const std::vector<ssq::Pick>& bets)
                 extra_rows++;
             }
         }
-        // 该注球行: 54px 球 zh30 数字 (12红+4蓝 = 16×60=960, 右侧留 200 结果区)
+        // 该注球行: 44px 球 zh30, 蓝球紧跟红球 (不固定起点拉开距离)
         for (size_t k = 0; k < p.reds.size() && k < 12; k++) {
-            lv_obj_t* b = _makeBall(_result_modal, p.reds[k], false, 54, zh30());
-            lv_obj_set_pos(b, 32 + (int)k * 60, y);
+            lv_obj_t* b = _makeBall(_result_modal, p.reds[k], false, 44, zh30());
+            lv_obj_set_pos(b, 32 + (int)k * 50, y + 5);
         }
+        const int blue_x = 32 + (int)std::min(p.reds.size(), (size_t)12) * 50 + 8;
         for (size_t k = 0; k < p.blues.size() && k < 4; k++) {
-            lv_obj_t* b = _makeBall(_result_modal, p.blues[k], true, 54, zh30());
-            lv_obj_set_pos(b, 32 + 12 * 60 + (int)k * 60, y);
+            lv_obj_t* b = _makeBall(_result_modal, p.blues[k], true, 44, zh30());
+            lv_obj_set_pos(b, blue_x + (int)k * 50, y + 5);
         }
         y += 92 + extra_rows * 38;
     }

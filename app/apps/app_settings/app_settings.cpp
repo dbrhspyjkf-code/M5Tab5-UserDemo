@@ -43,9 +43,8 @@ extern lv_font_t font_zh_36;
 // 健康 tile 用预渲染字形 (app_health/health_icons.c, PIL 生成)
 extern const lv_image_dsc_t hl_tile_health;
 
-// 双色球 tile 图标 (app_lottery/lottery_icon.c, gen_lottery_icon.py 生成,
-// 用户指定 icons8 彩票图标 — 彩色票券+红蓝球, 保留原色)
-extern const lv_image_dsc_t lottery_icon;
+// 双色球 tile 图标: 已改图形化 kind==12 (票券+红六点+蓝一点, 随主题色,
+// 2026-11-01); 原 lottery_icon.c 静态彩图无引用由 gc-sections 裁掉.
 
 // 工具页图形分支共用: 画一块纯色小矩形 (图标线条/圆点), 自动冒泡点击到父 tile.
 static lv_obj_t* tool_accent_rect(lv_obj_t* parent, uint32_t color,
@@ -569,6 +568,22 @@ void AppSettings::_buildToolsPage()
                 lv_obj_clear_flag(ic, LV_OBJ_FLAG_CLICKABLE);
                 lv_obj_add_flag(ic, LV_OBJ_FLAG_EVENT_BUBBLE);
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 12) {
+                // 双色球 — 票券圆角框 + 左区 3×2 六点 (红) + 中缝 + 右区 1 大点
+                // (蓝), 参考 icons8-彩票. 2026-11-01 弃静态彩图改图形化随主题色
+                // (与其他工具 tile 同风格).
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                const int fx = start + 4, fy = top + 16, fw = 88, fh = 64;
+                tool_accent_frame(tile, C_ACCENT, fx, fy, fw, fh, 12, 6);   // 票券
+                for (int r = 0; r < 2; r++)
+                    for (int c = 0; c < 3; c++)
+                        tool_accent_rect(tile, C_ACCENT,
+                                         fx + 12 + c * 17, fy + 12 + r * 22, 12, 12, 6);
+                tool_accent_rect(tile, C_ACCENT, fx + 65, fy + 10, 4, fh - 20, 2);  // 中缝
+                tool_accent_rect(tile, C_ACCENT, fx + 72, fy + 24, 16, 16, 8);      // 蓝球
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -614,7 +629,7 @@ void AppSettings::_buildToolsPage()
 
     // (2026-11-01: 双色球 app — hermes /api/ssq/history 开奖/走势/对奖,
     //  用户指定 icons8 彩票图标 (彩色票券+红蓝球, 保留原色不 recolor))
-    make_tile(2, 2, &lottery_icon, 100, "双色球", _toolLottery_cb, 256, 12, -1, 0);
+    make_tile(2, 2, nullptr, 0, "双色球", _toolLottery_cb, 256, 12, -1, 12);
 
     // 第 2 行第 1 列: LoRa 聊天 (Unit C6L SX1262, PORT.A UART) — kind=8 电波分支,
     // 线条随主题强调色 (原 lora_logo 静态图 + 手写 tile 块已弃用).
