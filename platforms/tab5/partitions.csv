@@ -8,3 +8,5 @@ phy_init,data,phy,0xf000,0x1000,
 factory,app,factory,0x10000,9M,
 res,data,spiffs,0x910000,0x580000,
 model,data,spiffs,0xe90000,512K,
+# 2026-11-01 coredump 分区 (拍照崩溃定位; model 结束 0xf10000, 尾部空闲充裕)
+coredump,data,coredump,0xf10000,64K,
