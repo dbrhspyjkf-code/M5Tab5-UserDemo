@@ -1110,12 +1110,22 @@ void AppRadio::_vol_cb(lv_event_t* e)
 }
 
 // ── 外部播放命令(relay :8769 → Music Assistant; 阻塞 HTTP) ────────────
+// relay JSON 应答成功判定: {"ok":true} / {"ok": true} 均认——2026-11-01
+// 实锤: 旧判定只匹配无空格形态, relay 一度返回带空格的 "ok": true, 每次
+// play_on 成功都被误判失败(ext_dev 不记录 → 切本机不发 stop, 音箱停不下)
+static bool ext_ok(const hal::HalBase::HttpResponse_t& r)
+{
+    return r.status == 200 &&
+           (r.body.find("\"ok\":true") != std::string::npos ||
+            r.body.find("\"ok\": true") != std::string::npos);
+}
+
 bool AppRadio::_extPlay(const char* pid, const char* path)
 {
     char url[192];
     snprintf(url, sizeof(url), "%s%s/play_on?p=%s", kRelayBase, path, pid);
     auto r = GetHAL()->httpGet(url);
-    bool ok = r.status == 200 && r.body.find("\"ok\":true") != std::string::npos;
+    bool ok = ext_ok(r);
     if (!ok) mclog::tagWarn(TAG, "ext play_on failed: sc={} body={}",
                             r.status, r.body.substr(0, 80));
     return ok;
@@ -1128,7 +1138,7 @@ bool AppRadio::_extSimple(const char* pid, const char* cmd, int v)
                          kRelayBase, pid, cmd, v);
     else        snprintf(url, sizeof(url), "%scmd?p=%s&c=%s", kRelayBase, pid, cmd);
     auto r = GetHAL()->httpGet(url);
-    return r.status == 200 && r.body.find("\"ok\":true") != std::string::npos;
+    return ext_ok(r);
 }
 
 void AppRadio::_extStart(int station)
