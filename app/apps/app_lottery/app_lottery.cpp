@@ -222,8 +222,9 @@ void AppLottery::onRunning()
         _toast_start = 0;
     }
 
-    // toast (拍照识别占位等短提示), 3s 自清
+    // toast (拍照识别占位等短提示), 3s 自清 (持 LVGL 锁)
     if (_toast_lbl) {
+        LvglLockGuard tlock;
         if (_toast.empty()) {
             lv_obj_add_flag(_toast_lbl, LV_OBJ_FLAG_HIDDEN);
         } else {
@@ -371,10 +372,13 @@ void AppLottery::_recomputeTables()
     }
 }
 
-// 数据到位 → 填 UI (UI 线程)
+// 数据到位 → 填 UI (onRunning=mooncake main 线程; LVGL 真正跑在 taskLVGL,
+// 裸调 lv_* = 两线程并发改对象树 = heap corruption 间歇崩 — 2026-11-01
+// coredump 三轮实锤, app_stocks 的 LvglLockGuard 同款铁律)
 void AppLottery::_applyData()
 {
     if (!_scr) return;
+    LvglLockGuard lock;
     bool ok;
     std::string err;
     {
