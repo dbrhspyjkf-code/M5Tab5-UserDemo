@@ -43,6 +43,10 @@ extern lv_font_t font_zh_36;
 // 健康 tile 用预渲染字形 (app_health/health_icons.c, PIL 生成)
 extern const lv_image_dsc_t hl_tile_health;
 
+// 双色球 tile 图标 (app_lottery/lottery_icon.c, gen_lottery_icon.py 生成,
+// 用户指定 icons8 彩票图标 — 彩色票券+红蓝球, 保留原色)
+extern const lv_image_dsc_t lottery_icon;
+
 // 工具页图形分支共用: 画一块纯色小矩形 (图标线条/圆点), 自动冒泡点击到父 tile.
 static lv_obj_t* tool_accent_rect(lv_obj_t* parent, uint32_t color,
                                   int x, int y, int w, int h, int radius)
@@ -565,17 +569,6 @@ void AppSettings::_buildToolsPage()
                 lv_obj_clear_flag(ic, LV_OBJ_FLAG_CLICKABLE);
                 lv_obj_add_flag(ic, LV_OBJ_FLAG_EVENT_BUBBLE);
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
-            } else if (kind == 12) {
-                // 双色球 — 固定语义色: 红球实心圆 + 蓝球实心圆并排 (彩票红蓝,
-                // 不随主题), 各带白色高光点, 圆用 tool_accent_rect radius=半径.
-                const int IW = 96;
-                const int start = (TW - IW - ICON_GAP - name_w) / 2;
-                const int iy = TH / 2 - 22;
-                tool_accent_rect(tile, 0xE53935, start, iy, 44, 44, 22);          // 红球
-                tool_accent_rect(tile, 0xFFFFFF, start + 9, iy + 8, 9, 9, 4);     // 高光
-                tool_accent_rect(tile, 0x1E88E5, start + 52, iy, 44, 44, 22);     // 蓝球
-                tool_accent_rect(tile, 0xFFFFFF, start + 61, iy + 8, 9, 9, 4);    // 高光
-                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -620,8 +613,8 @@ void AppSettings::_buildToolsPage()
     make_tile(3, 0, nullptr, 130, "健康", _toolHealth_cb, 256, 12, -1, 11);
 
     // (2026-11-01: 双色球 app — hermes /api/ssq/history 开奖/走势/对奖,
-    //  kind=12 红蓝双球分支, 补 (2,2) 空位)
-    make_tile(2, 2, nullptr, 130, "双色球", _toolLottery_cb, 256, 12, -1, 12);
+    //  用户指定 icons8 彩票图标 (彩色票券+红蓝球, 保留原色不 recolor))
+    make_tile(2, 2, &lottery_icon, 100, "双色球", _toolLottery_cb, 256, 12, -1, 0);
 
     // 第 2 行第 1 列: LoRa 聊天 (Unit C6L SX1262, PORT.A UART) — kind=8 电波分支,
     // 线条随主题强调色 (原 lora_logo 静态图 + 手写 tile 块已弃用).
