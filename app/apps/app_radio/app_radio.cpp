@@ -830,7 +830,18 @@ void AppRadio::_updateVu()
 {
     if (!_vu_strip) return;
     float b = _lvl_b.load(), m = _lvl_m.load(), t = _lvl_t.load();
-    if (_ext_on.load()) { b = m = t = 0; }   // 外部播放: 无本机电平, 条带自然衰减到底
+    if (_ext_on.load()) {
+        // 外部播放: 设备无本机 PCM, 电平源头没了 —— 装饰性伪电平(正弦
+        // 起伏 + 随机抖动, 幅度对齐电台典型区间), 让条带保持"在播"的跳动
+        float ms = (float)GetHAL()->millis();
+        auto fake = [&](float base, float ph) {
+            float v = base + 9.0f * sinf(ms / 850.0f + ph)
+                         + 5.0f * sinf(ms / 310.0f + ph * 2.7f);
+            int iv = (int)(v + (rand() % 100) / 10.0f - 5.0f);
+            return iv < 15 ? 15 : (iv > 75 ? 75 : iv);
+        };
+        b = (float)fake(42, 0.0f); m = (float)fake(47, 2.1f); t = (float)fake(38, 4.2f);
+    }
     bool changed = false;
     for (int i = 0; i < 20; i++) {
         float w = i / 19.0f;
@@ -1173,6 +1184,10 @@ void AppRadio::_extStart(int station)
 void AppRadio::_extStop()
 {
     _ext_on.store(false);
+    // 外部暂停死锁修复(2026-11-01): 外部播放中流任务 cur=-1, 暂停后 want=-1
+    // 与 cur 相等 → 「want!=cur 才置待机」分支不触发, state 卡 2(播放中),
+    // 播放键停在 PAUSE 图标, 再点全走暂停分支。这里显式归待机。
+    _state.store(0);
     int dev = _ext_dev.exchange(-1);
     if (dev >= 0 && dev < kOutputCount)
         GetHAL()->tryRunDetached([this, dev]() { _extSimple(kOutputs[dev].pid, "stop"); });
