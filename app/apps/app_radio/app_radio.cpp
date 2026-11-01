@@ -616,10 +616,12 @@ void AppRadio::onOpen()
     lv_obj_set_style_text_color(_now_freq, lv_color_hex(C_AMBER), 0);
     lv_obj_align(_now_freq, LV_ALIGN_TOP_RIGHT, -40, 14);
 
-    // ── 输出 chip(2026-11-01): 状态行与频率读数之间, 点开输出选择弹窗 ──
+    // ── 输出 chip(2026-11-01): 状态行与频率读数之间, 点开输出选择弹窗。
+    // 宽 132 右缘 x=432, 让开右对齐的频率/网络电台读数(最宽"106.2 MHz"
+    // 左缘≈440)——初版 190 宽曾盖住该读数
     _out_chip = lv_obj_create(panel);
-    lv_obj_set_pos(_out_chip, 330, 12);
-    lv_obj_set_size(_out_chip, 190, 42);
+    lv_obj_set_pos(_out_chip, 300, 12);
+    lv_obj_set_size(_out_chip, 132, 42);
     lv_obj_set_style_radius(_out_chip, 21, 0);
     lv_obj_set_style_bg_color(_out_chip, lv_color_hex(C_CARD_ON), 0);
     lv_obj_set_style_bg_opa(_out_chip, LV_OPA_COVER, 0);
