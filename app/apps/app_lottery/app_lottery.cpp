@@ -1581,6 +1581,7 @@ void AppLottery::_shutter()
                 _remote_err = std::string("响应解析失败: ") + e.what();
             }
         }
+        mclog::tagInfo(TAG, "upload worker done");
         _upload_in_flight.store(false);
         _bets_ready.store(true);
     }, 32 * 1024);   // jpeg 编码+JSON 深解析叠加, 16K 临界溢出(PSRAM 栈无运行时保护)
@@ -1616,7 +1617,9 @@ void AppLottery::_applyRemoteBets()
         return;
     }
     if (bets.empty() && partials.empty()) return;
+    mclog::tagInfo(TAG, "confirm: building (bets={} partial={})", bets.size(), partials.size());
     _confirmModal(bets, partials);
+    mclog::tagInfo(TAG, "confirm: built");
 }
 
 // 识别确认 modal: 逐注展示 + 「改」(填入手动选号) + 「对奖」;
@@ -1738,6 +1741,7 @@ void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets,
         lv_obj_center(el);
     }
 
+    mclog::tagInfo(TAG, "confirm: rows drawn");
     lv_obj_t* ok_btn = lv_button_create(_result_modal);
     lv_obj_set_size(ok_btn, 240, 68);
     lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_RIGHT, -32, -24);
