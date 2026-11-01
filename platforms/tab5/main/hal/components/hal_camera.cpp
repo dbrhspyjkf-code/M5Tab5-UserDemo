@@ -219,6 +219,35 @@ errout:
 static bool cam_is_initial = false;
 static cam_t* camera       = NULL;
 
+// 2026-11-01: 相机无 3A (IPA 软件算法未集成), 默认增益 1.0x + 默认曝光 →
+// 室内实拍亮度中位仅 41-62/255。手动拉增益提亮 (不增加积分时间, 手持不糊;
+// 噪点上升由服务端 CLAHE/增强管线容忍)。曝光不动 (拉长曝光会糊)。
+static void apply_manual_gain(int fd, int target_gain_milli)
+{
+    struct v4l2_query_ext_ctrl qctrl = {.id = V4L2_CID_GAIN};
+    if (ioctl(fd, VIDIOC_QUERY_EXT_CTRL, &qctrl) != 0) {
+        ESP_LOGW(TAG, "query gain ctrl failed");
+        return;
+    }
+    int best_idx = -1, best_val = -1;
+    for (int32_t i = qctrl.minimum; i <= qctrl.maximum; i++) {
+        struct v4l2_querymenu qmenu = {.id = V4L2_CID_GAIN, .index = (uint32_t)i};
+        if (ioctl(fd, VIDIOC_QUERYMENU, &qmenu) != 0) break;
+        if (qmenu.value > target_gain_milli) break;   // 表单调递增, 越过即停
+        best_idx = i;
+        best_val = qmenu.value;
+    }
+    if (best_idx < 0) best_idx = qctrl.minimum;   // 表最小值仍超目标 → 用最小
+    struct v4l2_ext_control ec = {.id = V4L2_CID_GAIN, .value = best_idx};
+    struct v4l2_ext_controls ecs = {.ctrl_class = V4L2_CID_CAMERA_CLASS,
+                                    .count = 1, .controls = &ec};
+    if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &ecs) == 0) {
+        ESP_LOGI(TAG, "manual gain set: idx=%d (%d milli-x)", best_idx, best_val);
+    } else {
+        ESP_LOGW(TAG, "set gain failed (idx=%d)", best_idx);
+    }
+}
+
 // task 统一收尾: 置状态 + 通知 stop 等待者 + 自删 (调用后不得再碰栈上变量;
 // vTaskDelete(NULL) 不返回)
 static void cam_task_finish()
@@ -274,6 +303,7 @@ void app_camera_display(void* arg)
             cam_task_finish();
             return;
         }
+        apply_manual_gain(video_cam_fd, 4000);   // ≈4x 提亮 (无 3A 补偿)
         cam_is_initial = true;
     }
 
