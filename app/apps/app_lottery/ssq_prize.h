@@ -82,6 +82,7 @@ inline PrizeResult judgeOne(const DrawIssue& d, const int* reds6, int blue)
 struct Pick {
     std::vector<int> reds;
     std::vector<int> blues;
+    int multiplier = 1;   // 票面 ×N 倍投: 奖金/投注额按注乘 (拍照识别携带)
 };
 
 // 复式枚举判定统计

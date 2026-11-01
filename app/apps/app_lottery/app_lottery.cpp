@@ -1120,7 +1120,7 @@ void AppLottery::_buildPickPage()
     _pick_summary = lv_label_create(pg);
     lv_obj_set_style_text_font(_pick_summary, zh20(), 0);
     lv_obj_set_style_text_color(_pick_summary, lv_color_hex(C_DIM()), 0);
-    lv_obj_align(_pick_summary, LV_ALIGN_TOP_LEFT, 24, 416);
+    lv_obj_align(_pick_summary, LV_ALIGN_TOP_LEFT, 424, 426);   // 拍照识别与判定按钮之间空隙
     lv_label_set_text(_pick_summary, "红 0 + 蓝 0");
 
     auto mk_action = [&](const char* txt, int w, int x, uint32_t col,
@@ -1270,7 +1270,7 @@ void AppLottery::_showSingleResult(const ssq::DrawIssue& d, const ssq::Pick& p)
     ssq::PrizeResult r = ssq::judgeOne(d, reds6, p.blues[0]);
 
     _result_modal = lv_obj_create(_scr);
-    lv_obj_set_size(_result_modal, 760, 460);
+    lv_obj_set_size(_result_modal, 940, 580);
     lv_obj_align(_result_modal, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(_result_modal, lv_color_hex(C_CARD()), 0);
     lv_obj_set_style_radius(_result_modal, 24, 0);
@@ -1286,14 +1286,15 @@ void AppLottery::_showSingleResult(const ssq::DrawIssue& d, const ssq::Pick& p)
     lv_obj_set_style_text_color(title, lv_color_hex(C_DIM()), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
 
-    // 选号球行
+    // 选号球行 (72px 大球)
+    const int bx0 = 940 / 2 - (7 * 72 + 6 * 14) / 2;
     for (int i = 0; i < 6; i++) {
-        lv_obj_t* b = _makeBall(_result_modal, p.reds[i], false, 52, zh20());
-        lv_obj_set_pos(b, 760 / 2 - (7 * 52 + 6 * 10) / 2 + i * 62, 90);
+        lv_obj_t* b = _makeBall(_result_modal, p.reds[i], false, 72, zh30());
+        lv_obj_set_pos(b, bx0 + i * 86, 110);
     }
     {
-        lv_obj_t* b = _makeBall(_result_modal, p.blues[0], true, 52, zh20());
-        lv_obj_set_pos(b, 760 / 2 - (7 * 52 + 6 * 10) / 2 + 6 * 62, 90);
+        lv_obj_t* b = _makeBall(_result_modal, p.blues[0], true, 72, zh30());
+        lv_obj_set_pos(b, bx0 + 6 * 86, 110);
     }
 
     static const char* names[7] = {"", "一等奖", "二等奖", "三等奖", "四等奖", "五等奖", "六等奖"};
@@ -1308,7 +1309,7 @@ void AppLottery::_showSingleResult(const ssq::DrawIssue& d, const ssq::Pick& p)
         lv_obj_set_style_text_color(big, lv_color_hex(0xFFB300), 0);
     }
     lv_obj_set_style_text_font(big, zh30(), 0);
-    lv_obj_align(big, LV_ALIGN_TOP_MID, 0, 190);
+    lv_obj_align(big, LV_ALIGN_TOP_MID, 0, 260);
 
     if (r.level > 0) {
         snprintf(buf, sizeof(buf), r.money > 0 ? "奖金 ¥%s" : "奖金按当期公告 (浮动)",
@@ -1317,7 +1318,7 @@ void AppLottery::_showSingleResult(const ssq::DrawIssue& d, const ssq::Pick& p)
         lv_label_set_text(money, buf);
         lv_obj_set_style_text_font(money, zh30(), 0);
         lv_obj_set_style_text_color(money, lv_color_hex(C_TEXT()), 0);
-        lv_obj_align(money, LV_ALIGN_TOP_MID, 0, 260);
+        lv_obj_align(money, LV_ALIGN_TOP_MID, 0, 340);
     }
 
     lv_obj_t* close = lv_button_create(_result_modal);
@@ -1343,7 +1344,7 @@ void AppLottery::_showMultiResult(const ssq::DrawIssue& d, const ssq::Pick& p)
     ssq::MultiResult r = ssq::judgeMulti(d, p);
 
     _result_modal = lv_obj_create(_scr);
-    lv_obj_set_size(_result_modal, 860, 560);
+    lv_obj_set_size(_result_modal, 1120, 640);
     lv_obj_align(_result_modal, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(_result_modal, lv_color_hex(C_CARD()), 0);
     lv_obj_set_style_radius(_result_modal, 24, 0);
@@ -1356,7 +1357,7 @@ void AppLottery::_showMultiResult(const ssq::DrawIssue& d, const ssq::Pick& p)
              d.code.c_str(), r.bet_count, r.bet_money);
     lv_obj_t* title = lv_label_create(_result_modal);
     lv_label_set_text(title, buf);
-    lv_obj_set_style_text_font(title, zh20(), 0);
+    lv_obj_set_style_text_font(title, zh30(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_DIM()), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
 
@@ -1404,7 +1405,7 @@ void AppLottery::_showMultiResult(const ssq::DrawIssue& d, const ssq::Pick& p)
     if (r.has_floating) {
         lv_obj_t* note = lv_label_create(_result_modal);
         lv_label_set_text(note, "* 含一/二等奖, 金额以当期公告为准");
-        lv_obj_set_style_text_font(note, zh20(), 0);
+        lv_obj_set_style_text_font(note, zh30(), 0);
         lv_obj_set_style_text_color(note, lv_color_hex(C_DIM()), 0);
         lv_obj_align(note, LV_ALIGN_BOTTOM_LEFT, 24, -4);
     }
@@ -1552,6 +1553,7 @@ void AppLottery::_shutter()
                             if (r >= 1 && r <= 33) p.reds.push_back(r);
                         for (int bl : b.value("blue", std::vector<int>{}))
                             if (bl >= 1 && bl <= 16) p.blues.push_back(bl);
+                        p.multiplier = std::max(1, std::min(99, b.value("x", 1)));
                         if (!p.reds.empty() && !p.blues.empty())
                             _remote_bets.push_back(std::move(p));
                     }
@@ -1561,6 +1563,7 @@ void AppLottery::_shutter()
                             if (r >= 1 && r <= 33) p.reds.push_back(r);
                         for (int bl : b.value("blue", std::vector<int>{}))
                             if (bl >= 1 && bl <= 16) p.blues.push_back(bl);
+                        p.multiplier = std::max(1, std::min(99, b.value("x", 1)));
                         _remote_partial.push_back(std::move(p));
                     }
                     if (_remote_bets.empty() && _remote_partial.empty())
@@ -1799,9 +1802,10 @@ void AppLottery::_judgeBets(const std::vector<ssq::Pick>& bets)
     _closeResult();
 
     static const char* names[7] = {"未中", "一等奖", "二等奖", "三等奖", "四等奖", "五等奖", "六等奖"};
+    // 2026-11-01 用户要求: 结果卡字号/球放大; 金额含票面倍数 (六等奖 5×2=10 实测 bug)
     _result_modal = lv_obj_create(_scr);
-    const int mh = 170 + (int)bets.size() * 64 + 90;
-    lv_obj_set_size(_result_modal, 980, std::min(mh, 660));
+    const int mh = 130 + (int)bets.size() * 92 + 110;
+    lv_obj_set_size(_result_modal, 1180, std::min(mh, 700));
     lv_obj_align(_result_modal, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(_result_modal, lv_color_hex(C_CARD()), 0);
     lv_obj_set_style_radius(_result_modal, 24, 0);
@@ -1809,84 +1813,98 @@ void AppLottery::_judgeBets(const std::vector<ssq::Pick>& bets)
     lv_obj_set_style_pad_all(_result_modal, 0, 0);
     lv_obj_clear_flag(_result_modal, LV_OBJ_FLAG_SCROLLABLE);
 
-    char buf[128];
+    char buf[160];
     snprintf(buf, sizeof(buf), "对奖结果 · %s 期 · 共 %d 注", d.code.c_str(), (int)bets.size());
     lv_obj_t* title = lv_label_create(_result_modal);
     lv_label_set_text(title, buf);
     lv_obj_set_style_text_font(title, zh30(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 16);
 
     long total = 0;
+    long bet_total = 0;
     bool has_floating = false;
-    int y = 90;
+    int y = 84;
     for (const auto& p : bets) {
+        const int mult = std::max(1, p.multiplier);
+        int extra_rows = 0;
         if (p.reds.size() == 6 && p.blues.size() == 1) {   // 单式逐注
             int r6[6];
             for (int i = 0; i < 6; i++) r6[i] = p.reds[i];
             ssq::PrizeResult r = ssq::judgeOne(d, r6, p.blues[0]);
-            total += r.money;
+            const long money = r.money * mult;
+            total += money;
+            bet_total += 2L * mult;
             if (r.level >= 1 && r.money == 0) has_floating = true;
-            snprintf(buf, sizeof(buf), "→ %s%s", names[r.level],
-                     r.money > 0 ? ("  ¥" + fmt_thousands(r.money)).c_str() : "");
+            if (r.level) {
+                snprintf(buf, sizeof(buf), "%s%s ¥%s", names[r.level],
+                         mult > 1 ? ("×" + std::to_string(mult)).c_str() : "",
+                         fmt_thousands(money).c_str());
+            } else {
+                snprintf(buf, sizeof(buf), "未中奖");
+            }
             lv_obj_t* res = lv_label_create(_result_modal);
-            lv_label_set_text(res, r.level ? buf : "→ 未中奖");
-            lv_obj_set_style_text_font(res, zh20(), 0);
+            lv_label_set_text(res, buf);
+            lv_obj_set_style_text_font(res, zh30(), 0);
             lv_obj_set_style_text_color(res, lv_color_hex(r.level ? 0xFFB300 : C_DIM()), 0);
-            lv_obj_align(res, LV_ALIGN_TOP_RIGHT, -32, y + 12);
+            lv_obj_align(res, LV_ALIGN_TOP_RIGHT, -32, y + 10);
         } else {   // 复式注
             ssq::MultiResult m = ssq::judgeMulti(d, p);
-            total += m.total_money;
+            total += m.total_money * mult;
+            bet_total += m.bet_money * mult;
             if (m.has_floating) has_floating = true;
-            snprintf(buf, sizeof(buf), "复式 %d红%d蓝 = %ld 注", (int)p.reds.size(),
-                     (int)p.blues.size(), m.bet_count);
+            snprintf(buf, sizeof(buf), "复式 %d红%d蓝 %ld 注%s",
+                     (int)p.reds.size(), (int)p.blues.size(), m.bet_count * mult,
+                     mult > 1 ? ("×" + std::to_string(mult)).c_str() : "");
             lv_obj_t* info = lv_label_create(_result_modal);
             lv_label_set_text(info, buf);
-            lv_obj_set_style_text_font(info, zh20(), 0);
+            lv_obj_set_style_text_font(info, zh30(), 0);
             lv_obj_set_style_text_color(info, lv_color_hex(C_DIM()), 0);
             lv_obj_align(info, LV_ALIGN_TOP_RIGHT, -32, y);
-            int ly = y + 30;
+            int ly = y + 40;
             for (int lv = 6; lv >= 1; lv--) {
                 if (m.level_counts[lv] == 0) continue;
-                long gm = ssq::gradeMoney(lv, d) * m.level_counts[lv];
+                long gm = ssq::gradeMoney(lv, d) * m.level_counts[lv] * mult;
                 snprintf(buf, sizeof(buf), "%s × %ld%s", names[lv], m.level_counts[lv],
-                         gm > 0 ? ("  ¥" + fmt_thousands(gm)).c_str() : "");
+                         gm > 0 ? (" ¥" + fmt_thousands(gm)).c_str() : "");
                 lv_obj_t* l = lv_label_create(_result_modal);
                 lv_label_set_text(l, buf);
-                lv_obj_set_style_text_font(l, zh20(), 0);
+                lv_obj_set_style_text_font(l, zh30(), 0);
                 lv_obj_set_style_text_color(l, lv_color_hex(0xFFB300), 0);
                 lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -32, ly);
-                ly += 30;
+                ly += 38;
+                extra_rows++;
             }
         }
-        // 该注球行
+        // 该注球行: 54px 球 zh30 数字 (12红+4蓝 = 16×60=960, 右侧留 200 结果区)
         for (size_t k = 0; k < p.reds.size() && k < 12; k++) {
-            lv_obj_t* b = _makeBall(_result_modal, p.reds[k], false, 40, zh20());
-            lv_obj_set_pos(b, 36 + k * 46, y);
+            lv_obj_t* b = _makeBall(_result_modal, p.reds[k], false, 54, zh30());
+            lv_obj_set_pos(b, 32 + (int)k * 60, y);
         }
         for (size_t k = 0; k < p.blues.size() && k < 4; k++) {
-            lv_obj_t* b = _makeBall(_result_modal, p.blues[k], true, 40, zh20());
-            lv_obj_set_pos(b, 36 + 12 * 46 + k * 46, y);
+            lv_obj_t* b = _makeBall(_result_modal, p.blues[k], true, 54, zh30());
+            lv_obj_set_pos(b, 32 + 12 * 60 + (int)k * 60, y);
         }
-        y += 64 + (p.reds.size() == 6 ? 0 : 60);
+        y += 92 + extra_rows * 38;
     }
 
     lv_obj_t* total_lbl = lv_label_create(_result_modal);
     if (total > 0) {
-        snprintf(buf, sizeof(buf), "合计 ¥%s%s", fmt_thousands(total).c_str(),
-                 has_floating ? " (一/二等奖以当期公告为准)" : "");
+        snprintf(buf, sizeof(buf), "合计 ¥%s%s 投注¥%ld", fmt_thousands(total).c_str(),
+                 has_floating ? "※" : "", bet_total);
         lv_label_set_text(total_lbl, buf);
         lv_obj_set_style_text_color(total_lbl, lv_color_hex(0xFFB300), 0);
     } else {
-        lv_label_set_text(total_lbl, "未中奖");
+        snprintf(buf, sizeof(buf), "未中奖 (投注 ¥%ld)", bet_total);
+        lv_label_set_text(total_lbl, buf);
         lv_obj_set_style_text_color(total_lbl, lv_color_hex(C_DIM()), 0);
     }
     lv_obj_set_style_text_font(total_lbl, zh30(), 0);
-    lv_obj_align(total_lbl, LV_ALIGN_BOTTOM_LEFT, 32, -32);
+    lv_obj_align(total_lbl, LV_ALIGN_BOTTOM_LEFT, 32, -38);
 
     lv_obj_t* close = lv_button_create(_result_modal);
-    lv_obj_set_size(close, 200, 64);
-    lv_obj_align(close, LV_ALIGN_BOTTOM_RIGHT, -32, -24);
+    lv_obj_set_size(close, 240, 72);
+    lv_obj_align(close, LV_ALIGN_BOTTOM_RIGHT, -32, -28);
     lv_obj_set_style_bg_color(close, lv_color_hex(C_ACC()), 0);
     lv_obj_set_style_radius(close, 14, 0);
     lv_obj_add_event_cb(close, [](lv_event_t* e) {
