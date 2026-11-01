@@ -539,7 +539,10 @@ void AppLottery::_setTab(int tab)
 lv_obj_t* AppLottery::_makeBall(lv_obj_t* parent, int num, bool blue,
                                 int size, const lv_font_t* font)
 {
+    if (!parent) return nullptr;   // coredump 实锤: LVGL 低内存时 lv_obj_create
+                                    // 返回 NULL, 空指针链上崩 (2026-11-01)
     lv_obj_t* ball = lv_obj_create(parent);
+    if (!ball) return nullptr;
     lv_obj_set_size(ball, size, size);
     lv_obj_set_style_radius(ball, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(ball, lv_color_hex(blue ? C_BLUE() : C_RED()), 0);
@@ -1634,6 +1637,11 @@ void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets,
     const int rows = (int)bets.size() + (int)partials.size();
     const int mh = 150 + rows * 72 + 110 + (partials.empty() ? 0 : 40);
     _result_modal = lv_obj_create(_scr);
+    if (!_result_modal) {
+        _toast = "内存不足, 请退出重开 app 后重试";
+        _toast_start = 0;
+        return;
+    }
     lv_obj_set_size(_result_modal, 880, std::min(mh, 640));
     lv_obj_align(_result_modal, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(_result_modal, lv_color_hex(C_CARD()), 0);
@@ -1665,13 +1673,13 @@ void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets,
     for (int i = 0; i < rows && i < 5; i++) {
         const auto& p = bets[i];
         const int bx = 40;
-        for (size_t k = 0; k < p.reds.size() && k < 12; k++) {
+        for (size_t k = 0; k < p.reds.size() && k < 8; k++) {
             lv_obj_t* b = _makeBall(_result_modal, p.reds[k], false, 44, zh20());
-            lv_obj_set_pos(b, bx + k * 50, y0 + i * 72);
+            if (b) lv_obj_set_pos(b, bx + k * 50, y0 + i * 72);
         }
-        for (size_t k = 0; k < p.blues.size() && k < 4; k++) {
+        for (size_t k = 0; k < p.blues.size() && k < 2; k++) {
             lv_obj_t* b = _makeBall(_result_modal, p.blues[k], true, 44, zh20());
-            lv_obj_set_pos(b, bx + 12 * 50 + k * 50, y0 + i * 72);
+            if (b) lv_obj_set_pos(b, bx + 8 * 50 + k * 50, y0 + i * 72);
         }
         lv_obj_t* edit = lv_button_create(_result_modal);
         lv_obj_set_size(edit, 100, 52);
@@ -1696,13 +1704,13 @@ void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets,
     for (size_t pi = 0; pi < partials.size() && pi < 3; pi++) {
         const int row_y = y0 + ((int)bets.size() + (int)pi) * 72;
         const auto& p = partials[pi];
-        for (size_t k = 0; k < p.reds.size() && k < 12; k++) {
+        for (size_t k = 0; k < p.reds.size() && k < 8; k++) {
             lv_obj_t* b = _makeBall(_result_modal, p.reds[k], false, 44, zh20());
-            lv_obj_set_pos(b, 40 + k * 50, row_y);
+            if (b) lv_obj_set_pos(b, 40 + k * 50, row_y);
         }
-        for (size_t k = 0; k < p.blues.size() && k < 4; k++) {
+        for (size_t k = 0; k < p.blues.size() && k < 2; k++) {
             lv_obj_t* b = _makeBall(_result_modal, p.blues[k], true, 44, zh20());
-            lv_obj_set_pos(b, 40 + 12 * 50 + k * 50, row_y);
+            if (b) lv_obj_set_pos(b, 40 + 8 * 50 + k * 50, row_y);
         }
         lv_obj_t* tag = lv_label_create(_result_modal);
         lv_label_set_text(tag, "不完整");
