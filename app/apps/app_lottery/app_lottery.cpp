@@ -1527,7 +1527,9 @@ void AppLottery::_shutter()
     auto alive = _alive;
     bool ok = GetHAL()->tryRunDetached([this, frame, alive]() {
         auto* hal = GetHAL();
-        std::string jpeg = hal->jpegEncodeFrame(*frame, 85);
+        // q65 ≈ 70KB (q85 ≈ 140KB): esp_hosted SDIO 大流量 POST 会间歇断言复位
+        // (同款坑: 2026-10-26 封面 800KB 直灌下载; 传输层无节流钩子, 缩体积最直接)
+        std::string jpeg = hal->jpegEncodeFrame(*frame, 65);
         if (jpeg.empty()) {
             std::lock_guard<std::mutex> lk(_bets_mu);
             _remote_err = "照片编码失败";
