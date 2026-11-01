@@ -532,10 +532,10 @@ void AppLottery::_updateDrawPage()
 
     if (_draw_status) lv_obj_add_flag(_draw_status, LV_OBJ_FLAG_HIDDEN);
 
-    // ── 最新期卡片 (整卡重建) ──
+    // ── 最新期卡片 (整卡重建, 紧凑 188 高) ──
     if (_draw_head) lv_obj_delete(_draw_head);
     _draw_head = lv_obj_create(_pages[0]);
-    lv_obj_set_size(_draw_head, SCREEN_W, 244);
+    lv_obj_set_size(_draw_head, SCREEN_W, 188);
     lv_obj_set_pos(_draw_head, 0, 0);
     lv_obj_set_style_bg_color(_draw_head, lv_color_hex(C_CARD()), 0);
     lv_obj_set_style_radius(_draw_head, 20, 0);
@@ -550,7 +550,7 @@ void AppLottery::_updateDrawPage()
     lv_label_set_text(title, buf);
     lv_obj_set_style_text_font(title, zh30(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 16);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 10);
 
     // 奖池 / 销售额 (右上)
     snprintf(buf, sizeof(buf), "奖池 %s   销售额 %s", fmt_yi(lt.pool).c_str(),
@@ -559,19 +559,19 @@ void AppLottery::_updateDrawPage()
     lv_label_set_text(pool, buf);
     lv_obj_set_style_text_font(pool, zh20(), 0);
     lv_obj_set_style_text_color(pool, lv_color_hex(C_DIM()), 0);
-    lv_obj_align(pool, LV_ALIGN_TOP_RIGHT, -28, 20);
+    lv_obj_align(pool, LV_ALIGN_TOP_RIGHT, -28, 16);
 
-    // 球行: 6 红 + 1 蓝, 68px 球 (数字 zh30)
+    // 球行: 6 红 + 1 蓝, 54px 球 (数字 zh30)
     {
-        const int bs = 68, gap = 18;
+        const int bs = 54, gap = 12;
         const int total = 7 * bs + 6 * gap;
         const int x0 = (SCREEN_W - total) / 2;
         for (int i = 0; i < 6; i++) {
             lv_obj_t* b = _makeBall(_draw_head, lt.reds[i], false, bs, zh30());
-            lv_obj_set_pos(b, x0 + i * (bs + gap), 66);
+            lv_obj_set_pos(b, x0 + i * (bs + gap), 52);
         }
         lv_obj_t* b = _makeBall(_draw_head, lt.blue, true, bs, zh30());
-        lv_obj_set_pos(b, x0 + 6 * (bs + gap), 66);
+        lv_obj_set_pos(b, x0 + 6 * (bs + gap), 52);
     }
 
     // 一二等奖行 (浮动奖金 + 注数)
@@ -587,27 +587,28 @@ void AppLottery::_updateDrawPage()
     lv_label_set_text(g12, buf);
     lv_obj_set_style_text_font(g12, zh20(), 0);
     lv_obj_set_style_text_color(g12, lv_color_hex(C_DIM()), 0);
-    lv_obj_align(g12, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_align(g12, LV_ALIGN_BOTTOM_MID, 0, -8);
 
-    // ── 近 10 期列表 ──
+    // ── 历史期列表 (总 10 期: 最新卡 1 + 列表 9; 一屏 4 卡 98 高,
+    //    下方滚动查看, 底缘 pad 留给上拨退出带) ──
     if (_draw_list) lv_obj_delete(_draw_list);
     _draw_list = lv_obj_create(_pages[0]);
-    lv_obj_set_size(_draw_list, SCREEN_W, SCREEN_H - TAB_H - 250);
-    lv_obj_set_pos(_draw_list, 0, 250);
+    lv_obj_set_size(_draw_list, SCREEN_W, SCREEN_H - TAB_H - 200);
+    lv_obj_set_pos(_draw_list, 0, 200);
     lv_obj_set_style_bg_opa(_draw_list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_draw_list, 0, 0);
     lv_obj_set_style_pad_all(_draw_list, 0, 0);
     lv_obj_set_style_pad_bottom(_draw_list, 60, 0);   // 底缘留给上拨退出带
     lv_obj_update_layout(_draw_list);
 
-    const int rows = std::min((int)issues.size() - 1, 10);
+    const int rows = std::min((int)issues.size() - 1, 9);
     for (int r = 1; r <= rows; r++) {
         const ssq::DrawIssue& d = issues[r];
         lv_obj_t* row = lv_obj_create(_draw_list);
-        lv_obj_set_size(row, SCREEN_W - 32, 52);
-        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, (r - 1) * 58);
+        lv_obj_set_size(row, SCREEN_W - 32, 98);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, (r - 1) * 110);
         lv_obj_set_style_bg_color(row, lv_color_hex(C_CARD()), 0);
-        lv_obj_set_style_radius(row, 12, 0);
+        lv_obj_set_style_radius(row, 16, 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
@@ -617,22 +618,23 @@ void AppLottery::_updateDrawPage()
         lv_label_set_text(c, buf);
         lv_obj_set_style_text_font(c, zh20(), 0);
         lv_obj_set_style_text_color(c, lv_color_hex(C_DIM()), 0);
-        lv_obj_align(c, LV_ALIGN_LEFT_MID, 16, 0);
+        lv_obj_align(c, LV_ALIGN_TOP_LEFT, 24, 16);
 
         snprintf(buf, sizeof(buf), "%s 周%s", d.date.c_str(), d.week.c_str());
         lv_obj_t* dt = lv_label_create(row);
         lv_label_set_text(dt, buf);
         lv_obj_set_style_text_font(dt, zh20(), 0);
         lv_obj_set_style_text_color(dt, lv_color_hex(C_DIM()), 0);
-        lv_obj_align(dt, LV_ALIGN_LEFT_MID, 150, 0);
+        lv_obj_align(dt, LV_ALIGN_TOP_LEFT, 24, 54);
 
-        // 小球 36px (数字 zh20)
+        // 小球 44px 居中 (数字 zh30)
+        const int bx0 = (SCREEN_W - 32 - (6 * 52 + 44)) / 2;
         for (int i = 0; i < 6; i++) {
-            lv_obj_t* b = _makeBall(row, d.reds[i], false, 36, zh20());
-            lv_obj_set_pos(b, 360 + i * 44, 8);
+            lv_obj_t* b = _makeBall(row, d.reds[i], false, 44, zh30());
+            lv_obj_set_pos(b, bx0 + i * 52, 27);
         }
-        lv_obj_t* bb = _makeBall(row, d.blue, true, 36, zh20());
-        lv_obj_set_pos(bb, 360 + 6 * 44, 8);
+        lv_obj_t* bb = _makeBall(row, d.blue, true, 44, zh30());
+        lv_obj_set_pos(bb, bx0 + 6 * 52, 27);
     }
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -823,12 +825,12 @@ void AppLottery::_buildPickPage()
     lv_obj_set_style_pad_all(_target_draws, 0, 0);
     lv_obj_clear_flag(_target_draws, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 红球网格 11×3 (76x60, gap 8) → 宽 11*84-8=836, 居中
+    // 红球网格 11×3 (76x72, gap 8×16) → 宽 11*84-8=836, 居中
     for (int k = 0; k < 33; k++) {
         lv_obj_t* btn = lv_button_create(pg);
         const int col = k % 11, row = k / 11;
-        lv_obj_set_size(btn, 76, 60);
-        lv_obj_set_pos(btn, (SCREEN_W - 836) / 2 + col * 84, 104 + row * 68);
+        lv_obj_set_size(btn, 76, 72);
+        lv_obj_set_pos(btn, (SCREEN_W - 836) / 2 + col * 84, 112 + row * 88);
         lv_obj_set_style_bg_color(btn, lv_color_hex(0x2A2C30), 0);
         lv_obj_set_style_bg_color(btn, lv_color_hex(C_RED()), LV_STATE_CHECKED);
         lv_obj_set_style_text_color(btn, lv_color_hex(C_DIM()), 0);
@@ -854,11 +856,11 @@ void AppLottery::_buildPickPage()
         _pick_red_btns[k] = btn;
     }
 
-    // 蓝球行 16 个 (60x52, gap 12) → 宽 16*72-12=1140
+    // 蓝球行 16 个 (60x64, gap 12) → 宽 16*72-12=1140
     for (int k = 0; k < 16; k++) {
         lv_obj_t* btn = lv_button_create(pg);
-        lv_obj_set_size(btn, 60, 52);
-        lv_obj_set_pos(btn, (SCREEN_W - 1140) / 2 + k * 72, 316);
+        lv_obj_set_size(btn, 60, 64);
+        lv_obj_set_pos(btn, (SCREEN_W - 1140) / 2 + k * 72, 384);
         lv_obj_set_style_bg_color(btn, lv_color_hex(0x2A2C30), 0);
         lv_obj_set_style_bg_color(btn, lv_color_hex(C_BLUE()), LV_STATE_CHECKED);
         lv_obj_set_style_text_color(btn, lv_color_hex(C_DIM()), 0);
@@ -884,18 +886,18 @@ void AppLottery::_buildPickPage()
         _pick_blue_btns[k] = btn;
     }
 
-    // 底部操作行 y 400..470
+    // 底部操作行 y 500..572 (页面 656 高, 底缘余 84 给上拨退出带)
     _pick_summary = lv_label_create(pg);
     lv_obj_set_style_text_font(_pick_summary, zh20(), 0);
     lv_obj_set_style_text_color(_pick_summary, lv_color_hex(C_DIM()), 0);
-    lv_obj_align(_pick_summary, LV_ALIGN_TOP_LEFT, 424, 426);   // 拍照识别与判定按钮之间空隙
+    lv_obj_align(_pick_summary, LV_ALIGN_TOP_LEFT, 424, 526);   // 拍照识别与判定按钮之间空隙
     lv_label_set_text(_pick_summary, "红 0 + 蓝 0");
 
     auto mk_action = [&](const char* txt, int w, int x, uint32_t col,
                          lv_event_cb_t cb, void* ud) {
         lv_obj_t* b = lv_button_create(pg);
-        lv_obj_set_size(b, w, 60);
-        lv_obj_set_pos(b, x, 408);
+        lv_obj_set_size(b, w, 72);
+        lv_obj_set_pos(b, x, 500);
         lv_obj_set_style_bg_color(b, lv_color_hex(col), 0);
         lv_obj_set_style_radius(b, 14, 0);
         lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
@@ -1618,7 +1620,7 @@ void AppLottery::_judgeBets(const std::vector<ssq::Pick>& bets)
     static const char* names[7] = {"未中", "一等奖", "二等奖", "三等奖", "四等奖", "五等奖", "六等奖"};
     // 2026-11-01 用户要求: 结果卡字号/球放大; 金额含票面倍数 (六等奖 5×2=10 实测 bug)
     _result_modal = lv_obj_create(_scr);
-    const int mh = 130 + (int)bets.size() * 92 + 110;
+    const int mh = 164 + (int)bets.size() * 92 + 110;
     lv_obj_set_size(_result_modal, 1180, std::min(mh, 700));
     lv_obj_align(_result_modal, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(_result_modal, lv_color_hex(C_CARD()), 0);
@@ -1635,10 +1637,21 @@ void AppLottery::_judgeBets(const std::vector<ssq::Pick>& bets)
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 16);
 
+    // 当期开奖号球行 (44px 居中, 供逐注对照)
+    {
+        const int bx0 = (1180 - (6 * 52 + 44)) / 2;
+        for (int i = 0; i < 6; i++) {
+            lv_obj_t* b = _makeBall(_result_modal, d.reds[i], false, 44, zh30());
+            lv_obj_set_pos(b, bx0 + i * 52, 62);
+        }
+        lv_obj_t* b = _makeBall(_result_modal, d.blue, true, 44, zh30());
+        lv_obj_set_pos(b, bx0 + 6 * 52, 62);
+    }
+
     long total = 0;
     long bet_total = 0;
     bool has_floating = false;
-    int y = 84;
+    int y = 122;
     for (const auto& p : bets) {
         const int mult = std::max(1, p.multiplier);
         int extra_rows = 0;
@@ -1738,6 +1751,7 @@ struct SwipeCtx {
     AppLottery* app;
     std::weak_ptr<bool> alive;
     int press_x = -1, press_y = -1;
+    int scroll0 = 0;   // PRESSED 时开奖列表滚动位 (该手势滚过列表则不退出)
 };
 }  // namespace
 
@@ -1758,6 +1772,7 @@ void AppLottery::_installSwipeGesture()
                     lv_indev_get_point(dev, &p);
                     ctx->press_x = p.x;
                     ctx->press_y = p.y;   // 起点只在 PRESSED 记一次 (铁律①)
+                    ctx->scroll0 = ctx->app->_drawListScrollY();
                     return;
                 }
                 if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
@@ -1766,6 +1781,8 @@ void AppLottery::_installSwipeGesture()
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
                     const int dx = p.x - ctx->press_x, dy = p.y - ctx->press_y;
+                    // 该手势滚动了列表 (底缘起手上滑翻期数 ≠ 想退出)
+                    if (std::abs(ctx->app->_drawListScrollY() - ctx->scroll0) > 10) return;
                     // 上拨退出: 只认屏幕最下缘起手 (y>650)
                     if (ctx->press_y > 650 && dy < -120 && abs(dy) > abs(dx) * 2) {
                         auto* c = new SwipeCtx{ctx->app, ctx->alive};
@@ -1788,6 +1805,7 @@ void AppLottery::_installSwipeGesture()
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
                     if (ctx->press_y <= 650) return;
+                    if (std::abs(ctx->app->_drawListScrollY() - ctx->scroll0) > 10) return;
                     auto* c = new SwipeCtx{ctx->app, ctx->alive};
                     lv_async_call([](void* u) {
                         auto* cc = static_cast<SwipeCtx*>(u);

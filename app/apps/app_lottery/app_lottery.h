@@ -83,6 +83,7 @@ private:
     // ── tab0 开奖 ──
     void _buildDrawPage();
     void _updateDrawPage();      // 数据到位后填最新卡 + 近 10 期列表
+    int  _drawListScrollY() const { return _draw_list ? lv_obj_get_scroll_y(_draw_list) : 0; }
     lv_obj_t* _draw_head   = nullptr;   // 最新期卡片 (整卡重建)
     lv_obj_t* _draw_list   = nullptr;   // 近 10 期滚动列表
     lv_obj_t* _draw_status = nullptr;
