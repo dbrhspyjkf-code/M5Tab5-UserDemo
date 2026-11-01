@@ -31,6 +31,7 @@
 #include "imlib.h"
 #include "freertos/queue.h"
 #include "jpg/image_to_jpeg.h"   // RGB565→JPEG (xiaozhi_core, esp_new_jpeg)
+#include "esp_video_isp_ioctl.h"   // esp_video_isp_wb_t (AWB)
 
 #define CAMERA_WIDTH  1280
 #define CAMERA_HEIGHT 720
@@ -219,32 +220,104 @@ errout:
 static bool cam_is_initial = false;
 static cam_t* camera       = NULL;
 
-// 2026-11-01: 相机无 3A (IPA 软件算法未集成), 默认增益 1.0x + 默认曝光 →
-// 室内实拍亮度中位仅 41-62/255。手动拉增益提亮 (不增加积分时间, 手持不糊;
-// 噪点上升由服务端 CLAHE/增强管线容忍)。曝光不动 (拉长曝光会糊)。
-static void apply_manual_gain(int fd, int target_gain_milli)
+// ── 软件 3A (2026-11-01, 参考社区三项目实测定论) ──────────────────────────
+// SC202CS 上电最小曝光≈近黑帧, esp_ipa 自动 3A 未集成 (zacs/person_detector
+// BRINGUP 实锤同款问题)。方案: 预览帧 Rec.601 luma 采样 → gain 索引步进闭环
+// (目标 mean 110-130, person_detector 硬件验证 exposure=811→mean≈130); R/G/B
+// 均值 → ISP WB 控件均衡 (治 G 通道 ~1.7× 的偏绿)。设置需周期重申 (会漂,
+// person_detector v0.1.11 教训: STREAMON 时设的不持久)。曝光行数不动
+// (拉长会糊), 只动 gain; 范围从 QUERY_EXT_CTRL 拿。
+static int  s_gain_idx      = 0;
+static int  s_gain_min      = 0;
+static int  s_gain_max      = 0;
+static bool s_gain_ok       = false;
+static int  s_isp_fd        = -1;
+static bool s_wb_warned     = false;
+
+static void cam_3a_init(int fd)
 {
     struct v4l2_query_ext_ctrl qctrl = {.id = V4L2_CID_GAIN};
-    if (ioctl(fd, VIDIOC_QUERY_EXT_CTRL, &qctrl) != 0) {
-        ESP_LOGW(TAG, "query gain ctrl failed");
-        return;
+    if (ioctl(fd, VIDIOC_QUERY_EXT_CTRL, &qctrl) == 0) {
+        s_gain_min = qctrl.minimum;
+        s_gain_max = qctrl.maximum;
+        s_gain_idx = qctrl.default_value;
+        s_gain_ok  = true;
+        ESP_LOGI(TAG, "gain ctrl: idx %d..%d def %d", s_gain_min, s_gain_max, s_gain_idx);
+    } else {
+        ESP_LOGW(TAG, "query gain ctrl failed (AE off)");
     }
-    int best_idx = -1, best_val = -1;
-    for (int32_t i = qctrl.minimum; i <= qctrl.maximum; i++) {
-        struct v4l2_querymenu qmenu = {.id = V4L2_CID_GAIN, .index = (uint32_t)i};
-        if (ioctl(fd, VIDIOC_QUERYMENU, &qmenu) != 0) break;
-        if (qmenu.value > target_gain_milli) break;   // 表单调递增, 越过即停
-        best_idx = i;
-        best_val = qmenu.value;
-    }
-    if (best_idx < 0) best_idx = qctrl.minimum;   // 表最小值仍超目标 → 用最小
-    struct v4l2_ext_control ec = {.id = V4L2_CID_GAIN, .value = best_idx};
+    // ISP 节点 (WB 控件在 ISP 设备, 不需开流)
+    s_isp_fd = open(ESP_VIDEO_ISP1_DEVICE_NAME, O_RDWR);
+    if (s_isp_fd < 0) ESP_LOGW(TAG, "open ISP dev failed (AWB off)");
+}
+
+static void cam_3a_set_gain(int fd)
+{
+    if (!s_gain_ok) return;
+    struct v4l2_ext_control ec = {.id = V4L2_CID_GAIN, .value = s_gain_idx};
     struct v4l2_ext_controls ecs = {.ctrl_class = V4L2_CID_CAMERA_CLASS,
                                     .count = 1, .controls = &ec};
-    if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &ecs) == 0) {
-        ESP_LOGI(TAG, "manual gain set: idx=%d (%d milli-x)", best_idx, best_val);
-    } else {
-        ESP_LOGW(TAG, "set gain failed (idx=%d)", best_idx);
+    if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &ecs) != 0) {
+        ESP_LOGW(TAG, "set gain idx=%d failed", s_gain_idx);
+    }
+}
+
+// 预览帧统计 + 闭环步进 (每 ~0.5s 调用; data=RGB565 mirror 后帧)
+static void cam_3a_step(int fd, const uint8_t* frame, size_t frame_bytes)
+{
+    const uint16_t* px = (const uint16_t*)frame;
+    const int stride = 128;   // 1/128 下采样
+    uint32_t n = 0, r = 0, g = 0, b = 0;
+    const int cnt = (int)(frame_bytes / 2 / stride);
+    for (int i = 0; i < cnt; i++) {
+        uint16_t v = px[i * stride];
+        r += (v >> 11) & 0x1F;
+        g += (v >> 5) & 0x3F;
+        b += v & 0x1F;
+        n++;
+    }
+    if (!n) return;
+    r /= n; g /= n; b /= n;
+    // Rec.601 luma (565 分量归一到 8bit)
+    const int luma = (r * 8 * 77 + g * 4 * 151 + b * 8 * 28) / 256;
+
+    // AE: 目标 110-130, 步进 4 索引 (~12%/步)
+    if (s_gain_ok) {
+        int old = s_gain_idx;
+        if (luma < 95) s_gain_idx += 4;
+        else if (luma > 160) s_gain_idx -= 4;
+        if (s_gain_idx < s_gain_min) s_gain_idx = s_gain_min;
+        if (s_gain_idx > s_gain_max) s_gain_idx = s_gain_max;
+        if (s_gain_idx != old) {
+            cam_3a_set_gain(fd);
+            ESP_LOGI(TAG, "AE: luma=%d gain idx %d→%d", luma, old, s_gain_idx);
+        }
+    }
+
+    // AWB: R/B 拉到 G 水平 (565 域: R/B 5bit vs G 6bit, 先归一 8bit)
+    if (s_isp_fd >= 0) {
+        const float rf = r * 255.0f / 31.0f;
+        const float gf = g * 255.0f / 63.0f;
+        const float bf = b * 255.0f / 31.0f;
+        if (rf > 2 && bf > 2) {
+            float rg = gf / rf, bg = gf / bf;
+            if (rg > 4) rg = 4;
+            if (rg < 0.25f) rg = 0.25f;
+            if (bg > 4) bg = 4;
+            if (bg < 0.25f) bg = 0.25f;
+            // 仅失衡 >12% 时调 (防抖动)
+            esp_video_isp_wb_t wb = {.enable = true, .red_gain = rg, .blue_gain = bg};
+            struct v4l2_ext_control ec = {.id = V4L2_CID_USER_ESP_ISP_WB, .size = sizeof(wb)};
+            ec.p_u8 = (uint8_t*)&wb;
+            struct v4l2_ext_controls ecs = {.ctrl_class = V4L2_CTRL_CLASS_USER,
+                                            .count = 1, .controls = &ec};
+            if (ioctl(s_isp_fd, VIDIOC_S_EXT_CTRLS, &ecs) != 0) {
+                if (!s_wb_warned) {
+                    s_wb_warned = true;
+                    ESP_LOGW(TAG, "set ISP WB failed (AWB off): rg=%.2f bg=%.2f", rg, bg);
+                }
+            }
+        }
     }
 }
 
@@ -303,7 +376,7 @@ void app_camera_display(void* arg)
             cam_task_finish();
             return;
         }
-        apply_manual_gain(video_cam_fd, 4000);   // ≈4x 提亮 (无 3A 补偿)
+        cam_3a_init(video_cam_fd);   // 软件 AE/AWB (社区三项目实测定论)
         cam_is_initial = true;
     }
 
@@ -353,6 +426,11 @@ void app_camera_display(void* arg)
         buf.memory = MEMORY_TYPE;
         const int dq = ioctl(camera->fd, VIDIOC_DQBUF, &buf);
         if (dq == 0) {
+            static int s_3a_cnt = 0;
+            if (++s_3a_cnt >= 15) {
+                s_3a_cnt = 0;
+                cam_3a_step(camera->fd, img_show_data, img_show_size);
+            }
             ppa_srm_oper_config_t srm_config = {.in             = {.buffer         = camera->buffer[buf.index],
                                                                    .pic_w          = 1280,
                                                                    .pic_h          = 720,
