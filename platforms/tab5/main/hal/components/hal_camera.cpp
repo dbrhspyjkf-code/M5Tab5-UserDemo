@@ -554,7 +554,7 @@ void HalEsp32::stopCameraCapture()
     // set_buffer 等锁, 这里等不满 —— 超时返回后锁释放, task 醒来见 canvas
     // NULL 安全跳过再自行退出 (cam_task_finish 兜底清状态)。勿等太久, 持锁
     // 等待= UI 卡死。
-    if (cam_exit_done && xSemaphoreTake(cam_exit_done, pdMS_TO_TICKS(300)) != pdTRUE) {
+    if (cam_exit_done && xSemaphoreTake(cam_exit_done, pdMS_TO_TICKS(50)) != pdTRUE) {
         mclog::tagWarn(TAG, "camera task exit wait timeout (task may be stuck)");
     }
     camera_task = NULL;

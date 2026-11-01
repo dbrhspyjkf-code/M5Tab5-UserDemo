@@ -326,7 +326,7 @@ void AppLottery::_fetchAsync()
         }
         _fetch_in_flight.store(false);
         _data_ready.store(true);
-    }, 16 * 1024);
+    }, 32 * 1024);
     if (!ok) {
         _fetch_in_flight.store(false);
         std::lock_guard<std::mutex> lk(_mu);
@@ -1580,7 +1580,7 @@ void AppLottery::_shutter()
         }
         _upload_in_flight.store(false);
         _bets_ready.store(true);
-    }, 16 * 1024);
+    }, 32 * 1024);   // jpeg 编码+JSON 深解析叠加, 16K 临界溢出(PSRAM 栈无运行时保护)
     if (!ok) {
         _upload_in_flight.store(false);
         _toast = "上传 worker 启动失败";
