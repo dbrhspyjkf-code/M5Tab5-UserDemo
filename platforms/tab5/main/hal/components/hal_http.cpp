@@ -23,9 +23,12 @@ static bool _is_claude_gateway_url(const std::string& url)
 
 // email-status-server.py 在 8768 端口, 读 /tmp/email-status.json 缓存.
 // 比 hermes IMAP 快 (<10ms), 1s timeout 足够; 给点余量用 3s.
+// /api/ssq/ticket: 服务端 OCR 4-8s, 反光废片多方向重试 + VLM 补全可到 ~16s,
+// 默认 10s 会假超时 (2026-11-01 实测 photo3 15.7s)。
 static bool _is_slow_hermes_url(const std::string& url)
 {
-    return url.find(":8768/api/email/status") != std::string::npos;
+    return url.find(":8768/api/email/status") != std::string::npos
+        || url.find(":8766/api/ssq/") != std::string::npos;
 }
 
 static esp_err_t _http_event_handler(esp_http_client_event_t* evt)
