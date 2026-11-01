@@ -3,6 +3,7 @@
 #include "../app_voice_input/app_voice_input.h"
 #include "../utils/datetime/lunar_calendar.h"
 #include <hal/hal.h>
+#include <nlohmann/json.hpp>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -43,7 +44,7 @@ static constexpr uint32_t C_DIM  = 0x8FA8C4;
 // the screen edges (burn-in guard: OLED/LCD panels showing the same static
 // bright text in the same spot for hours can leave a faint ghost image).
 static constexpr int GROUP_W = 600;
-static constexpr int GROUP_H = 170;
+static constexpr int GROUP_H = 212;   // 时钟+日期+天气+提醒/行程 四行 (2026-11-01 加行4)
 static constexpr int MARGIN  = 60;
 static const struct { int x, y; } POSITIONS[] = {
     {(SCREEN_W - GROUP_W) / 2, (SCREEN_H - GROUP_H) / 2},  // center
@@ -296,8 +297,19 @@ void AppIdleScreen::_show()
 
     // 右下角时间/日期叠加 (2026-10-29 用户要求): 半透明黑圆角底衬保证任何
     // 照片上都可读; 标签不可点, 触摸始终落到 overlay 关闭。
+    // 有提醒/行程时 scrim 加高一行显事件 (2026-11-01), 初值按已知数据定,
+    // 避免 _applyAgenda 首个 tick 又跳变一次。
+    std::string ag0;
+#ifdef PLATFORM_BUILD_DESKTOP
+    // 桌面调试 (同 TAB5_IDLE_MS 模式): 注入假事件文本, 免等真有提醒
+    if (const char* e = getenv("TAB5_AGENDA_TXT")) {
+        std::lock_guard<std::mutex> lk(_agm);
+        _ag_txt = e;
+    }
+#endif
+    { std::lock_guard<std::mutex> lk(_agm); ag0 = _ag_txt; }
     _ph_scrim = lv_obj_create(_overlay);
-    lv_obj_set_size(_ph_scrim, 320, 96);
+    lv_obj_set_size(_ph_scrim, ag0.empty() ? 320 : 480, ag0.empty() ? 96 : 140);
     lv_obj_align(_ph_scrim, LV_ALIGN_BOTTOM_RIGHT, -28, -28);
     lv_obj_set_style_bg_color(_ph_scrim, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(_ph_scrim, LV_OPA_40, 0);
@@ -321,6 +333,17 @@ void AppIdleScreen::_show()
     lv_obj_align(_ph_week_lbl, LV_ALIGN_TOP_RIGHT, -24, 54);
     lv_obj_clear_flag(_ph_week_lbl, LV_OBJ_FLAG_CLICKABLE);
 
+    // 行3 (2026-11-01): 下一条提醒/行程, 农历下右对齐; 固定宽 + LONG_DOT
+    // 超长自动省略 (事件标题理论可任意长), 无事件时保持空文本=不可见。
+    _ph_ag_lbl = lv_label_create(_ph_scrim);
+    lv_obj_set_style_text_font(_ph_ag_lbl, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(_ph_ag_lbl, lv_color_hex(0xC6D6E6), 0);
+    lv_obj_set_width(_ph_ag_lbl, 432);
+    lv_label_set_long_mode(_ph_ag_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_align(_ph_ag_lbl, LV_ALIGN_TOP_RIGHT, -24, 96);
+    lv_obj_clear_flag(_ph_ag_lbl, LV_OBJ_FLAG_CLICKABLE);
+    lv_label_set_text(_ph_ag_lbl, ag0.c_str());
+
     _ph_clock_ms = 0;
     _updatePhotoClock();
 
@@ -332,6 +355,68 @@ void AppIdleScreen::_show()
     _photo_fails = 0;
     _pb_fail.store(false);
     _fetchPhotoAsync(_pidx);
+
+    // 弹出即拉一次提醒/行程, 之后每 AGENDA_MS 刷新 (tick 里续拉)
+    _ag_fetch_ms = GetHAL()->millis();
+    _fetchAgenda();
+
+#ifdef PLATFORM_BUILD_DESKTOP
+    // 桌面调试: 强制时钟回退模式 (免断照片服务才能调时钟 UI)
+    if (getenv("TAB5_SS_CLOCK")) {
+        _clock_mode = true;
+        _buildClockContent();
+        return;
+    }
+#endif
+}
+
+// ── 提醒/行程 (hermes /agenda, 同 app_home 数据源) ──────────────────────
+// worker 只写 _ag_txt; LVGL 线程在 1s 时钟 tick 里 _applyAgenda 消费。
+// 失败保持旧值 (屏保是低频展示面, 下个周期自然重试)。
+void AppIdleScreen::_fetchAgenda()
+{
+    if (_ag_fetching.exchange(true)) return;
+    std::string base = "http://" + GetHAL()->getConfig("svc_host", "192.168.1.200") + ":8766";
+    if (!GetHAL()->tryRunDetached([this, base]() {
+            bool publish = false;
+            std::string txt;
+            try {
+                auto j = nlohmann::json::parse(GetHAL()->httpGet(base + "/agenda").body);
+                if (j.value("ok", false)) {   // 明确成功: 无 next=真无事项
+                    txt = (j.contains("next") && j["next"].is_object())
+                          ? j["next"].value("text", std::string())
+                          : std::string();
+                    publish = true;
+                }
+            } catch (...) {}                  // 网络/解析失败: 保持旧值
+            if (publish) {
+                std::lock_guard<std::mutex> lk(_agm);
+                _ag_txt = txt;
+            }
+            _ag_fetching.store(false);
+        })) {
+        _ag_fetching.store(false);
+    }
+}
+
+// LVGL 线程: 文本有变才重绘 (label 新建时初值非空也能对上); 照片 scrim
+// 尺寸随有无事件在 两行 320x96 ↔ 三行 480x140 间切换。
+void AppIdleScreen::_applyAgenda()
+{
+    std::string txt;
+    { std::lock_guard<std::mutex> lk(_agm); txt = _ag_txt; }
+    if (_ph_ag_lbl && _ph_scrim) {
+        const char* cur = lv_label_get_text(_ph_ag_lbl);
+        if (txt != (cur ? cur : "")) {
+            lv_label_set_text(_ph_ag_lbl, txt.c_str());
+            lv_obj_set_size(_ph_scrim, txt.empty() ? 320 : 480,
+                            txt.empty() ? 96 : 140);
+        }
+    }
+    if (_ag_lbl) {
+        const char* cur = lv_label_get_text(_ag_lbl);
+        if (txt != (cur ? cur : "")) lv_label_set_text(_ag_lbl, txt.c_str());
+    }
 }
 
 // ── 照片轮播 ─────────────────────────────────────────────────────────────
@@ -378,6 +463,9 @@ void AppIdleScreen::_updatePhotoClock()
     if (_ph_clock_ms != 0 && now - _ph_clock_ms < 1000) return;
     _ph_clock_ms = now;
     if (!_ph_time_lbl) return;
+
+    _agendaTick(now);
+    _applyAgenda();
 
     time_t t = time(nullptr);
     struct tm lt = {};
@@ -446,7 +534,7 @@ void AppIdleScreen::_buildClockContent()
     }
     if (_ph_scrim) {                        // 右下角叠加一并退场
         lv_obj_delete(_ph_scrim);
-        _ph_scrim = _ph_time_lbl = nullptr;
+        _ph_scrim = _ph_time_lbl = _ph_week_lbl = _ph_ag_lbl = nullptr;
     }
     _group = lv_obj_create(_overlay);
     lv_obj_set_size(_group, GROUP_W, GROUP_H);
@@ -471,6 +559,16 @@ void AppIdleScreen::_buildClockContent()
     lv_obj_set_style_text_color(_weather_lbl, lv_color_hex(C_DIM), 0);
     lv_obj_align(_weather_lbl, LV_ALIGN_TOP_MID, 0, 116);
 
+    // 行4 (2026-11-01): 下一条提醒/行程, 超长右缘截断 (LONG_DOT 需固定宽)
+    _ag_lbl = lv_label_create(_group);
+    lv_obj_set_style_text_font(_ag_lbl, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(_ag_lbl, lv_color_hex(0xC6D6E6), 0);
+    lv_obj_set_width(_ag_lbl, GROUP_W);
+    lv_label_set_long_mode(_ag_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(_ag_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(_ag_lbl, LV_ALIGN_TOP_MID, 0, 162);
+    lv_obj_clear_flag(_ag_lbl, LV_OBJ_FLAG_CLICKABLE);
+
     _pos_index = 0;
     lv_obj_set_pos(_group, POSITIONS[0].x, POSITIONS[0].y);
     _last_clock_update_ms = 0;  // force immediate first render
@@ -484,7 +582,8 @@ void AppIdleScreen::_hide()
     lv_obj_delete(_overlay);
     _overlay = _group = _time_lbl = _date_lbl = _weather_lbl = nullptr;
     _photo_img = nullptr;
-    _ph_scrim = _ph_time_lbl = nullptr;
+    _ph_scrim = _ph_time_lbl = _ph_week_lbl = nullptr;
+    _ph_ag_lbl = _ag_lbl = nullptr;
     // 照片缓冲与在途下载: 会话代递增让 worker 自弃, 已发布的就地释放
     {
         std::lock_guard<std::mutex> lk(_pm);
@@ -507,6 +606,9 @@ void AppIdleScreen::_updateClock()
     uint32_t now = GetHAL()->millis();
     if (_last_clock_update_ms != 0 && now - _last_clock_update_ms < 1000) return;
     _last_clock_update_ms = now;
+
+    _agendaTick(now);
+    _applyAgenda();
 
     if (now - _last_move_ms >= MOVE_MS) {
         _last_move_ms = now;

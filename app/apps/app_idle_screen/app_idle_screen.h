@@ -62,6 +62,28 @@ private:
     void _fetchPhotoAsync(int idx);
     void _applyNextPhoto();
     void _buildClockContent();    // 时钟内容(回退模式; 原屏保 UI)
+
+    // ── 提醒/行程 (2026-11-01 用户要求: 屏保显示下一条事项) ──
+    // hermes /agenda → {ok, next:{text}} — text 自带时间前缀 ("提醒 20:30
+    // 取快递" / "明天 09:00 开会"), next=null(今日无事项)则不显示该行。
+    // worker 写 _ag_txt (mutex), LVGL 线程 1s tick 里 _applyAgenda 消费,
+    // scrim 尺寸随有无事件切换 (两行 320x96 ↔ 三行 480x140)。
+    void _fetchAgenda();
+    void _applyAgenda();
+    void _agendaTick(uint32_t now)          // 到 AGENDA_MS 周期续拉 (时钟 tick 里调)
+    {
+        if (now - _ag_fetch_ms >= AGENDA_MS) {
+            _ag_fetch_ms = now;
+            _fetchAgenda();
+        }
+    }
+    static constexpr uint32_t AGENDA_MS = 5 * 60 * 1000;  // 刷新间隔
+    lv_obj_t* _ph_ag_lbl = nullptr;   // 照片 scrim 行3: 农历下, 右对齐
+    lv_obj_t* _ag_lbl    = nullptr;   // 时钟模式行4: 天气下, 居中
+    std::string _ag_txt;              // worker 发布的最新文本 (""=无)
+    std::mutex  _agm;
+    std::atomic<bool> _ag_fetching{false};
+    uint32_t  _ag_fetch_ms = 0;       // 上次发起拉取时刻
     lv_obj_t* _photo_img = nullptr;
     lv_obj_t* _ph_scrim = nullptr;     // 右下角时间日期底衬 (半透明黑圆角)
     lv_obj_t* _ph_time_lbl = nullptr;  // "HH:MM" montserrat_44
