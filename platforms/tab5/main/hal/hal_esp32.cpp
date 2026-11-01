@@ -111,6 +111,19 @@ void HalEsp32::init()
             default: break;
         }
         mclog::tagWarn(_tag, "RESET REASON: {} ({})", why, (int)esp_reset_reason());
+        // 串口 watcher 在设备重启时丢头部日志 — 10s 后 (watcher 已接上) 重打
+        static char s_rr[64] = "?";
+        snprintf(s_rr, sizeof(s_rr), "%s (%d)", why, (int)esp_reset_reason());
+        static esp_timer_handle_t s_rr_timer = nullptr;
+        if (!s_rr_timer) {
+            const esp_timer_create_args_t a = {
+                .callback = [](void*) { mclog::tagWarn("hal", "RESET REASON (repeat): {}", s_rr); },
+                .name = "rr",
+            };
+            esp_timer_create(&a, &s_rr_timer);
+        }
+        esp_timer_stop(s_rr_timer);
+        esp_timer_start_once(s_rr_timer, 10 * 1000 * 1000);
     }
 
     mclog::tagInfo(_tag, "camera init");
