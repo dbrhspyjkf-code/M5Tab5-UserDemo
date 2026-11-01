@@ -40,6 +40,8 @@ public:
 
     void clearRtcIrq() override;
     void setRtcTime(tm time) override;
+    bool hasDailyRtcAlarm() override;
+    bool setupDailyRtcAlarm(int hour, int min) override;
 
     void setChargeQcEnable(bool enable) override;
     bool getChargeQcEnable() override;

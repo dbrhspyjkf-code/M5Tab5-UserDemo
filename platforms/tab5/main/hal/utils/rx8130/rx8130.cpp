@@ -142,40 +142,37 @@ void RX8130_Class::disableIrq()
 
 void RX8130_Class::setAlarmIrq(struct tm* time)
 {
+    // 2026-11-01 定时开关机:原厂 demo 只把三个闹钟寄存器写成 0x80(全
+    // 字段不参与匹配),传入的 hour/min 根本没写进去,闹钟形同虚设。按
+    // RX8130CE 手册重写:hour/min 写实值(AE=0 参与匹配),day 字段 AE=1
+    // (忽略日期 → 每日重复),再清 AF 标志、开 AIE 中断。
     uint8_t buf = 0;
 
-    // Write 0 to AIE
+    // Disable alarm interrupt while reconfiguring
     buf = readRegister8(RX8130_REG_CTRL0);
-    clrbit(buf, 3);
-    clrbit(buf, 5);
+    clrbit(buf, 3);  // AIE = 0
     writeRegister8(RX8130_REG_CTRL0, buf);
 
-    buf = readRegister8(RX8130_REG_CTRL0);
-    // debug_print_reg(0x1E, buf);
-
-    // Hour AE, week AE day AE
-    buf = 0x80;
-    writeRegister8(RX8130_REG_ALWDAY, buf);
-    buf = readRegister8(RX8130_REG_ALWDAY);
-    // debug_print_reg(0x19, buf);
-
-    buf = 0x80;
-    writeRegister8(RX8130_REG_ALHOUR, buf);
-    buf = readRegister8(RX8130_REG_ALHOUR);
-    // debug_print_reg(0x18, buf);
-
-    buf = 0x80;
-    writeRegister8(RX8130_REG_ALMIN, buf);
-    buf = readRegister8(RX8130_REG_ALMIN);
-    // debug_print_reg(0x17, buf);
-
-    // Write 1 to AIE
-    buf = readRegister8(RX8130_REG_CTRL0);
+    // WADA = 1: reg 0x19 is day-of-month (ignored anyway via AE, but keep
+    // the mode deterministic instead of week-day matching)
+    buf = readRegister8(RX8130_REG_EXT);
     setbit(buf, 3);
-    writeRegister8(RX8130_REG_CTRL0, buf);
+    writeRegister8(RX8130_REG_EXT, buf);
+
+    // min / hour: real values, AE bit (bit7) clear -> participate in match
+    writeRegister8(RX8130_REG_ALMIN, dec2bcd(time->tm_min) & 0x7f);
+    writeRegister8(RX8130_REG_ALHOUR, dec2bcd(time->tm_hour) & 0x3f);
+    // day: AE = 1 -> no date match -> fires daily at hour:min
+    writeRegister8(RX8130_REG_ALWDAY, 0x80);
+
+    // Clear stale alarm flag, then enable the interrupt
+    buf = readRegister8(RX8130_REG_FLAG);
+    clrbit(buf, 3);  // AF = 0
+    writeRegister8(RX8130_REG_FLAG, buf);
 
     buf = readRegister8(RX8130_REG_CTRL0);
-    // debug_print_reg(0x1E, buf);
+    setbit(buf, 3);  // AIE = 1
+    writeRegister8(RX8130_REG_CTRL0, buf);
 }
 
 // RX8130 寄存器地址

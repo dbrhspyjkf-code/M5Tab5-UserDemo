@@ -14,6 +14,7 @@
 #include "../app_settings/app_settings.h"
 #include "../utils/datetime/lunar_calendar.h"
 #include "../utils/theme/theme.h"
+#include "../utils/power_scheduler.h"
 #ifndef PLATFORM_BUILD_DESKTOP
 #include "../utils/assets/assets_partition.h"
 #endif
@@ -1401,7 +1402,7 @@ void AppHome::_openPowerDialog()
 // ─── Quick-settings dialog (gear tap): volume + brightness + screensaver + theme ──
 void AppHome::_openQuickSettings()
 {
-    lv_obj_t* card = _openModal(680, 440, "设置");
+    lv_obj_t* card = _openModal(680, 540, "设置");
 
     const int LBL_X = 40, SLD_X = 180, SLD_W = 380, SLD_H = 44;
     const int VAL_X = SLD_X + SLD_W + 18;
@@ -1489,6 +1490,64 @@ void AppHome::_openQuickSettings()
     lv_obj_set_style_text_color(hint, lv_color_hex(theme::cur().text_dim), 0);
     lv_obj_set_style_text_font(hint, zh_font_sm(), 0);
 
+    // 定时开关机行 (2026-11-01 用户需求): 勾选后每天到「关」时刻断电,
+    // 断电前武装 RX8130 每日闹钟, 「开」时刻自动开机(冷启动)。半小时
+    // 粒度可选, 默认关 00:00 / 开 06:30。NVS psched_en/psched_off/psched_on。
+    lv_obj_t* ps_l = lv_label_create(card);
+    lv_label_set_text(ps_l, "定时开关机");
+    lv_obj_set_pos(ps_l, LBL_X, 358);
+    lv_obj_set_style_text_color(ps_l, lv_color_hex(T_LBL()), 0);
+    lv_obj_set_style_text_font(ps_l, zh_font_lg(), 0);
+
+    _qs_ps_chk = lv_checkbox_create(card);
+    lv_checkbox_set_text(_qs_ps_chk, "");
+    lv_obj_set_pos(_qs_ps_chk, SLD_X, 348);
+    lv_obj_set_style_text_font(_qs_ps_chk, zh_font_lg(), 0);
+    lv_obj_set_style_bg_color(_qs_ps_chk, lv_color_hex(theme::cur().track), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_qs_ps_chk, lv_color_hex(T_ACCENT()),
+                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    if (GetHAL()->getConfig(power_scheduler::kKeyEn, "1") == "1")
+        lv_obj_add_state(_qs_ps_chk, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(_qs_ps_chk, _qsPs_chk_cb, LV_EVENT_VALUE_CHANGED, this);
+
+    // 关机/开机时间下拉: 48 项半小时粒度「HH:MM 关 / HH:MM 开」
+    auto mk_time_dd = [&](const char* cur, const char* suffix, int x) -> lv_obj_t* {
+        std::string opts;
+        int sel = 0;
+        int ch = 0, cm = 0;
+        bool ok = power_scheduler::parseHHMM(cur, &ch, &cm);
+        for (int i = 0; i < 48; i++) {
+            char b[20];
+            snprintf(b, sizeof(b), "%02d:%02d %s", i / 2, (i % 2) * 30, suffix);
+            opts += b;
+            if (i < 47) opts += '\n';
+            if (ok && ch * 60 + cm == i * 30) sel = i;
+        }
+        // 配置不是半小时粒度时, 就近向下取整落到选项上
+        if (ok && (ch * 60 + cm) % 30 != 0) sel = (ch * 60 + cm) / 30;
+        lv_obj_t* dd = lv_dropdown_create(card);
+        lv_dropdown_set_options(dd, opts.c_str());  // set_options 内部复制
+        lv_dropdown_set_selected(dd, sel);
+        lv_obj_set_pos(dd, x, 352);
+        lv_obj_set_size(dd, 190, 44);
+        lv_obj_set_style_text_font(dd, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(dd, lv_color_hex(T_LBL()), 0);
+        lv_obj_set_style_bg_color(dd, lv_color_hex(theme::cur().track), 0);
+        lv_dropdown_set_symbol(dd, nullptr);   // FA 箭头 zh 字体无字形
+        // 列表对象构造时就已存在, 当场设字体否则中文变 tofu
+        lv_obj_t* list = lv_dropdown_get_list(dd);
+        if (list) {
+            lv_obj_set_style_text_font(list, zh_font_lg(), 0);
+            lv_obj_set_style_text_color(list, lv_color_hex(theme::cur().text_hi), 0);
+            lv_obj_set_style_bg_color(list, lv_color_hex(theme::cur().card[1]), 0);
+            lv_obj_set_style_bg_opa(list, LV_OPA_COVER, 0);
+        }
+        lv_obj_add_event_cb(dd, _qsPs_dd_cb, LV_EVENT_VALUE_CHANGED, this);
+        return dd;
+    };
+    _qs_ps_off_dd = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOff, "00:00").c_str(), "关", 240);
+    _qs_ps_on_dd  = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOn, "06:30").c_str(), "开", 444);
+
     // 主题循环切换（松绿→暖橙→海蓝→岩紫…）：立即重建主页，其他 app 下次
     // 打开生效。按钮文字显示当前主题名。
     _qs_theme_lbl = mk_btn(card, "", T_BTN(), 300, 60, _qsTheme_cb, this);
@@ -1569,6 +1628,28 @@ void AppHome::_qsSs_dd_cb(lv_event_t* e)
     int idx = lv_dropdown_get_selected(self->_qs_ss_dd);
     if (idx < 0 || idx > 2) idx = 1;
     GetHAL()->setConfig("screensaver_min", kMins[idx]);
+}
+
+void AppHome::_qsPs_chk_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    bool on = lv_obj_has_state(self->_qs_ps_chk, LV_STATE_CHECKED);
+    GetHAL()->setConfig(power_scheduler::kKeyEn, on ? "1" : "0");
+}
+
+void AppHome::_qsPs_dd_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    auto* dd = (lv_obj_t*)lv_event_get_target(e);
+    int idx = lv_dropdown_get_selected(dd);
+    if (idx < 0 || idx > 47) return;
+    int total_min = idx * 30;
+    auto* hal = GetHAL();
+    if (dd == self->_qs_ps_off_dd) {
+        hal->setConfig(power_scheduler::kKeyOff, power_scheduler::fmtHHMM(total_min / 60, total_min % 60));
+    } else if (dd == self->_qs_ps_on_dd) {
+        hal->setConfig(power_scheduler::kKeyOn, power_scheduler::fmtHHMM(total_min / 60, total_min % 60));
+    }
 }
 
 // ─── Network dialog (WiFi tap): WiFi + HA server ────────────────────────────

@@ -169,6 +169,18 @@ public:
     virtual void clearRtcIrq()
     {
     }
+    // 定时开关机:是否支持 RTC 每日闹钟唤醒(真机 RX8130 支持,桌面模拟器
+    // 返回 false,调度器据此跳过关机动作,设置 UI 仍可配置)。
+    virtual bool hasDailyRtcAlarm()
+    {
+        return false;
+    }
+    // 设置每日 hour:min 的 RTC 闹钟 IRQ。只在「即将断电」的场景调用
+    // (powerOff 前):运行中挂着闹钟,到点 IRQ 对电源电路的行为未验证。
+    virtual bool setupDailyRtcAlarm(int hour, int min)
+    {
+        return false;
+    }
 
     /* --------------------------------- Camera --------------------------------- */
     virtual void startCameraCapture(lv_obj_t* imgCanvas)

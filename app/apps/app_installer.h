@@ -31,6 +31,7 @@
 #include <cstring>
 #include "app_idle_screen/app_idle_screen.h"
 #include "xiaozhi_ctl.h"
+#include "utils/power_scheduler.h"
 /* Header files locator (Don't remove) */
 
 // Start boot anim app and wait for it to finish
@@ -59,6 +60,10 @@ inline void on_install_apps()
     // Audio pipeline + AFE wake word stay resident for the life of the
     // device. xiaozhi_start_task() is idempotent.
     xiaozhi_start_task();
+
+    // ── 定时开关机:常驻 30s 轮询,到 psched_off 时刻断电(断电前由
+    // powerOff 武装 psched_on 的 RTC 每日闹钟,次晨自动开机) ──────────
+    power_scheduler::start();
 
     // ── Create instances and save raw pointers before moving into Mooncake ──
     auto home_uptr = std::make_unique<AppHome>();

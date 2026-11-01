@@ -12,6 +12,7 @@
 #include <esp_sleep.h>
 #include <esp_check.h>
 #include <esp_pm.h>
+#include <cstdio>
 
 static const std::string _tag = "power";
 
@@ -72,9 +73,42 @@ bool HalEsp32::getExt5vEnable()
     return _ext_5v_enable;
 }
 
+bool HalEsp32::hasDailyRtcAlarm()
+{
+    return true;
+}
+
+bool HalEsp32::setupDailyRtcAlarm(int hour, int min)
+{
+    if (hour < 0 || hour > 23 || min < 0 || min > 59) {
+        mclog::tagWarn(_tag, "invalid rtc alarm {:02d}:{:02d}", hour, min);
+        return false;
+    }
+    struct tm t = {};
+    t.tm_hour = hour;
+    t.tm_min  = min;
+    rx8130.setAlarmIrq(&t);
+    mclog::tagInfo(_tag, "daily rtc alarm armed at {:02d}:{:02d}", hour, min);
+    return true;
+}
+
 void HalEsp32::powerOff()
 {
     mclog::tagInfo(_tag, "power off");
+
+    // 定时开关机:功能开启时,任何关机路径(定时到点/手动确认)断电前先
+    // 武装每日 RTC 闹钟 —— 断电后 RX8130 由备份电池走时,到点拉 IRQ 重新
+    // 上电开机。设备运行期间不挂闹钟:开机流程 clearRtcIrq() 会把它清掉,
+    // 也避免上电状态下 IRQ 触发电源电路的未定义行为。
+    if (getConfig("psched_en", "1") == "1") {  // 默认开(0:00 关 / 06:30 RTC 开机)
+        int h = -1, m = -1;
+        auto on = getConfig("psched_on", "06:30");
+        if (sscanf(on.c_str(), "%d:%d", &h, &m) == 2) {
+            setupDailyRtcAlarm(h, m);
+        } else {
+            mclog::tagWarn(_tag, "bad psched_on '{}', skip rtc alarm", on);
+        }
+    }
 
     playShutdownSfx();
     setDisplayBrightness(0);

@@ -174,6 +174,9 @@ private:
     lv_obj_t* _qs_theme_lbl = nullptr; // quick-settings theme-cycle button
     lv_obj_t* _qs_ss_chk  = nullptr;  // quick-settings 屏保 checkbox (NVS screensaver_en)
     lv_obj_t* _qs_ss_dd   = nullptr;  // quick-settings 闲置超时下拉 (NVS screensaver_min)
+    lv_obj_t* _qs_ps_chk  = nullptr;  // quick-settings 定时开关机 checkbox (NVS psched_en)
+    lv_obj_t* _qs_ps_off_dd = nullptr; // quick-settings 关机时间下拉 (NVS psched_off)
+    lv_obj_t* _qs_ps_on_dd  = nullptr; // quick-settings 开机时间下拉 (NVS psched_on)
     lv_obj_t* _net_ssid   = nullptr;  // network dialog: SSID textarea
     lv_obj_t* _net_pass   = nullptr;  // network dialog: password textarea
     lv_obj_t* _net_host   = nullptr;  // network dialog: server host textarea (writes both ha_host + svc_host)
@@ -197,6 +200,8 @@ private:
     static void _qsTheme_cb(lv_event_t* e);   // theme::cycle() + rebuild
     static void _qsSs_chk_cb(lv_event_t* e);  // 屏保开关 → NVS screensaver_en
     static void _qsSs_dd_cb(lv_event_t* e);   // 闲置超时下拉 → NVS screensaver_min
+    static void _qsPs_chk_cb(lv_event_t* e);  // 定时开关机 → NVS psched_en
+    static void _qsPs_dd_cb(lv_event_t* e);   // 关机/开机时间下拉 → NVS psched_off / psched_on
     void _refreshThemeBtn();                   // 按钮文字 ← 当前主题名
     static void _netTa_cb(lv_event_t* e);
     static void _netKb_cb(lv_event_t* e);
