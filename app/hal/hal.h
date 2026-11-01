@@ -188,6 +188,20 @@ public:
         (void)quality;
         return "";
     }
+    // 快门两段式 (LVGL 上下文用): capturePhotoFrame 抓原始帧拷贝 (阻塞
+    // <100ms, 可在持 LVGL 锁的按钮回调里调); jpegEncodeFrame 是 CPU 密集
+    // 编码 (~1s), 必须挪 worker 线程 —— 在持锁上下文编码会把预览 task 卡
+    // 在 lv_canvas_set_buffer 等锁上, stop 等待随之超时 (2026-11-01 实测)。
+    virtual std::string capturePhotoFrame()
+    {
+        return "";
+    }
+    virtual std::string jpegEncodeFrame(const std::string& rgb565_frame, int quality = 80)
+    {
+        (void)rgb565_frame;
+        (void)quality;
+        return "";
+    }
 
     /* ---------------------------------- USB-A --------------------------------- */
     struct HidMouseData_t {

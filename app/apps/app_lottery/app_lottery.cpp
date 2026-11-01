@@ -1502,17 +1502,27 @@ void AppLottery::_closeCamera()
 void AppLottery::_shutter()
 {
     if (_upload_in_flight.exchange(true)) return;
-    // 预览帧 → JPEG (阻塞 ~0.5s; 主线程做, 期间 LVGL 卡一拍可接受)
-    std::string jpeg = GetHAL()->capturePhotoJpeg(85);
-    if (jpeg.empty()) {
+    // 两段式快门: 主线程只抓帧拷贝 (<100ms, 持 LVGL 锁可忍); JPEG 编码
+    // (~1s CPU 密集) 挪 worker —— 持锁编码会把预览 task 卡在
+    // lv_canvas_set_buffer 等锁, stop 等待随之超时 (2026-11-01 实测 UI 卡 3s)
+    auto frame = std::make_shared<std::string>(GetHAL()->capturePhotoFrame());
+    if (frame->empty()) {
         _upload_in_flight.store(false);
         _toast = "拍照失败, 请重试";
         return;
     }
     _closeCamera();
     auto alive = _alive;
-    bool ok = GetHAL()->tryRunDetached([this, jpeg, alive]() {
+    bool ok = GetHAL()->tryRunDetached([this, frame, alive]() {
         auto* hal = GetHAL();
+        std::string jpeg = hal->jpegEncodeFrame(*frame, 85);
+        if (jpeg.empty()) {
+            std::lock_guard<std::mutex> lk(_bets_mu);
+            _remote_err = "照片编码失败";
+            _upload_in_flight.store(false);
+            _bets_ready.store(true);
+            return;
+        }
         std::string base = "http://" + hal->getConfig("svc_host", "192.168.1.200") + ":8766";
         auto resp = hal->httpPost(base + "/api/ssq/ticket", jpeg,
                                   {{"Content-Type", "image/jpeg"}});

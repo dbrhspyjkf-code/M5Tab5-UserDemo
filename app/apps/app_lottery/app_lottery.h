@@ -133,7 +133,6 @@ private:
     void _openCamera();
     void _closeCamera();
     void _shutter();
-    void _uploadWorker(std::string jpeg, std::shared_ptr<bool> alive);
     void _applyRemoteBets();     // worker 完成 → 确认 modal (onRunning 消费)
     void _confirmModal(const std::vector<ssq::Pick>& bets);   // 识别确认
     void _judgeBets(const std::vector<ssq::Pick>& bets);      // 多注/复式混合判定

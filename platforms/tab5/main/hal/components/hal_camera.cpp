@@ -405,7 +405,9 @@ void app_camera_display(void* arg)
 void HalEsp32::startCameraCapture(lv_obj_t* imgCanvas)
 {
     mclog::tagInfo(TAG, "start camera capture");
-    if (camera_task) {
+    // camera_task 或旧 task 尚在收尾 (stop 超时窗口) 都要拒 —— 双 task 并发
+    // DQBUF 同一 fd 会乱
+    if (camera_task || isCameraCapturing()) {
         mclog::tagWarn(TAG, "camera task already running, stop first");
         return;
     }
@@ -437,7 +439,11 @@ void HalEsp32::startCameraCapture(lv_obj_t* imgCanvas)
 void HalEsp32::stopCameraCapture()
 {
     mclog::tagInfo(TAG, "stop camera capture");
-    if (camera_task == NULL) return;   // 没在跑 (或已自行失败退出)
+    if (camera_task == NULL && !isCameraCapturing()) return;   // 没在跑
+
+    // 先置 NULL (本函数总在 LVGL 上下文被调 → 持锁, 与 task 锁内的
+    // set_buffer 互斥): 之后 task 醒来直接跳过刷屏, 快速回到 queue 检查。
+    camera_canvas = NULL;
 
     int control_state = 0;  // pause
     xQueueSend(queue_camera_ctrl, &control_state, portMAX_DELAY);
@@ -445,12 +451,16 @@ void HalEsp32::stopCameraCapture()
     control_state = 2;  // exit
     xQueueSend(queue_camera_ctrl, &control_state, portMAX_DELAY);
 
-    // 同步等 task 真退出 (调用方随后可能删 canvas —— task 不死就删 = UAF)
-    if (cam_exit_done && xSemaphoreTake(cam_exit_done, pdMS_TO_TICKS(2000)) != pdTRUE) {
+    // 同步等 task 退出。300ms: 若调用方持 LVGL 锁 (按钮回调) 而 task 正卡在
+    // set_buffer 等锁, 这里等不满 —— 超时返回后锁释放, task 醒来见 canvas
+    // NULL 安全跳过再自行退出 (cam_task_finish 兜底清状态)。勿等太久, 持锁
+    // 等待= UI 卡死。
+    if (cam_exit_done && xSemaphoreTake(cam_exit_done, pdMS_TO_TICKS(300)) != pdTRUE) {
         mclog::tagWarn(TAG, "camera task exit wait timeout (task may be stuck)");
     }
     camera_task = NULL;
-    camera_canvas = NULL;
+    // is_camera_capturing 由 task finish 清; 超时窗口内它仍 true ——
+    // startCameraCapture 的守卫靠它兜住, 防双 task 并发 DQBUF。
 }
 
 bool HalEsp32::isCameraCapturing()
@@ -459,10 +469,10 @@ bool HalEsp32::isCameraCapturing()
     return is_camera_capturing;
 }
 
-std::string HalEsp32::capturePhotoJpeg(int quality)
+std::string HalEsp32::capturePhotoFrame()
 {
     if (!isCameraCapturing()) {
-        mclog::tagWarn(TAG, "capturePhotoJpeg: preview not running");
+        mclog::tagWarn(TAG, "capturePhotoFrame: preview not running");
         return "";
     }
     constexpr size_t FRAME_SIZE = (size_t)CAMERA_WIDTH * CAMERA_HEIGHT * 2;
@@ -477,19 +487,25 @@ std::string HalEsp32::capturePhotoJpeg(int quality)
         s_photo_sem = xSemaphoreCreateBinary();
         if (s_photo_sem == NULL) return "";
     }
-    // 清掉可能残留的旧信号量, 再发请求 (预览 ~30fps, 等一帧 <50ms)
+    // 清掉可能残留的旧信号量, 再发请求 (预览 ~30fps, 等一帧 <50ms;
+    // task 的快门拷贝在 PPA 后、LVGL 锁外 → 持 LVGL 锁的主线程调用不互锁)
     xSemaphoreTake(s_photo_sem, 0);
     s_photo_req = true;
     if (xSemaphoreTake(s_photo_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        mclog::tagWarn(TAG, "capturePhotoJpeg: frame wait timeout");
+        mclog::tagWarn(TAG, "capturePhotoFrame: frame wait timeout");
         s_photo_req = false;
         return "";
     }
+    return std::string((char*)s_photo_frame, FRAME_SIZE);
+}
 
-    // RGB565 720p → JPEG (image_to_jpeg 由 xiaozhi_core 提供, esp_new_jpeg)
+std::string HalEsp32::jpegEncodeFrame(const std::string& frame, int quality)
+{
+    constexpr size_t FRAME_SIZE = (size_t)CAMERA_WIDTH * CAMERA_HEIGHT * 2;
+    if (frame.size() != FRAME_SIZE) return "";
     uint8_t* out     = nullptr;
     size_t   out_len = 0;
-    if (!image_to_jpeg(s_photo_frame, FRAME_SIZE, CAMERA_WIDTH, CAMERA_HEIGHT,
+    if (!image_to_jpeg((uint8_t*)frame.data(), frame.size(), CAMERA_WIDTH, CAMERA_HEIGHT,
                        V4L2_PIX_FMT_RGB565, (uint8_t)quality, &out, &out_len) ||
         !out || out_len == 0) {
         mclog::tagWarn(TAG, "jpeg encode failed");
@@ -500,4 +516,13 @@ std::string HalEsp32::capturePhotoJpeg(int quality)
     std::string jpeg((char*)out, out_len);
     free(out);
     return jpeg;
+}
+
+std::string HalEsp32::capturePhotoJpeg(int quality)
+{
+    // 兼容单段式 (内部两段; 仍不建议在 LVGL 上下文用 —— 编码 ~1s 会卡
+    // 预览 task 的 lv_canvas_set_buffer 等 LVGL 锁)
+    std::string frame = capturePhotoFrame();
+    if (frame.empty()) return "";
+    return jpegEncodeFrame(frame, quality);
 }

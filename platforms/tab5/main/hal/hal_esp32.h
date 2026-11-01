@@ -58,6 +58,8 @@ public:
     void stopCameraCapture() override;
     bool isCameraCapturing() override;
     std::string capturePhotoJpeg(int quality = 80) override;
+    std::string capturePhotoFrame() override;
+    std::string jpegEncodeFrame(const std::string& rgb565_frame, int quality = 80) override;
 
     void setSpeakerVolume(uint8_t volume) override;
     uint8_t getSpeakerVolume() override;
