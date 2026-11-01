@@ -9,6 +9,7 @@ extern "C" {
 }
 #include <mooncake_log.h>
 #include <esp_timer.h>
+#include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_netif_sntp.h>
@@ -94,6 +95,23 @@ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 void HalEsp32::init()
 {
     mclog::tagInfo(_tag, "init");
+
+    // 复位原因判别 (2026-11-01 拍照崩溃排查: 无 panic 打印的静默复位定位)
+    {
+        const char* why = "?";
+        switch (esp_reset_reason()) {
+            case ESP_RST_POWERON:  why = "POWERON 上电"; break;
+            case ESP_RST_SW:       why = "SW 软件复位(断言/abort)"; break;
+            case ESP_RST_PANIC:    why = "PANIC 异常"; break;
+            case ESP_RST_INT_WDT:  why = "INT_WDT 中断看门狗"; break;
+            case ESP_RST_TASK_WDT: why = "TASK_WDT 任务看门狗"; break;
+            case ESP_RST_WDT:      why = "RTC_WDT"; break;
+            case ESP_RST_BROWNOUT: why = "BROWNOUT 欠压"; break;
+            case ESP_RST_SDIO:     why = "SDIO"; break;
+            default: break;
+        }
+        mclog::tagWarn(_tag, "RESET REASON: {} ({})", why, (int)esp_reset_reason());
+    }
 
     mclog::tagInfo(_tag, "camera init");
     bsp_cam_osc_init();
