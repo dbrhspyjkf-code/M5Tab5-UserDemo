@@ -90,7 +90,9 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPost(
     config.method         = HTTP_METHOD_POST;
     config.event_handler  = _http_event_handler;
     config.user_data      = &body;
-    config.timeout_ms     = _is_claude_gateway_url(url) ? 240000 : 10000;
+    // ssq/ticket: 服务端多方向×逐行×3变换 OCR 全管线 >10s, 60s 上限
+    config.timeout_ms     = _is_claude_gateway_url(url) ? 240000
+                          : (url.find("/api/ssq/ticket") != std::string::npos ? 60000 : 10000);
     config.buffer_size    = 1024;
     config.buffer_size_tx = 2048;
     config.crt_bundle_attach = esp_crt_bundle_attach;
