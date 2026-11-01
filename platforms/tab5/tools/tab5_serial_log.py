@@ -38,7 +38,7 @@ except Exception as e:
     )
     t0 = time.time()
     while p.poll() is None and time.time() - t0 < 3600 * 6:
-        time.sleep(5)
+        time.sleep(1)   # 1s 轮询: 子进程异常退出即刻进入重连 (崩溃现场窗口最小化)
     p.terminate()
     p.wait()
     return time.time() - t0
@@ -51,4 +51,4 @@ if __name__ == "__main__":
             print(f"round ended after {dur:.0f}s, reconnecting…", file=sys.stderr)
         except Exception as e:
             print(f"round error: {e}", file=sys.stderr)
-        time.sleep(3)
+        time.sleep(0.2)   # 重连零延迟 (USB-Serial/JTAG 断连后立刻抢回)
