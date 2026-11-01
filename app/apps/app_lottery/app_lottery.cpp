@@ -1427,7 +1427,10 @@ void AppLottery::_showMultiResult(const ssq::DrawIssue& d, const ssq::Pick& p)
 void AppLottery::_closeResult()
 {
     if (_result_modal) {
-        lv_obj_delete(_result_modal);
+        // delete_async: 本函数高频出现在按钮 CLICKED 回调里 (删的是按钮
+        // 自身所在的 modal 树) — 同步 delete 在 LVGL 事件分发中销毁目标
+        // = UAF 间歇蓝屏重启 (2026-11-01 对奖 3 次崩 1 次实锤)
+        lv_obj_delete_async(_result_modal);
         _result_modal = nullptr;
     }
 }
@@ -1494,7 +1497,7 @@ void AppLottery::_closeCamera()
 {
     GetHAL()->stopCameraCapture();
     if (_cam_modal) {
-        lv_obj_delete(_cam_modal);
+        lv_obj_delete_async(_cam_modal);   // 同 _closeResult: 回调里删祖先树
         _cam_modal = nullptr;
         _cam_canvas = nullptr;
     }
