@@ -7,8 +7,6 @@
 
 namespace webui {
 void sleepMs(uint32_t ms);
-// 把本帧累积的脏区发布给浏览器主线程 (rAF 侧读取绘制), 并切换 staging
-void publishFrame();
 }  // namespace webui
 
 class HalWeb : public hal::HalBase {
@@ -37,6 +35,8 @@ public:
     // /gw/prefs (服务端按用户持久化, 主题等设置跨浏览器一致)。
     std::string getConfig(const std::string& key, const std::string& defaultValue = "") override;
     void setConfig(const std::string& key, const std::string& value) override;
+
+    void uartMonitorSend(std::string msg, bool newLine = true) override;
 
     HttpResponse_t httpGet(const std::string& url,
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;

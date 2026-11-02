@@ -117,7 +117,8 @@ class Handler(BaseHTTPRequestHandler):
         self.route()
 
     def route(self):
-        path = self.path
+        from urllib.parse import urlsplit
+        path = urlsplit(self.path).path   # 剥掉 query, 否则 /?v=x 落入静态分支 404
 
         if path.startswith("/gw/prefs"):
             if self.command == "GET":
@@ -173,8 +174,9 @@ class Handler(BaseHTTPRequestHandler):
             ".json": "application/json",
             ".data": "application/octet-stream",
         }.get(os.path.splitext(fpath)[1], "application/octet-stream")
+        # 开发模式全部 no-cache (wasm 迭代频繁, max-age 会污染实验)
         with open(fpath, "rb") as f:
-            self._send(200, f.read(), ctype)
+            self._send(200, f.read(), ctype, cache=False)
 
 
 def main():

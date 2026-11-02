@@ -25,7 +25,6 @@ int main()
     app::Init(callback);
     while (!app::IsDone()) {
         app::Update();
-        webui::publishFrame();  // flush 累积的脏区发布给浏览器主线程
         webui::sleepMs(5);
     }
     app::Destroy();

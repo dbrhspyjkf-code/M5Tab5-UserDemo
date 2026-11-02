@@ -7,7 +7,9 @@
 // on-screen keyboard. Falls back to "" if the file doesn't exist (fresh
 // clone), which just means NVS "ha_token" must be set some other way (e.g.
 // a one-off script over serial/USB — there's no on-device UI for it).
-#if __has_include("secrets.h")
+// PLATFORM_BUILD_WEB (浏览器版): 一律不带编译期 token —— WASM 产物会被分发,
+// 鉴权由网关注入 (剥离客户端 Authorization 后加盖专用 HA 长效令牌)。
+#if __has_include("secrets.h") && !defined(PLATFORM_BUILD_WEB)
 #include "secrets.h"
 #else
 inline const char* LOCAL_HA_TOKEN_DEFAULT = "";

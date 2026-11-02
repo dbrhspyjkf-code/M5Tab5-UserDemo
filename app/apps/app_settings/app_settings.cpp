@@ -632,6 +632,19 @@ void AppSettings::_buildToolsPage()
         }
     };
 
+#ifdef PLATFORM_BUILD_WEB
+    // web 版工具页: 不移植 LoRa Chat / RFID / Reachy (PORT.A 外设与机器人),
+    // 其余 9 个入口重排为 4×3 网格前 9 格
+    make_tile(0, 0, nullptr, 130, "计算器",  _toolBtn_cb, 256, 12, -1, 5);
+    make_tile(1, 0, nullptr, 130, "汇率",    _toolFx_cb, 256, 12, -1, 6);
+    make_tile(2, 0, nullptr, 130, "单位换算", _toolUnit_cb, 256, 12, -1, 7);
+    make_tile(3, 0, nullptr, 130, "健康", _toolHealth_cb, 256, 12, -1, 11);
+    make_tile(0, 1, nullptr, 130, "邮  件", _toolMail_cb, 256, 12, -1, 1);
+    make_tile(1, 1, nullptr, 130, "万年历", _toolCalendar_cb, 256, 12, -1, 4);
+    make_tile(2, 1, nullptr, 130, "SSH", _toolSsh_cb, 256, 12, -1, 10);
+    make_tile(3, 1, nullptr, 0, "双色球", _toolLottery_cb, 256, 12, -1, 12);
+    make_tile(0, 2, nullptr, 130, "图  库", _toolGallery_cb, 256, 12, -1, 13);
+#else
     // 行 0: 计算器 / 汇率 / 单位换算 — 图标全部走 make_tile 图形分支
     // (kind 5/6/7), 线条随主题强调色, 原静态图 calc_icon/fx_icon/unit_icon 已弃用.
     // (2026-10-30: 灯阵 tile 已随 app_unit_puzzle 整体移除)
@@ -674,6 +687,7 @@ void AppSettings::_buildToolsPage()
     // 第 3 行第 4 列: 图库 (共享相簿「壁纸」浏览, hermes :8766/gallery/*)
     //   图标走 kind=13 分支: 相框 + 双山 + 太阳; 2026-11-02 补最后空位
     make_tile(3, 2, nullptr, 130, "图  库", _toolGallery_cb, 256, 12, -1, 13);
+#endif  // !PLATFORM_BUILD_WEB
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)

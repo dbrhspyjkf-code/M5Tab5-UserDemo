@@ -8,6 +8,15 @@
 
 static const char* TAG = "AppXiaoZhi";
 
+// 桌面/web 平台的中文字体回退 (与 app_home 等同款惯例; M1 起 web 走 cbin 三档)
+#if defined(PLATFORM_BUILD_DESKTOP)
+extern "C" const lv_font_t font_puhui_20_4;
+static const lv_font_t* zh20()
+{
+    return &font_puhui_20_4;
+}
+#endif
+
 AppXiaoZhi::AppXiaoZhi()
 {
     setAppInfo().name = "小智";
@@ -22,13 +31,42 @@ void AppXiaoZhi::onCreate()
 
 void AppXiaoZhi::onOpen()
 {
+#ifdef PLATFORM_BUILD_WEB
+    // web 版: 浏览器无麦克风/扬声器音频管道, xiaozhi 语音对话不可用。
+    // 显示占位说明屏, 点按任意处返回主页。(后续单独立项做 WebRTC 麦克风)
+    _scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(0x000000), 0);
+    lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    auto* title = lv_label_create(_scr);
+    lv_label_set_text(title, "小  智");
+    lv_obj_set_style_text_font(title, zh20(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xE8E6E3), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 160);
+
+    auto* msg = lv_label_create(_scr);
+    lv_label_set_text(msg, "网页版暂不支持语音对话\n\n请在 Tab5 上使用小智\n\n点按任意位置返回");
+    lv_obj_set_style_text_font(msg, zh20(), 0);
+    lv_obj_set_style_text_color(msg, lv_color_hex(0x8A8A8A), 0);
+    lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(msg, LV_ALIGN_CENTER, 0, 40);
+
+    lv_obj_add_event_cb(_scr, [](lv_event_t* e) {
+        lv_async_call([](void* ud) {
+            static_cast<AppXiaoZhi*>(ud)->close();
+        }, lv_event_get_user_data(e));
+    }, LV_EVENT_CLICKED, this);
+    lv_screen_load(_scr);
+#else
     xiaozhi_start_task();
     xiaozhi_activate_screen();
     _was_active = false;
     _opened_at_ms = esp_timer_get_time() / 1000;
     _installSwipeGesture();
+#endif
 }
 
+#ifndef PLATFORM_BUILD_WEB
 void AppXiaoZhi::onRunning()
 {
     // Update battery reading every 10 s for the xiaozhi info bar.
@@ -73,6 +111,16 @@ void AppXiaoZhi::onClose()
         _close_cb();
     }
 }
+#else
+void AppXiaoZhi::onRunning() {}
+
+void AppXiaoZhi::onClose()
+{
+    if (_close_cb) {
+        _close_cb();
+    }
+}
+#endif
 
 void AppXiaoZhi::_installSwipeGesture()
 {

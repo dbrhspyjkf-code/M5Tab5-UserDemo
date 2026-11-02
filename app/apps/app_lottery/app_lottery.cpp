@@ -932,6 +932,10 @@ void AppLottery::_buildPickPage()
                            [](lv_event_t* e) {
                                static_cast<AppLottery*>(lv_event_get_user_data(e))->_openCamera();
                            }, this);
+#ifdef PLATFORM_BUILD_WEB
+    // web 版: 浏览器无相机, 隐藏拍照验票入口 (手动选号判定不受影响)
+    lv_obj_add_flag(_photo_btn, LV_OBJ_FLAG_HIDDEN);
+#endif
     _judge_btn = mk_action("判  定", 260, 990, C_ACC(),
                            [](lv_event_t* e) {
                                static_cast<AppLottery*>(lv_event_get_user_data(e))->_judge();

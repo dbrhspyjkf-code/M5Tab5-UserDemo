@@ -5,18 +5,29 @@
  *
  * 架构 (与 SDL 桌面驱动的差异):
  *   - 整个 C++ main() 跑在 pthread worker (PROXY_TO_PTHREAD), LVGL 在此渲染;
- *   - 帧数据写入 worker 堆内的 staging 双缓冲, 经"共享 wasm heap"暴露给浏览器
- *     主线程 (pthreads 构建的 wasmMemory 是 SharedArrayBuffer, 主线程的
- *     Module.HEAPU16 与 worker 同一缓冲), rAF 侧只读 staging 转 RGBA 上 canvas;
- *   - 布局偏移 (staging/ring/atomics 地址) 由 worker 在 HAL init 时 postMessage
- *     给主线程 (shell.js 经 patch 的 Worker 构造器接收);
- *   - 输入事件 (触摸/滚轮/键盘) 由主线程写入 ring, worker 在 indev read_cb 消费。
+ *   - worker 创建一块显式 SharedArrayBuffer (帧 staging + 输入 ring + 原子
+ *     序号), 随 postMessage 交给浏览器主线程 (PROXY_TO_PTHREAD 下主线程
+ *     没有 wasm 实例/HEAPU8, 显式 SAB 是唯一可靠通道);
+ *   - flush_cb 把 LVGL 脏区从 wasm 堆拷进 SAB → 扩展脏区 bbox → frameSeq+1;
+ *     主线程 rAF 检查 seq, 把该区域 RGB565→RGBA 画上 canvas;
+ *   - 输入事件 (触摸/滚轮/键盘) 由主线程写入 SAB ring, worker 在 indev
+ *     read_cb 消费。
+ *
+ * SAB 布局 (与 shell.js 逐字段对应, 全部 4 字节):
+ *   0     u32  magic 'TAB5'
+ *   4     u32  version
+ *   8     u32  frameSeq        (worker Atomics.add, 发布一帧脏区后 +1)
+ *   12    u32  inputWrite      (主线程 Atomics.store, 写入事件后前进)
+ *   16    u32  bbox[8][4]      (环形队列, 槽号 = seq&7 —— 每个 seq 一格,
+ *                               主线程逐 seq 消费合并, 启动画廊多块 flush
+ *                               挤进一个 rAF 时不会丢上半屏)
+ *   32    u32  ring[256*4]     ({type,a,b,0})
+ *   4128  u16  staging[1280*720]
  */
 #include <lvgl.h>
 #include <emscripten.h>
 #include <mooncake_log.h>
 #include <algorithm>
-#include <atomic>
 #include <cstring>
 #include <mutex>
 
@@ -42,88 +53,66 @@ enum : uint32_t {
     EV_KEYUP   = 6,
 };
 
-struct SharedHeader {
-    uint32_t magic;
-    uint32_t version;
-    std::atomic<uint32_t> frameSeq;    // worker 发布帧后 +1 (release)
-    std::atomic<uint32_t> inputWrite;  // 主线程写入事件后 +1 (release)
-    uint32_t publishedIdx;             // 当前已发布 staging (0/1)
-    uint32_t bbox[4];                  // x1, y1, x2, y2
-    uint32_t ring[RING_SLOTS][4];      // {type, a, b, c}
-};
+static constexpr int SAB_SIZE =
+    4128 + SCREEN_W * SCREEN_H * 2;
 
-static SharedHeader* sh = nullptr;
-static uint16_t staging[2][SCREEN_W * SCREEN_H];  // 双缓冲帧区 (bss)
-static uint16_t draw_buf[SCREEN_W * 180];         // LVGL partial 渲染缓冲
+/* -------------------------- SAB 建立与布局上报 ----------------------------- */
 
-static int cur_staging = 0;
-static uint32_t bbox_acc[4] = {0, 0, 0, 0};       // 本帧累积脏区
-static bool bbox_valid = false;
+EM_JS(void, sab_init_and_post, (), {
+    const SIZE = 4128 + 1280 * 720 * 2;
+    const sab = new SharedArrayBuffer(SIZE);
+    const u32 = new Uint32Array(sab);
+    u32[0] = 0x54414235;  // 'TAB5'
+    u32[1] = 1;
+    globalThis.__tab5sab = sab;  // 供后续 EM_JS 使用 (worker 侧)
+    postMessage({__tab5layout: {sab: sab}});
+})
 
-/* ----------------------------- 布局上报主线程 ----------------------------- */
-
-EM_JS(void, post_layout, (int magic, int frameSeq, int inputWrite, int publishedIdx,
-                          int bbox, int ring, int staging0, int staging1),
+// 帧脏区: 从 wasm 堆拷进 SAB staging, 扩展 bbox 双槽, 发布 seq
+EM_JS(void, sab_flush, (int x1, int y1, int x2, int y2, int src_ptr, int row_bytes),
 {
-    postMessage({__tab5layout: {magic, frameSeq, inputWrite, publishedIdx, bbox, ring, staging0, staging1}});
+    const sab = globalThis.__tab5sab;
+    const u32 = new Uint32Array(sab);
+    const u16 = new Uint16Array(sab);
+    const STAGING = 4128 >> 1;   // u16 索引
+    const rows = y2 - y1 + 1;
+    const src = HEAPU8.subarray(src_ptr, src_ptr + row_bytes * rows);
+    for (let r = 0; r < rows; r++) {
+        u16.set(new Uint16Array(src.buffer, src.byteOffset + r * row_bytes, row_bytes >> 1),
+                STAGING + (y1 + r) * 1280 + x1);
+    }
+    const nseq = Atomics.add(u32, 2, 1) + 1;
+    const slot = 3 + (nseq & 7) * 4;              // bbox[8][4] @ u32[3..34]
+    u32[slot + 0] = x1; u32[slot + 1] = y1; u32[slot + 2] = x2; u32[slot + 3] = y2;
+})
+
+// 事件消费: 有事件则写 3×i32 到 wasm 堆并返回 1
+EM_JS(int, sab_pop_event, (int out_ptr),
+{
+    const sab = globalThis.__tab5sab;
+    if (!sab) return 0;
+    const u32 = new Uint32Array(sab);
+    const w = Atomics.load(u32, 3);
+    if (globalThis.__tab5evIdx === undefined) globalThis.__tab5evIdx = 0;
+    if (globalThis.__tab5evIdx === w) return 0;
+    const slot = (globalThis.__tab5evIdx % 256) * 4;
+    const base = 8 + slot;
+    HEAP32[out_ptr >> 2] = u32[base];
+    HEAP32[(out_ptr >> 2) + 1] = u32[base + 1];
+    HEAP32[(out_ptr >> 2) + 2] = u32[base + 2];
+    globalThis.__tab5evIdx++;
+    return 1;
 })
 
 /* --------------------------------- flush --------------------------------- */
 
 static void flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map)
 {
-    const int x1 = area->x1, y1 = area->y1;
-    const int x2 = area->x2, y2 = area->y2;
-    const int w = x2 - x1 + 1;
-    const size_t row_bytes = (size_t)w * 2;
-
-    auto* dst = staging[cur_staging];
-    for (int y = y1; y <= y2; y++) {
-        memcpy(&dst[(size_t)y * SCREEN_W + x1], px_map + (size_t)(y - y1) * row_bytes, row_bytes);
-    }
-
-    if (!bbox_valid) {
-        bbox_acc[0] = x1; bbox_acc[1] = y1; bbox_acc[2] = x2; bbox_acc[3] = y2;
-        bbox_valid = true;
-    } else {
-        if ((int)bbox_acc[0] > x1) bbox_acc[0] = x1;
-        if ((int)bbox_acc[1] > y1) bbox_acc[1] = y1;
-        if ((int)bbox_acc[2] < x2) bbox_acc[2] = x2;
-        if ((int)bbox_acc[3] < y2) bbox_acc[3] = y2;
-    }
-
+    const int w = area->x2 - area->x1 + 1;
+    sab_flush(area->x1, area->y1, area->x2, area->y2,
+              (int)(uintptr_t)px_map, (int)(w * 2));
     lv_display_flush_ready(disp);
 }
-
-void publishFrame()
-{
-    if (!sh || !bbox_valid) return;
-    sh->publishedIdx = (uint32_t)cur_staging;
-    sh->bbox[0] = bbox_acc[0];
-    sh->bbox[1] = bbox_acc[1];
-    sh->bbox[2] = bbox_acc[2];
-    sh->bbox[3] = bbox_acc[3];
-    bbox_valid = false;
-    cur_staging ^= 1;
-    sh->frameSeq.fetch_add(1, std::memory_order_release);
-}
-
-/* --------------------------------- 输入 ring ------------------------------- */
-
-static void ring_push(uint32_t type, uint32_t a, uint32_t b)
-{
-    if (!sh) return;
-    uint32_t w = sh->inputWrite.load(std::memory_order_relaxed);
-    // 满则丢弃最旧 (主线程单写者, 256 槽足够)
-    uint32_t slot = w % RING_SLOTS;
-    sh->ring[slot][0] = type;
-    sh->ring[slot][1] = a;
-    sh->ring[slot][2] = b;
-    sh->ring[slot][3] = 0;
-    sh->inputWrite.store(w + 1, std::memory_order_release);
-}
-
-static uint32_t read_idx = 0;   // worker 已消费到的 ring 序号
 
 /* --------------------------------- indevs --------------------------------- */
 
@@ -134,35 +123,33 @@ static std::mutex key_mutex;
 static struct { int key; bool down; } key_pending[32];
 static int key_head = 0, key_tail = 0;
 
-static void pointer_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+// 每次最多消费 2 条: 浏览器合成事件 (click/drag) 会把 press+轨迹+release
+// 在同一瞬间灌进 ring, 一次吃完 LVGL 只看到终态 (press 被覆盖 → 无
+// CLICKED/GESTURE)。限流后 press/轨迹/release 分批进入 indev 周期。
+static void drain_events()
 {
-    if (!sh) return;
-    uint32_t w = sh->inputWrite.load(std::memory_order_acquire);
-    while (read_idx != w) {
-        uint32_t slot = read_idx % RING_SLOTS;
-        uint32_t type = sh->ring[slot][0];
-        int32_t a = (int32_t)sh->ring[slot][1];
-        int32_t b = (int32_t)sh->ring[slot][2];
-        read_idx++;
-        switch (type) {
+    struct { int32_t type, a, b; } ev;
+    int budget = 2;
+    while (budget-- > 0 && sab_pop_event((int)(uintptr_t)&ev)) {
+        switch (ev.type) {
             case EV_PRESS:
-                ptr_x = a; ptr_y = b; ptr_pressed = true;
+                ptr_x = ev.a; ptr_y = ev.b; ptr_pressed = true;
                 break;
             case EV_RELEASE:
-                ptr_x = a; ptr_y = b; ptr_pressed = false;
+                ptr_x = ev.a; ptr_y = ev.b; ptr_pressed = false;
                 break;
             case EV_MOVE:
-                ptr_x = a; ptr_y = b;
+                ptr_x = ev.a; ptr_y = ev.b;
                 break;
             case EV_WHEEL:
-                wheel_acc += b;
+                wheel_acc += ev.b;
                 break;
             case EV_KEYDOWN:
             case EV_KEYUP: {
                 std::lock_guard<std::mutex> lk(key_mutex);
                 int next = (key_tail + 1) % 32;
                 if (next != key_head) {
-                    key_pending[key_tail] = {(int)b, type == EV_KEYDOWN};
+                    key_pending[key_tail] = {(int)ev.b, ev.type == EV_KEYDOWN};
                     key_tail = next;
                 }
                 break;
@@ -171,6 +158,10 @@ static void pointer_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
                 break;
         }
     }
+}
+
+static void pointer_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+{
     data->point.x = ptr_x;
     data->point.y = ptr_y;
     data->state = ptr_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
@@ -199,40 +190,34 @@ void lvgl_display_init()
 {
     lv_display_t* disp = lv_display_create(SCREEN_W, SCREEN_H);
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
+    static uint16_t draw_buf[SCREEN_W * 180];
     lv_display_set_buffers(disp, draw_buf, nullptr, sizeof(draw_buf), LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(disp, flush_cb);
 
-    // 共享头布局就绪, 上报主线程
-    static SharedHeader header;
-    header.magic = SHM_MAGIC;
-    header.version = SHM_VERSION;
-    sh = &header;
+    sab_init_and_post();
 
-    auto* touchpad = lv_indev_create(LV_INDEV_TYPE_POINTER, 20);
+    // 事件环只在此处消费一次 (三个 indev 共享状态; 若各自 drain 会互相抢事件)
+    lv_timer_create([](lv_timer_t*) { drain_events(); }, 10, nullptr);
+
+    auto* touchpad = lv_indev_create();
+    lv_indev_set_type(touchpad, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(touchpad, pointer_read_cb);
     lv_indev_set_display(touchpad, disp);
     lv_indev_set_group(touchpad, lv_group_get_default());
 
-    auto* wheel = lv_indev_create(LV_INDEV_TYPE_ENCODER, 20);
+    auto* wheel = lv_indev_create();
+    lv_indev_set_type(wheel, LV_INDEV_TYPE_ENCODER);
     lv_indev_set_read_cb(wheel, encoder_read_cb);
     lv_indev_set_display(wheel, disp);
     lv_indev_set_group(wheel, lv_group_get_default());
 
-    auto* keyboard = lv_indev_create(LV_INDEV_TYPE_KEYBOARD, 20);
+    auto* keyboard = lv_indev_create();
+    lv_indev_set_type(keyboard, LV_INDEV_TYPE_KEYPAD);
     lv_indev_set_read_cb(keyboard, keyboard_read_cb);
     lv_indev_set_display(keyboard, disp);
     lv_indev_set_group(keyboard, lv_group_get_default());
 
-    post_layout((int)(uintptr_t)&header.magic,
-                (int)(uintptr_t)&header.frameSeq,
-                (int)(uintptr_t)&header.inputWrite,
-                (int)(uintptr_t)&header.publishedIdx,
-                (int)(uintptr_t)&header.bbox[0],
-                (int)(uintptr_t)&header.ring[0][0],
-                (int)(uintptr_t)&staging[0][0],
-                (int)(uintptr_t)&staging[1][0]);
-
-    mclog::tagInfo(_tag, "display driver ready, layout posted");
+    mclog::tagInfo(_tag, "display driver ready, SAB posted");
 }
 
 }  // namespace webui

@@ -5,6 +5,7 @@
 #include <mooncake_log.h>
 #include <lvgl.h>
 #include <emscripten.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -124,7 +125,7 @@ static hal::HalBase::HttpResponse_t http_request(
     const std::vector<std::pair<std::string, std::string>>& headers,
     const char* body, size_t bodyLen, int timeoutMs)
 {
-    HttpResponse_t resp;
+    hal::HalBase::HttpResponse_t resp;
     const std::string rw = rewrite_url(url);
 
     // 同源网关请求默认带 JSON content-type (app 侧 JSON body 为主;
@@ -148,19 +149,19 @@ static hal::HalBase::HttpResponse_t http_request(
     return resp;
 }
 
-HttpResponse_t HalWeb::httpGet(const std::string& url,
+hal::HalBase::HttpResponse_t HalWeb::httpGet(const std::string& url,
     const std::vector<std::pair<std::string, std::string>>& headers)
 {
     return http_request("GET", url, headers, nullptr, 0, 30000);
 }
 
-HttpResponse_t HalWeb::httpPost(const std::string& url, const std::string& body,
+hal::HalBase::HttpResponse_t HalWeb::httpPost(const std::string& url, const std::string& body,
     const std::vector<std::pair<std::string, std::string>>& headers)
 {
     return http_request("POST", url, headers, body.data(), body.size(), 240000);
 }
 
-HttpResponse_t HalWeb::httpPut(const std::string& url, const std::string& body,
+hal::HalBase::HttpResponse_t HalWeb::httpPut(const std::string& url, const std::string& body,
     const std::vector<std::pair<std::string, std::string>>& headers)
 {
     return http_request("PUT", url, headers, body.data(), body.size(), 30000);
@@ -249,6 +250,16 @@ void HalWeb::setDisplayBrightness(uint8_t brightness)
 uint8_t HalWeb::getDisplayBrightness()
 {
     return _current_lcd_brightness;
+}
+
+// web 版「串口监视器」: 日志经 postMessage 桥到浏览器主线程 (window.__tab5uart)
+EM_JS(void, uart_bridge, (const char* msg, int len), {
+    postMessage({__tab5uart: UTF8ToString(msg, len)});
+})
+
+void HalWeb::uartMonitorSend(std::string msg, bool newLine)
+{
+    uart_bridge(msg.c_str(), (int)msg.size());
 }
 
 void HalWeb::setSpeakerVolume(uint8_t volume)

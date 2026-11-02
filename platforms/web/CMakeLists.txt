@@ -9,6 +9,10 @@
 cmake_policy(SET CMP0077 NEW)
 set(CMAKE_CXX_STANDARD 17)
 
+# pthread/atomics 必须在所有 target (含依赖库) 的编译期生效,
+# 否则 wasm-ld --shared-memory 拒绝链接
+add_compile_options(-pthread)
+
 add_definitions(-DPLATFORM_BUILD_DESKTOP)
 add_definitions(-DPLATFORM_BUILD_WEB)
 
@@ -60,7 +64,7 @@ file(GLOB COMPAT_SRCS "${TAB5_PROJECT_ROOT}/platforms/desktop/compat/*.cpp")
 
 add_executable(tab5web ${WEB_PLATFORM_SRCS} ${COMPAT_SRCS} ${APP_LAYER_SRCS})
 target_include_directories(tab5web PUBLIC ${APP_LAYER_INCS})
-target_compile_options(tab5web PRIVATE -fexceptions)
+target_compile_options(tab5web PRIVATE -fexceptions -pthread)
 set_target_properties(tab5web PROPERTIES OUTPUT_NAME "tab5web" SUFFIX ".js")
 target_link_options(tab5web PRIVATE
     -fexceptions

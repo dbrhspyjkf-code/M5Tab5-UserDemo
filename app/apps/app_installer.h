@@ -79,17 +79,21 @@ inline void on_install_apps()
     auto set_uptr  = std::make_unique<AppSettings>();
     AppSettings* settings = set_uptr.get();
 
+#ifndef PLATFORM_BUILD_WEB
     auto lc_uptr = std::make_unique<AppLoraChat>();
     AppLoraChat* lora_chat = lc_uptr.get();
+#endif
 
     auto st_uptr = std::make_unique<AppStocks>();
     AppStocks* stocks = st_uptr.get();
 
+#ifndef PLATFORM_BUILD_WEB
     auto re_uptr = std::make_unique<AppReachy>();
     AppReachy* reachy = re_uptr.get();
 
     auto rf_uptr = std::make_unique<AppRfid>();
     AppRfid* rfid = rf_uptr.get();
+#endif
 
     auto sh_uptr = std::make_unique<AppSsh>();
     AppSsh* ssh = sh_uptr.get();        // SSH 终端: 工具页入口
@@ -97,8 +101,10 @@ inline void on_install_apps()
     auto ra_uptr = std::make_unique<AppRadio>();
     AppRadio* radio = ra_uptr.get();
 
+#ifndef PLATFORM_BUILD_WEB
     auto pl_uptr = std::make_unique<AppPlayer>();
-    AppPlayer* player = pl_uptr.get();   // 播放器: Sonos/HomePad,主页入口
+    AppPlayer* player = pl_uptr.get();   // 播放器: Sonos/HomePod,主页入口 (web 不移植)
+#endif
 
     auto ti_uptr = std::make_unique<AppTimer>();
     AppTimer* timer = ti_uptr.get();     // 计时器: 主页入口
@@ -115,21 +121,29 @@ inline void on_install_apps()
     auto ga_uptr = std::make_unique<AppGallery>();
     AppGallery* gallery = ga_uptr.get();     // 图库: 工具页入口
 
+#ifndef PLATFORM_BUILD_WEB
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
+#endif
 
     // ── Install (AppHome auto-opens via onCreate → open()) ──
     mooncake::GetMooncake().installApp(std::move(home_uptr));
     int ha_id = mooncake::GetMooncake().installApp(std::move(ha_uptr));
     int xz_id = mooncake::GetMooncake().installApp(std::move(xz_uptr));
     int set_id = mooncake::GetMooncake().installApp(std::move(set_uptr));
+#ifndef PLATFORM_BUILD_WEB
     int lc_id = mooncake::GetMooncake().installApp(std::move(lc_uptr));
+#endif
     int st_id = mooncake::GetMooncake().installApp(std::move(st_uptr));
+#ifndef PLATFORM_BUILD_WEB
     int re_id = mooncake::GetMooncake().installApp(std::move(re_uptr));
     int rf_id = mooncake::GetMooncake().installApp(std::move(rf_uptr));
+#endif
     int sh_id = mooncake::GetMooncake().installApp(std::move(sh_uptr));
     int ra_id = mooncake::GetMooncake().installApp(std::move(ra_uptr));
+#ifndef PLATFORM_BUILD_WEB
     int pl_id = mooncake::GetMooncake().installApp(std::move(pl_uptr));
+#endif
     int ti_id = mooncake::GetMooncake().installApp(std::move(ti_uptr));
     int cal_id = mooncake::GetMooncake().installApp(std::move(cal_uptr));
     int hl_id  = mooncake::GetMooncake().installApp(std::move(hl_uptr));
@@ -140,10 +154,12 @@ inline void on_install_apps()
     ha->setCloseCallback([home]() { home->restoreScreen(); });
     xz->setCloseCallback([home]() { home->restoreScreen(); });
     settings->setCloseCallback([home]() { home->restoreScreen(); });
+#ifndef PLATFORM_BUILD_WEB
     // LoRa 聊天同样从「工具」页打开, 上拨返回工具页.
     lora_chat->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+#endif
     // 自选股也从「工具」页打开, 返回 (← / 上拨) 回到工具页.
     stocks->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
@@ -164,6 +180,7 @@ inline void on_install_apps()
     gallery->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+#ifndef PLATFORM_BUILD_WEB
     // Reachy 同样从「工具」页打开, 返回 (← / 上拨) 回到工具页.
     reachy->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
@@ -172,16 +189,20 @@ inline void on_install_apps()
     rfid->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+#endif
     // SSH 终端同从「工具」页打开, 上拨返回工具页.
     ssh->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
     // 收音机是主页入口(非工具页), 关闭直接回主屏
     radio->setCloseCallback([home]() { home->restoreScreen(); });
+#ifndef PLATFORM_BUILD_WEB
     // 播放器(Sonos/HomePod)同为主页入口
     player->setCloseCallback([home]() { home->restoreScreen(); });
+#endif
     // 计时器同为主页入口
     timer->setCloseCallback([home]() { home->restoreScreen(); });
+#ifndef PLATFORM_BUILD_WEB
     // 独占模式: 收音机打开期间抑制屏保(流媒体 app, 不被时钟遮盖/省轮询)
     radio->setSuppressor([idle](bool s) { idle->setSuppressed(s); });
     // 前台独占(2026-10-31): 收音机/播放器界面期间完全不进屏保(不弹照片/
@@ -190,10 +211,13 @@ inline void on_install_apps()
     player->setBlocker([idle](bool b) { idle->setBlocked(b); });
     // 图库浏览照片期间同样前台独占 (屏保本身就是照片轮播, 看图时不该被它盖住)
     gallery->setBlocker([idle](bool b) { idle->setBlocked(b); });
+#endif
     // 后台播放: 主页状态栏音符图标读收音机流状态 (在播→显示, 点按回收音机)
     home->setNowPlayingGetter([radio]() -> std::string { return radio->streamInfo(); });
 
+#ifndef PLATFORM_BUILD_WEB
     settings->setLoraChatAppId(lc_id);
+#endif
     settings->setStocksAppId(st_id);
     settings->setCalendarAppId(cal_id);
     settings->setHealthAppId(hl_id);
@@ -203,8 +227,10 @@ inline void on_install_apps()
     home->setOpenHealthHandler([hl_id]() {
         mooncake::GetMooncake().openApp(hl_id);
     });
+#ifndef PLATFORM_BUILD_WEB
     settings->setReachyAppId(re_id);
     settings->setRfidAppId(rf_id);
+#endif
     settings->setSshAppId(sh_id);
 
     // Status-bar mail icon → open the AppSettings email sub-page. The handler
@@ -227,7 +253,9 @@ inline void on_install_apps()
         else if (strcmp(want, "calendar") == 0) mooncake::GetMooncake().openApp(cal_id);
         else if (strcmp(want, "stocks") == 0) mooncake::GetMooncake().openApp(st_id);
         else if (strcmp(want, "radio") == 0) mooncake::GetMooncake().openApp(ra_id);
+#ifndef PLATFORM_BUILD_WEB
         else if (strcmp(want, "player") == 0) mooncake::GetMooncake().openApp(pl_id);
+#endif
         else if (strcmp(want, "gallery") == 0) mooncake::GetMooncake().openApp(ga_id);
     }
 #endif
@@ -236,12 +264,17 @@ inline void on_install_apps()
     // When the always-on AFE detects "你好小智", switch to the xiaozhi app
     // regardless of which screen is currently active. The callback runs on
     // xiaozhi's main task, so defer to LVGL thread via lv_async_call.
+    // web 版无屏保 worker, idle 恒 nullptr。
     struct WakeOpenContext {
         AppIdleScreen* idle;
         int xz_id;
     };
     static WakeOpenContext wake_open_ctx;
+#ifndef PLATFORM_BUILD_WEB
     wake_open_ctx = {idle, xz_id};
+#else
+    wake_open_ctx = {nullptr, xz_id};
+#endif
     xiaozhi_register_wake_callback([](const std::string&) {
         lv_async_call([](void* ud) {
             auto* ctx = static_cast<WakeOpenContext*>(ud);
@@ -255,7 +288,9 @@ inline void on_install_apps()
     home->addApp("小  智", xz_id);
     home->addApp("金融", st_id);   // 2026-10-28: 入口从工具页移到主页底部
     home->addApp("收音机", ra_id);
+#ifndef PLATFORM_BUILD_WEB
     home->addApp("播放器", pl_id);
+#endif
     home->addApp("计时器", ti_id);
     home->addApp("工  具", set_id);   // 2026-10-28: 移到最右 (用户指定)
 #ifdef PLATFORM_BUILD_DESKTOP
@@ -269,6 +304,7 @@ inline void on_install_apps()
 #endif
     /* Install app locator (Don't remove) */
 
+#ifndef PLATFORM_BUILD_WEB
     // ── Voice input WorkerAbility (always-on, not a user-launchable app) ──
     int vi_id = mooncake::GetMooncake().extensionManager()->createAbility(
         std::make_unique<AppVoiceInput>());
@@ -287,6 +323,7 @@ inline void on_install_apps()
     is_uptr->setHomeApp(home);
     int is_id = mooncake::GetMooncake().extensionManager()->createAbility(std::move(is_uptr));
     mooncake::GetMooncake().extensionManager()->resumeWorkerAbility(is_id);
+#endif  // !PLATFORM_BUILD_WEB
 
     // WiFi / HA configuration moved to the home status-bar WiFi popup; the
     // red WiFi icon there signals a failed connection, so there's no longer a

@@ -373,6 +373,12 @@ void AppHome::onOpen()
     lv_label_set_text(_status_batt, LV_SYMBOL_BATTERY_FULL " --%");
     make_tappable(_status_batt, 1);
 
+#ifdef PLATFORM_BUILD_WEB
+    // web 版: WiFi 配置与电池均为 Tab5 硬件专属, 隐藏入口 (隐藏对象不占 flex 位)
+    lv_obj_add_flag(_status_wifi, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_status_batt, LV_OBJ_FLAG_HIDDEN);
+#endif
+
     // ── Right column: video-style info rows + OPi wide card ───────────────
     // All data comes from the hermes service on svc_host:8766 (see
     // _fetch_dashboard). Rows are flat cards with a dim index number; the
@@ -1404,6 +1410,12 @@ void AppHome::_openQuickSettings()
 {
     lv_obj_t* card = _openModal(680, 540, "设置");
 
+#ifdef PLATFORM_BUILD_WEB
+    // web 版: 音量/亮度/屏保/定时开关机全部是 Tab5 硬件专属, 只留主题切换
+    _qs_theme_lbl = mk_btn(card, "", T_BTN(), 300, 60, _qsTheme_cb, this);
+    _refreshThemeBtn();
+    lv_obj_align(_qs_theme_lbl, LV_ALIGN_TOP_MID, 0, 120);
+#else
     const int LBL_X = 40, SLD_X = 180, SLD_W = 380, SLD_H = 44;
     const int VAL_X = SLD_X + SLD_W + 18;
 
@@ -1547,6 +1559,8 @@ void AppHome::_openQuickSettings()
     };
     _qs_ps_off_dd = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOff, "00:00").c_str(), "关", 240);
     _qs_ps_on_dd  = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOn, "06:30").c_str(), "开", 444);
+
+#endif  // !PLATFORM_BUILD_WEB
 
     // 主题循环切换（松绿→暖橙→海蓝→岩紫…）：立即重建主页，其他 app 下次
     // 打开生效。按钮文字显示当前主题名。
