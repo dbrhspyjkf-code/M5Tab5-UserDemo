@@ -90,6 +90,11 @@ static const RadioStation kStations[] = {
     {"珠江经济FM97.4",  "zjjs",  974},
     {"BBC World Service", "bbcws", 0},
     {"NPR News",        "npr",   0},
+    {"CNN 新闻",        "cnn",   0},
+    {"CNN 国际台",      "cnni",  0},
+    {"MSNBC 新闻",      "msnbc", 0},
+    {"WNYC 纽约公共",   "wnyc",  0},
+    {"WBEZ 芝加哥公共", "wbez",  0},
     {"KEXP 独立音乐",   "kexp",  0},
     {"Radio Paradise",  "rp",    0},
 };
@@ -521,7 +526,7 @@ void AppRadio::onCreate()
     // 与 HA/股票等一致: 安装不自动打开, 等用户从主页点入 (open 会抢主屏)
 }
 
-int AppRadio::_row_y(int i) const { return 6 + i * 47; }   // 14 台一屏全显, 免滚动
+int AppRadio::_row_y(int i) const { return 6 + i * 47; }   // 19 台, 13 行可见, 列表滚动
 
 void AppRadio::onOpen()
 {
@@ -544,16 +549,19 @@ void AppRadio::onOpen()
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── 左: 电台列表(滚动) ──
+    // ── 左: 电台列表 ──
+    // 2026-11-02 加 5 个美式新闻台(共 19)超出 14 行一屏 → 启用滚动。
+    // 滚动容器会吃掉其区域内的上拨手势: 列表高度收到 y645, 屏幕 650 以下
+    // (上拨退出的起手区)保持空白, 手势不再被列表滚动吞掉。
     lv_obj_t* list = lv_obj_create(_scr);
     lv_obj_set_pos(list, 40, 28);
-    lv_obj_set_size(list, 560, 664);
+    lv_obj_set_size(list, 560, 617);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);   // 无卡片底: 与黑底一体
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_style_radius(list, 18, 0);
     lv_obj_set_style_pad_all(list, 0, 0);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(list, LV_OBJ_FLAG_SCROLLABLE);   // 一屏全显, 禁滚动: 上拨留给退出手势
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
 
     _row_sel = lv_obj_create(list);
     lv_obj_set_size(_row_sel, 544, 44);
