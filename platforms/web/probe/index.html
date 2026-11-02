@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Tab5 Web 环境探针</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: #000; color: #e8e6e3;
+    font: 15px/1.6 -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; color: #7ec87e; }
+  .sub { color: #8a8a8a; font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: #101511; border: 1px solid #1f3324; border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 14px; max-width: 860px;
+  }
+  .verdict { font-size: 17px; font-weight: 600; }
+  .ok   { color: #7ec87e; }
+  .bad  { color: #e5734f; }
+  .warn { color: #e5b84f; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  td { padding: 3px 8px 3px 0; vertical-align: top; border-bottom: 1px solid #17241a; }
+  td.k { color: #9fb8a5; white-space: nowrap; width: 180px; }
+  td.v { word-break: break-all; }
+  .pending { color: #666; }
+  button {
+    background: #1d3a25; color: #bfe8c4; border: 1px solid #2f5a3b; border-radius: 8px;
+    padding: 10px 22px; font-size: 15px; margin-right: 10px; margin-top: 8px; cursor: pointer;
+  }
+  button:active { background: #2f5a3b; }
+  textarea {
+    width: 100%; max-width: 860px; height: 220px; margin-top: 12px;
+    background: #0a0d0b; color: #9fd4a6; border: 1px solid #1f3324; border-radius: 8px;
+    font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 10px; resize: vertical;
+  }
+  .hint { color: #777; font-size: 12.5px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<h1>Tab5 Web 环境探针</h1>
+<div class="sub">检测此浏览器能否运行 Tab5 网页版（WebAssembly 多线程渲染）。打开本页即自动检测。</div>
+
+<div class="card"><div id="verdict" class="verdict pending">检测中…</div>
+  <div id="verdict2" class="pending" style="font-size:13.5px;margin-top:4px"></div></div>
+
+<div class="card"><table id="tbl-basic"></table></div>
+<div class="card"><table id="tbl-cap"></table></div>
+<div class="card">
+  <button id="btnAudio">▶︎ 点我测试音频解锁</button>
+  <button id="btnCopy">复制结果</button>
+  <button id="btnFs">测试全屏</button>
+  <div id="audioResult" class="hint">音频自动播放策略：待测试（点击上面按钮）</div>
+  <div id="fsResult" class="hint">全屏 API：待测试</div>
+</div>
+<div class="card">
+  <div class="hint">把下面的 JSON 截图或复制发给助手（本页不采集位置/隐私数据，不外发任何内容）。</div>
+  <textarea id="out" readonly></textarea>
+</div>
+
+<script>
+"use strict";
+const R = {};           // 结果集
+const $ = id => document.getElementById(id);
+function put(tbl, k, v, cls) {
+  const t = $(tbl);
+  const row = t.insertRow(-1);
+  row.insertCell(0).className = "k"; row.cells[0].textContent = k;
+  const c = row.insertCell(1); c.className = "v" + (cls ? " " + cls : "");
+  c.innerHTML = v;
+  return c;
+}
+function esc(s){ return String(s).replace(/[&<>"]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+function refreshOut(){ $("out").value = JSON.stringify(R, null, 2); }
+
+/* ---------- 基础信息 ---------- */
+function basic() {
+  const n = navigator, s = screen;
+  R.ua = n.userAgent;
+  R.platform = n.platform || "";
+  R.vendor = n.vendor || "";
+  if (n.userAgentData) {
+    R.brands = (n.userAgentData.brands||[]).map(b => b.brand + " " + b.version).join("; ");
+    R.mobile = n.userAgentData.mobile;
+  }
+  put("tbl-basic", "UserAgent", esc(n.userAgent));
+  put("tbl-basic", "platform / vendor", esc(n.platform) + " / " + esc(n.vendor));
+  if (R.brands) put("tbl-basic", "UA brands", esc(R.brands) + (R.mobile ? " (mobile)" : ""));
+  R.screen = s.width + "x" + s.height + " (avail " + s.availWidth + "x" + s.availHeight + ") depth" + s.colorDepth;
+  R.window = innerWidth + "x" + innerHeight;
+  R.dpr = devicePixelRatio;
+  R.ratioNote = Math.round(s.width / (s.height / 9)) + ":9-ish";
+  if (window.visualViewport) {
+    R.vv = "scale " + visualViewport.scale.toFixed(2) + ", " + Math.round(visualViewport.width) + "x" + Math.round(visualViewport.height);
+  }
+  put("tbl-basic", "屏幕", esc(R.screen));
+  put("tbl-basic", "窗口", esc(R.window) + "，DPR " + R.dpr + (R.vv ? "，visualViewport " + esc(R.vv) : ""));
+  put("tbl-basic", "屏幕宽高比", esc(R.ratioNote));
+  if (screen.orientation) put("tbl-basic", "方向", esc(screen.orientation.type) + " @ " + screen.orientation.angle + "°");
+  R.touch = n.maxTouchPoints;
+  R.pointer = matchMedia("(pointer:coarse)").matches ? "coarse(触摸)" : "fine(鼠标)";
+  R.hover = matchMedia("(hover:hover)").matches ? "yes" : "no";
+  put("tbl-basic", "输入", "touchPoints " + R.touch + "，pointer " + R.pointer + "，hover " + R.hover);
+  R.cores = n.hardwareConcurrency || null;
+  R.memGB = n.deviceMemory || null;
+  put("tbl-basic", "CPU 核 / 内存", esc((R.cores || "?") + " 核" + (R.memGB ? " / ≥" + R.memGB + "GB" : "")));
+  try {
+    const gl = document.createElement("canvas").getContext("webgl");
+    const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+    R.gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    R.gpuVendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : "";
+    put("tbl-basic", "GPU", esc(R.gpu) + (R.gpuVendor ? " [" + esc(R.gpuVendor) + "]" : ""));
+  } catch (e) { R.gpu = "unavailable: " + e; put("tbl-basic", "GPU", esc(R.gpu), "bad"); }
+  if (n.connection) {
+    R.net = n.connection.effectiveType + " downlink≈" + n.connection.downlink + "Mbps rtt≈" + n.connection.rtt + "ms";
+    put("tbl-basic", "网络(估)", esc(R.net));
+  }
+  R.lang = n.language; R.cookieEnabled = n.cookieEnabled;
+  try { localStorage.setItem("__probe","1"); R.localStorage = localStorage.getItem("__probe")==="1"; localStorage.removeItem("__probe"); } catch(e){ R.localStorage = false; }
+  put("tbl-basic", "语言 / cookie / localStorage", esc(R.lang) + " / " + R.cookieEnabled + " / " + R.localStorage);
+  R.standalone = n.standalone === true || matchMedia("(display-mode: standalone)").matches;
+  put("tbl-basic", "PWA 全屏模式", R.standalone ? "已在主屏全屏模式" : "普通浏览页");
+  if (n.getBattery) n.getBattery().then(b => { R.battery = Math.round(b.level*100) + "% " + (b.charging?"充电中":"电池"); put("tbl-basic","电池",esc(R.battery)); refreshOut(); }).catch(()=>{});
+}
+
+/* ---------- 能力检测 ---------- */
+const SIMD_BYTES = new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11]);
+
+function capSync() {
+  R.wasmBasic = typeof WebAssembly === "object";
+  try { R.wasmSimd = WebAssembly.validate(SIMD_BYTES); } catch(e) { R.wasmSimd = false; }
+  R.crossOriginIsolated = crossOriginIsolated === true;
+  R.sabTypeof = typeof SharedArrayBuffer;
+  let sabOk = false;
+  try { new SharedArrayBuffer(8); sabOk = R.sabTypeof !== "undefined"; } catch(e) { sabOk = false; R.sabErr = String(e); }
+  R.sabConstruct = sabOk;
+  R.offscreenCanvas = typeof OffscreenCanvas !== "undefined";
+  R.worker = typeof Worker !== "undefined";
+  R.fetchStreams = !!(window.Response && Response.prototype && "body" in Response.prototype && new Response().body !== null);
+  R.fullscreenApi = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+  R.mediaDevices = !!(n2().mediaDevices && n2().mediaDevices.getUserMedia);
+  function n2(){ return navigator; }
+
+  const t = "tbl-cap";
+  put(t, "WebAssembly 基础", R.wasmBasic ? "✅ 可用" : "❌ 不可用", R.wasmBasic?"ok":"bad");
+  put(t, "WASM SIMD", R.wasmSimd ? "✅" : "⚠️ 无（2020 年后浏览器都应支持）", R.wasmSimd?"ok":"warn");
+  put(t, "SharedArrayBuffer", R.sabConstruct ? "✅ 可构造" : ("❌ " + esc(R.sabTypeof) + (R.sabErr ? " (" + esc(R.sabErr) + ")" : "")), R.sabConstruct?"ok":"bad");
+  put(t, "crossOriginIsolated", R.crossOriginIsolated ? "✅ true（COOP/COEP 生效）" : "❌ false", R.crossOriginIsolated?"ok":"bad");
+  put(t, "OffscreenCanvas / Worker / 流式fetch",
+      (R.offscreenCanvas?"✅":"⚠️") + " / " + (R.worker?"✅":"❌") + " / " + (R.fetchStreams?"✅":"⚠️"));
+  put(t, "全屏 API / 摄像头能力", (R.fullscreenApi?"✅":"⚠️") + " / " + (R.mediaDevices?"✅":"❌"));
+  refreshOut();
+}
+
+function atomicsWorkerTest() {
+  return new Promise(resolve => {
+    try {
+      if (typeof SharedArrayBuffer === "undefined" || typeof Worker === "undefined") return resolve({ok:false, why:"SAB/Worker 缺失"});
+      const sab = new SharedArrayBuffer(8);
+      const code = 'onmessage=e=>{const a=new Int32Array(e.data);postMessage("ready");' +
+                   'const r=Atomics.wait(a,0,0,3000);postMessage(r==="ok"?"wait-ok":"wait-"+r)};';
+      const w = new Worker(URL.createObjectURL(new Blob([code], {type:"text/javascript"})));
+      const done = v => { w.terminate(); clearTimeout(guard); resolve(v); };
+      const guard = setTimeout(() => done({ok:false, why:"超时"}), 6000);
+      w.onmessage = e => {
+        if (e.data === "ready") { setTimeout(() => Atomics.notify(new Int32Array(sab), 0, 1), 30); return; }
+        done({ok: e.data === "wait-ok", detail: e.data});
+      };
+      w.onerror = ev => done({ok:false, why:"worker error: " + ev.message});
+      w.postMessage(sab);
+    } catch (err) { resolve({ok:false, why:String(err)}); }
+  });
+}
+
+async function capAsync() {
+  const at = await atomicsWorkerTest();
+  R.atomicsWorker = at;
+  const c = put("tbl-cap", "跨线程 Atomics.wait/notify",
+    at.ok ? "✅ 正常唤醒" : "❌ " + esc(at.why || at.detail || "失败"), at.ok?"ok":"bad");
+  refreshOut();
+
+  // 综合判定
+  const full = R.sabConstruct && R.crossOriginIsolated && at.ok;
+  const partial = R.sabConstruct && at.ok;
+  const v = $("verdict"), v2 = $("verdict2");
+  if (full) {
+    v.textContent = "✅ 结论：此浏览器可运行 Tab5 网页版（WASM 多线程）";
+    v.className = "verdict ok";
+    v2.textContent = "满足 SharedArrayBuffer + 隔离头 + 跨线程唤醒全部条件。";
+  } else if (partial) {
+    v.textContent = "⚠️ 结论：内核支持多线程，但本页未处于隔离上下文";
+    v.className = "verdict warn";
+    v2.textContent = "crossOriginIsolated=false —— 服务端 COOP/COEP 头未生效或页面非 HTTPS。请确认通过 https:// 地址打开。";
+  } else {
+    v.textContent = "❌ 结论：此浏览器不支持 WASM 多线程（SharedArrayBuffer 不可用）";
+    v.className = "verdict bad";
+    v2.textContent = "Tab5 网页版在此设备需要降级方案（单线程构建）。请把页面截图/JSON 发回。";
+  }
+  refreshOut();
+}
+
+/* ---------- 音频 / 全屏（需手势） ---------- */
+$("btnAudio").onclick = async () => {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { $("audioResult").textContent = "音频：无 AudioContext ❌"; R.audio = "none"; return; }
+    const ctx = new AC();
+    R.audioInitialState = ctx.state;
+    if (ctx.state === "suspended") await ctx.resume();
+    R.audioAfterGesture = ctx.state;
+    $("audioResult").textContent = "音频：创建时 " + R.audioInitialState + " → 手势后 " + R.audioAfterGesture +
+      (R.audioAfterGesture === "running" ? " ✅ 可播放" : " ❌ 仍被禁止");
+    $("audioResult").className = "hint " + (R.audioAfterGesture === "running" ? "ok" : "bad");
+    ctx.close();
+  } catch (e) { R.audio = String(e); $("audioResult").textContent = "音频：异常 " + e; }
+  refreshOut();
+};
+$("btnFs").onclick = () => {
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) { $("fsResult").textContent = "全屏 API：不支持 ⚠️（iPad Safari 须「添加到主屏幕」才能全屏）"; return; }
+  req.call(el).then(() => {
+    R.fullscreenEntered = true;
+    $("fsResult").textContent = "全屏 API：✅ 进入成功（再点一次退出）";
+    setTimeout(() => (document.exitFullscreen || document.webkitExitFullscreen).call(document), 1500);
+  }).catch(e => { R.fullscreenEntered = false; $("fsResult").textContent = "全屏 API：进入失败 " + e; });
+  refreshOut();
+};
+$("btnCopy").onclick = () => {
+  const txt = JSON.stringify(R, null, 2);
+  const done = () => { $("btnCopy").textContent = "已复制 ✓"; setTimeout(()=>$("btnCopy").textContent="复制结果", 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(() => fallback());
+  else fallback();
+  function fallback(){ $("out").select(); try { document.execCommand("copy"); done(); } catch(e){} }
+};
+
+/* ---------- 自检响应头 ---------- */
+async function headers() {
+  try {
+    const r = await fetch(location.href, {cache: "no-store"});
+    const coop = r.headers.get("cross-origin-opener-policy");
+    const coep = r.headers.get("cross-origin-embedder-policy");
+    R.respHeaders = {coop, coep};
+    put("tbl-cap", "服务端 COOP / COEP 头", esc((coop || "无") + " / " + (coep || "无")),
+        (coop && coep) ? "ok" : "warn");
+  } catch (e) { R.respHeaders = "fetch 失败: " + e; }
+  refreshOut();
+}
+
+basic();
+capSync();
+headers();
+capAsync();
+</script>
+</body>
+</html>
