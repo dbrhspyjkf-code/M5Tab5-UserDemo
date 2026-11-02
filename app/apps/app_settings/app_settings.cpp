@@ -584,6 +584,21 @@ void AppSettings::_buildToolsPage()
                 tool_accent_rect(tile, C_ACCENT, fx + 65, fy + 10, 4, fh - 20, 2);  // 中缝
                 tool_accent_rect(tile, C_ACCENT, fx + 72, fy + 24, 16, 16, 8);      // 蓝球
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 13) {
+                // 图库 — 相框 + 双山 + 右上太阳 (参考通用"照片"意象, icons8 相框).
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                const int fx = start + 4, fy = top + 14, fw = 88, fh = 66;
+                tool_accent_frame(tile, C_ACCENT, fx, fy, fw, fh, 10, 6);   // 相框
+                // 太阳: 整圆环 (arc 0→360)
+                tool_accent_arc(tile, C_ACCENT, fx + fw - 20, fy + 16, 8, 0, 360, 4);
+                // 双山折线: 左小山起于框底, 峰接框右; 右大山更高的峰
+                static const lv_point_precise_t hills[] = {
+                    {0, 34}, {14, 20}, {28, 34}, {46, 12}, {70, 34}, {88, 34}
+                };
+                tool_accent_line(tile, C_ACCENT, fx, fy + 32, hills, 6, 5);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -655,6 +670,10 @@ void AppSettings::_buildToolsPage()
     // 第 3 行第 2 列: SSH 终端 (libssh 0.11.5 + mbedtls, 移植 Tab5_SSH_Client)
     //   图标走 kind=10 分支: 终端窗框 + ">_" 提示符
     make_tile(1, 2, nullptr, 130, "SSH", _toolSsh_cb, 256, 12, -1, 10);
+
+    // 第 3 行第 4 列: 图库 (共享相簿「壁纸」浏览, hermes :8766/gallery/*)
+    //   图标走 kind=13 分支: 相框 + 双山 + 太阳; 2026-11-02 补最后空位
+    make_tile(3, 2, nullptr, 130, "图  库", _toolGallery_cb, 256, 12, -1, 13);
 }
 
 void AppSettings::_toolBtn_cb(lv_event_t* e)
@@ -726,6 +745,18 @@ void AppSettings::openLottery()
 void AppSettings::_toolLottery_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->openLottery();
+}
+
+void AppSettings::openGallery()
+{
+    if (_gallery_id > 0) {
+        mooncake::GetMooncake().openApp(_gallery_id);
+    }
+}
+
+void AppSettings::_toolGallery_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->openGallery();
 }
 
 void AppSettings::openStocks()

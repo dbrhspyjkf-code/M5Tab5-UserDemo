@@ -27,6 +27,7 @@
 #include "app_calendar/app_calendar.h"
 #include "app_health/app_health.h"
 #include "app_lottery/app_lottery.h"
+#include "app_gallery/app_gallery.h"
 #include <cstdlib>
 #include <cstring>
 #include "app_idle_screen/app_idle_screen.h"
@@ -111,6 +112,9 @@ inline void on_install_apps()
     auto lo_uptr = std::make_unique<AppLottery>();
     AppLottery* lottery = lo_uptr.get();     // 双色球: 工具页入口
 
+    auto ga_uptr = std::make_unique<AppGallery>();
+    AppGallery* gallery = ga_uptr.get();     // 图库: 工具页入口
+
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
 
@@ -130,6 +134,7 @@ inline void on_install_apps()
     int cal_id = mooncake::GetMooncake().installApp(std::move(cal_uptr));
     int hl_id  = mooncake::GetMooncake().installApp(std::move(hl_uptr));
     int lo_id  = mooncake::GetMooncake().installApp(std::move(lo_uptr));
+    int ga_id  = mooncake::GetMooncake().installApp(std::move(ga_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
@@ -153,6 +158,10 @@ inline void on_install_apps()
     });
     // 双色球同从「工具」页打开, 上拨返回工具页.
     lottery->setCloseCallback([set_id]() {
+        mooncake::GetMooncake().openApp(set_id);
+    });
+    // 图库 (共享相簿浏览) 同从「工具」页打开, 上拨返回工具页.
+    gallery->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
     // Reachy 同样从「工具」页打开, 返回 (← / 上拨) 回到工具页.
@@ -179,6 +188,8 @@ inline void on_install_apps()
     // 时钟遮盖, 也不熄屏); 收音机后台播放仍保留"不弹遮盖但允许熄屏"语义
     radio->setBlocker([idle](bool b) { idle->setBlocked(b); });
     player->setBlocker([idle](bool b) { idle->setBlocked(b); });
+    // 图库浏览照片期间同样前台独占 (屏保本身就是照片轮播, 看图时不该被它盖住)
+    gallery->setBlocker([idle](bool b) { idle->setBlocked(b); });
     // 后台播放: 主页状态栏音符图标读收音机流状态 (在播→显示, 点按回收音机)
     home->setNowPlayingGetter([radio]() -> std::string { return radio->streamInfo(); });
 
@@ -187,6 +198,7 @@ inline void on_install_apps()
     settings->setCalendarAppId(cal_id);
     settings->setHealthAppId(hl_id);
     settings->setLotteryAppId(lo_id);
+    settings->setGalleryAppId(ga_id);
     // 主页健康卡长按 → 打开健康 app (工具页同款入口)
     home->setOpenHealthHandler([hl_id]() {
         mooncake::GetMooncake().openApp(hl_id);
@@ -216,6 +228,7 @@ inline void on_install_apps()
         else if (strcmp(want, "stocks") == 0) mooncake::GetMooncake().openApp(st_id);
         else if (strcmp(want, "radio") == 0) mooncake::GetMooncake().openApp(ra_id);
         else if (strcmp(want, "player") == 0) mooncake::GetMooncake().openApp(pl_id);
+        else if (strcmp(want, "gallery") == 0) mooncake::GetMooncake().openApp(ga_id);
     }
 #endif
 
