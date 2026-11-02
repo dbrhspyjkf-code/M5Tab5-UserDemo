@@ -207,6 +207,9 @@ void AppGallery::_buildUi()
     lv_obj_set_style_pad_bottom(_scroll, 24, 0);   // 末行不贴屏底
     lv_obj_set_scroll_dir(_scroll, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(_scroll, LV_SCROLLBAR_MODE_ACTIVE);
+    // 关橡皮筋 (app_lora_chat 同款): 照片少时内容比容器短, 弹性拖动会让
+    // scroll_y 位移 >10px, 底缘上拨被误判成滚动而不退出 (2026-11-02 真机实锤)
+    lv_obj_clear_flag(_scroll, LV_OBJ_FLAG_SCROLL_ELASTIC);
 }
 
 void AppGallery::_setStatus(const char* txt)
