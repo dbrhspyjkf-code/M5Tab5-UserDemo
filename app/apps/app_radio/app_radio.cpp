@@ -485,15 +485,20 @@ void radio_task_fn(TaskCtx ctx)
 
         // ①外部播放中(2026-11-01): 本机流急停; want<0(外部暂停)同步待机态。
         // 2026-11-02: 外部播放期间拉 relay /lv 电平流(~40B/s)驱动 VU——
-        // 真实音频电平(relay 侧 ffmpeg astats 三频段 RMS), 断流/失败退避重连
+        // 真实音频电平(relay 侧 ffmpeg astats 三频段 RMS), 断流/失败退避重连。
+        // 电平流是小包流(10B/125ms), **WiFi 省电必须关**: DTIM 省电会把
+        // 小包攒到几百 ms 才交付 → VU 慢动作(relay 侧到达已实测平滑,
+        // 设备端被省电卡住是最后一环; Tab5 桌面插电, 功耗无虞)
         if (ext) {
             if (http) { teardown_stream(http); cur = -1; }
             if (want < 0 && ctx.state->load() != 0)
                 ctx.state->store(0);
             if (want >= 0) {
+                esp_wifi_set_ps(WIFI_PS_NONE);
                 if (!fetch_levels_stream(want, ctx))
                     vTaskDelay(pdMS_TO_TICKS(2000));   // 连不上: 退避再试
             } else {
+                esp_wifi_set_ps(WIFI_PS_MAX_MODEM);   // 外部停止: 恢复省电
                 ctx.lvl_b->store(0); ctx.lvl_m->store(0); ctx.lvl_t->store(0);
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
