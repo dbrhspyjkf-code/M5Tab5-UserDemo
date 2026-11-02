@@ -405,27 +405,30 @@ void AppGallery::_drainThumbs()
 // ── 全屏大图 ────────────────────────────────────────────────────────────────
 int AppGallery::_slotOf(int idx) const
 {
-    for (int s = 0; s < 3; s++)
-        if (_slots[s].buf && _slots[s].idx == idx) return s;
+    for (const Slot& s : _slots)
+        if (s.buf && s.idx == idx) return &s - _slots;
     return -1;
 }
 
 void AppGallery::_storeSlot(int idx, void* buf)
 {
     const int n = (int)_items.size();
+    // 保留集 = 当前 ±2 (翻页行进方向上永远有 2 张热图)
     auto keep = [&](int i) {
-        return i == _view_idx || i == (_view_idx + 1) % n || i == (_view_idx + n - 1) % n;
+        for (int d = -2; d <= 2; d++)
+            if (i == ((_view_idx + d) % n + n) % n) return true;
+        return false;
     };
     int victim = -1;
-    for (int s = 0; s < 3 && victim < 0; s++)
+    for (int s = 0; s < 5 && victim < 0; s++)
         if (!_slots[s].buf) victim = s;
-    for (int s = 0; s < 3 && victim < 0; s++)
+    for (int s = 0; s < 5 && victim < 0; s++)
         if (!keep(_slots[s].idx)) victim = s;
-    if (victim < 0) {   // 理论不达: 想要的序号最多 3 个且 idx 尚无缓存
+    if (victim < 0) {   // 理论不达: 想要的序号最多 5 个且 idx 尚无缓存
         rgb565::release(buf);
         return;
     }
-    // 淘汰的必不是当前显示的 (当前序号恒在 keep 集合; 未缓存时显示的是 empty_dsc)
+    // 淘汰的必不在保留集 (当前显示的序号恒在其中; 未缓存时显示的是 empty_dsc)
     rgb565::release(_slots[victim].buf);
     _slots[victim] = Slot{idx, buf};
 }
@@ -483,13 +486,21 @@ void AppGallery::_pumpFull()
             rgb565::release(r.second);
         }
     }
-    // 调度下一张: 当前 → 后一张 → 前一张 (一次一张, SDIO 友好)
+    // 调度下一张: 按翻页方向优先 (行进方向 2 张 → 反方向 2 张), 一次一张 (SDIO 友好)
     if (!_viewer || _full_in_flight.load() || _items.empty()) return;
     const int n = (int)_items.size();
-    const int want[3] = {_view_idx, (_view_idx + 1) % n, (_view_idx + n - 1) % n};
+    const int dir = _last_dir >= 0 ? 1 : -1;
+    const int want[5] = {
+        _view_idx,
+        ((_view_idx + dir) % n + n) % n,
+        ((_view_idx + 2 * dir) % n + n) % n,
+        ((_view_idx - dir) % n + n) % n,
+        ((_view_idx - 2 * dir) % n + n) % n,
+    };
     for (int idx : want) {
         if (_slotOf(idx) >= 0) continue;
-        if (idx == _full_fail_idx && now < _full_retry_ms) return;   // 退避中, 不越过它预取
+        // 失败退避只挡它自己, 其他候选照常预取
+        if (idx == _full_fail_idx && now < _full_retry_ms) continue;
         _fetchFull(idx);
         return;
     }
@@ -599,6 +610,7 @@ void AppGallery::_step(int delta)
     const uint32_t now = GetHAL()->millis();
     if (now - _last_flip_ms < 250) return;   // 去重 (抖动/连点)
     _last_flip_ms = now;
+    _last_dir = delta >= 0 ? 1 : -1;         // 记住行进方向, 预取优先
     _showIndex(((_view_idx + delta) % n + n) % n);
 }
 

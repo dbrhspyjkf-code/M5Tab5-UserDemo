@@ -5,7 +5,8 @@
  * 浏览 OrangePi 共享相簿「壁纸」全部照片（与屏保同一照片源，hermes _gallery）:
  * GET :8766/gallery/list 拿清单（新加入的在前，上限 96 张）→ 4 列 296×166 缩略图
  * 网格（/gallery/thumb.rgb565，每张 98KB 顺序拉）→ 点卡片全屏查看
- * （/gallery/photo.rgb565，1280×720 contain 完整显示，3 槽缓存 + 预取前后）。
+ * （/gallery/photo.rgb565，1280×720 contain 完整显示）。全屏大图 5 槽缓存
+ * （当前±2）+ 按翻页方向优先预取——连翻时永远提前备好行进方向的两张。
  *
  * 全屏页: 左右滑动 / 点左右边缘翻页（循环），点中间显隐返回钮与序号 —— 对象级
  * PRESSED/RELEASED（SDL 模拟器 indev 级事件不派发，对象级可用）。
@@ -111,7 +112,8 @@ private:
     bool _chrome   = true;
     uint32_t _last_flip_ms = 0;
     lv_point_t _press{0, 0};
-    Slot _slots[3];                        // 全屏大图缓存 (前/当前/后)
+    Slot _slots[5];                        // 全屏大图缓存 (当前±2)
+    int  _last_dir = 1;                    // 上次翻页方向 (+1 前 / -1 后), 预取优先
     int  _full_fail_idx = -1;              // 上次失败序号 (退避后重试)
     uint32_t _full_retry_ms = 0;
 
