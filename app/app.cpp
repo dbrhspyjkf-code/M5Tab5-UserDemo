@@ -38,7 +38,7 @@ void app::Update()
         GetMooncake().update();
     }
 
-#if defined(__APPLE__) && defined(__MACH__)
+#if defined(__APPLE__) && defined(__MACH__) || defined(PLATFORM_BUILD_WEB)
     lv_timer_handler();
 #endif
 }
