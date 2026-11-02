@@ -58,7 +58,12 @@ private:
     lv_obj_t* _vol_slider = nullptr;
     lv_obj_t* _vol_lbl    = nullptr;
     lv_obj_t* _row_sel    = nullptr;   // 列表选中高亮条
+    lv_obj_t* _list       = nullptr;   // 电台列表容器(动态表重建)
     int       _row_y(int i) const;
+    // ── 动态电台表(2026-11-02): relay /radio/stations 下发, 内置表兜底 ──
+    std::atomic<bool> _stations_dirty{false};
+    void _rebuildStationRows();
+    void _fetchStations();
 
     // ── 电平图(真分频 VU): 单对象绘制事件直绘 20 根琥珀条 ──
     // (Passport 教训: 每根条一个对象的 20fps 刷新会抢 CPU 致音频断续)

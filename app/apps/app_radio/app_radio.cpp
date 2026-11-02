@@ -16,9 +16,12 @@
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <xiaozhi_ctl.h>
+#include <nlohmann/json.hpp>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <mutex>
+#include <vector>
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
@@ -68,6 +71,22 @@ struct RadioStation {
     const char* path;
     int freq;
 };
+
+// ── 动态电台表(2026-11-02): 列表以 relay /radio/stations 下发为准, 终端
+// 增删台零改动; 内置表仅作离线兜底。shared_ptr + mutex 换表, 读者局部
+// 持有快照(流任务遍历期间旧表存活, 无迭代器失效)。
+struct StationDyn {
+    std::string name;
+    std::string path;
+    int freq = 0;
+};
+static std::mutex s_st_mu;
+static std::shared_ptr<const std::vector<StationDyn>> s_stations;
+static void st_replace(std::shared_ptr<const std::vector<StationDyn>> v)
+{
+    std::lock_guard<std::mutex> g(s_st_mu);
+    s_stations = std::move(v);
+}
 static uint16_t s_vu_h[20] = {0};   // 当前条高(px), draw 回调与 _updateVu 共享
 static uint16_t s_vu_pk[20] = {0};  // 峰值帽高(px): 超峰记录, 8fps 每帧 ×0.92 缓降
 
@@ -99,6 +118,32 @@ static const RadioStation kStations[] = {
     {"Radio Paradise",  "rp",    0},
 };
 static const int kStationCount = sizeof(kStations) / sizeof(kStations[0]);
+
+// 快照访问(懒加载内置种子; 读者局部持有 shared_ptr, 换表不影响在用快照)
+static std::shared_ptr<const std::vector<StationDyn>> st_snapshot()
+{
+    {
+        std::lock_guard<std::mutex> g(s_st_mu);
+        if (!s_stations) {   // 懒加载: 内置表作离线兜底种子
+            auto v = std::make_shared<std::vector<StationDyn>>();
+            for (const auto& s : kStations) v->push_back({s.name, s.path, s.freq});
+            s_stations = v;
+        }
+        return s_stations;
+    }
+}
+static int st_count()
+{
+    auto t = st_snapshot();
+    return t ? (int)t->size() : 0;
+}
+static bool st_at(int i, StationDyn& out)   // 越界返回 false
+{
+    auto t = st_snapshot();
+    if (!t || i < 0 || i >= (int)t->size()) return false;
+    out = (*t)[i];
+    return true;
+}
 static const char* kRelayBase  = "http://192.168.1.200:8769/radio/";
 
 // 播放输出(2026-11-01): pid=nullptr 即本机 I2S 直放; 外部经 relay→MA 转投。
@@ -294,8 +339,10 @@ void teardown_stream(esp_http_client_handle_t& http)
 // 短超时失败静默 —— 主流不被它阻塞(ring 128KB≈4s 可吸收收割期停喂)。
 void fetch_nowplaying(int idx)
 {
+    StationDyn st;
+    if (!st_at(idx, st)) return;
     char url[160];
-    snprintf(url, sizeof(url), "%s%s/nowplaying", kRelayBase, kStations[idx].path);
+    snprintf(url, sizeof(url), "%s%s/nowplaying", kRelayBase, st.path.c_str());
     esp_http_client_config_t cfg = {};
     cfg.url         = url;
     cfg.timeout_ms  = 4500;
@@ -352,7 +399,9 @@ void radio_task_fn(TaskCtx ctx)
         teardown_stream(http);
         cur = -1;
         ctx.state->store(3);
-        mclog::tagWarn(TAG, "{}: {} (retry in {}s)", why, kStations[st].name, bo / 1000);
+        StationDyn stn;
+        st_at(st, stn);
+        mclog::tagWarn(TAG, "{}: {} (retry in {}s)", why, stn.name, bo / 1000);
     };
 
     int64_t diag_t0 = esp_timer_get_time();
@@ -427,8 +476,14 @@ void radio_task_fn(TaskCtx ctx)
             esp_wifi_set_ps(WIFI_PS_NONE);
             ctx.state->store(1);
 
+            StationDyn stn;
+            if (!st_at(cur, stn)) {   // 表更新后下标失效: 视作停止
+                cur = -1;
+                ctx.state->store(0);
+                continue;
+            }
             char url[128];
-            snprintf(url, sizeof(url), "%s%s", kRelayBase, kStations[cur].path);
+            snprintf(url, sizeof(url), "%s%s", kRelayBase, stn.path.c_str());
             esp_http_client_config_t hcfg = {};
             hcfg.url          = url;
             hcfg.buffer_size  = 4096;   // 大收包缓冲: 流式吞吐(小缓冲实测只拿到 ~70%)
@@ -447,7 +502,7 @@ void radio_task_fn(TaskCtx ctx)
                     s_rs.prev = 0; s_rs.phase = 0;   // 重采样器随新流复位
                     feed_pcm(inbuf, first, odd_carry, have_odd);
                     mclog::tagInfo(TAG, "stream up: {} (sc={} first={}B ring={})",
-                                   kStations[cur].name, sc, first, s_ring ? "ok" : "none");
+                                   stn.name, sc, first, s_ring ? "ok" : "none");
                 }
             }
             if (!ok) {
@@ -526,7 +581,102 @@ void AppRadio::onCreate()
     // 与 HA/股票等一致: 安装不自动打开, 等用户从主页点入 (open 会抢主屏)
 }
 
-int AppRadio::_row_y(int i) const { return 6 + i * 47; }   // 19 台, 13 行可见, 列表滚动
+int AppRadio::_row_y(int i) const { return 6 + i * 47; }   // 动态行数, 13 行可见, 列表滚动
+
+// ── 动态电台表(2026-11-02) ─────────────────────────────────────────────
+// 列表以 relay /radio/stations 为准(增删台只改 relay), 内置表离线兜底。
+void AppRadio::_rebuildStationRows()
+{
+    if (!_list) return;
+    lv_obj_clean(_list);   // 旧行+高亮条一起清, 全部重建
+
+    _row_sel = lv_obj_create(_list);
+    lv_obj_set_size(_row_sel, 544, 44);
+    lv_obj_set_pos(_row_sel, 8, _row_y(0));
+    lv_obj_set_style_bg_color(_row_sel, lv_color_hex(C_CARD_ON), 0);
+    lv_obj_set_style_bg_opa(_row_sel, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(_row_sel, 0, 0);
+    lv_obj_set_style_radius(_row_sel, 12, 0);
+    lv_obj_clear_flag(_row_sel, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+
+    auto tbl = st_snapshot();
+    if (!tbl) return;
+    for (size_t i = 0; i < tbl->size(); i++) {
+        const StationDyn& st = (*tbl)[i];
+        lv_obj_t* row = lv_obj_create(_list);
+        lv_obj_set_size(row, 544, 44);
+        lv_obj_set_pos(row, 8, _row_y((int)i));
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_radius(row, 12, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(row, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(row, _rowClick_cb, LV_EVENT_CLICKED, this);
+
+        char freq[20];
+        if (st.freq > 0) snprintf(freq, sizeof(freq), "%d.%d", st.freq / 10, st.freq % 10);
+        else             snprintf(freq, sizeof(freq), "网络");
+        lv_obj_t* fl = lv_label_create(row);
+        lv_obj_set_style_text_font(fl, zh_font_lg(), 0);   // 含中文"网络"
+        lv_obj_set_style_text_color(fl, lv_color_hex(C_ACCENT), 0);
+        lv_label_set_text(fl, freq);
+        lv_obj_align(fl, LV_ALIGN_LEFT_MID, 16, 0);
+
+        lv_obj_t* nl = lv_label_create(row);
+        lv_obj_set_style_text_font(nl, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(nl, lv_color_hex(C_TEXT), 0);
+        lv_label_set_text(nl, st.name.c_str());
+        lv_obj_align(nl, LV_ALIGN_LEFT_MID, 132, 0);
+    }
+}
+
+void AppRadio::_fetchStations()
+{
+    // 后台线程: 只碰 HTTP 与原子量, 不触 LVGL。失败静默(内置表兜底)。
+    auto r = GetHAL()->httpGet(std::string(kRelayBase) + "stations");
+    if (r.status != 200) return;
+    try {
+        auto j = nlohmann::json::parse(r.body);
+        auto arr = j.at("stations");
+        if (!arr.is_array() || arr.empty()) return;
+        auto v = std::make_shared<std::vector<StationDyn>>();
+        for (auto& e : arr) {
+            StationDyn st;
+            st.path = e.value("key", "");
+            st.name = e.value("name", "");
+            st.freq = e.value("freq", 0);
+            if (!st.path.empty() && !st.name.empty())
+                v->push_back(std::move(st));
+        }
+        if (v->empty()) return;
+        auto cur = st_snapshot();
+        bool same = cur && cur->size() == v->size();
+        if (same)
+            for (size_t i = 0; i < v->size(); i++)
+                if ((*cur)[i].path != (*v)[i].path) { same = false; break; }
+        if (same) return;   // 表没变, 不折腾
+        // 播放索引重映射(旧 path → 新下标); 播放中的台被删则停(want=-1)
+        auto findNew = [&](const std::string& path) {
+            for (size_t i = 0; i < v->size(); i++)
+                if ((*v)[i].path == path) return (int)i;
+            return -1;
+        };
+        int w = _want_station.load();
+        if (cur && w >= 0 && w < (int)cur->size())
+            _want_station.store(findNew((*cur)[w].path));
+        if (cur && _last_station >= 0 && _last_station < (int)cur->size()) {
+            _last_station = findNew((*cur)[_last_station].path);
+            if (_last_station < 0) _last_station = 0;
+        }
+        st_replace(v);
+        _stations_dirty.store(true);   // onRunning(LVGL 线程)重建列表
+        mclog::tagInfo(TAG, "stations updated: {} 台", v->size());
+    } catch (const std::exception& e) {
+        mclog::tagWarn(TAG, "stations parse fail: {}", e.what());
+    }
+}
 
 void AppRadio::onOpen()
 {
@@ -553,53 +703,17 @@ void AppRadio::onOpen()
     // 2026-11-02 加 5 个美式新闻台(共 19)超出 14 行一屏 → 启用滚动。
     // 滚动容器会吃掉其区域内的上拨手势: 列表高度收到 y645, 屏幕 650 以下
     // (上拨退出的起手区)保持空白, 手势不再被列表滚动吞掉。
-    lv_obj_t* list = lv_obj_create(_scr);
-    lv_obj_set_pos(list, 40, 28);
-    lv_obj_set_size(list, 560, 617);
-    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);   // 无卡片底: 与黑底一体
-    lv_obj_set_style_border_width(list, 0, 0);
-    lv_obj_set_style_radius(list, 18, 0);
-    lv_obj_set_style_pad_all(list, 0, 0);
-    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_scroll_dir(list, LV_DIR_VER);
-
-    _row_sel = lv_obj_create(list);
-    lv_obj_set_size(_row_sel, 544, 44);
-    lv_obj_set_pos(_row_sel, 8, _row_y(0));
-    lv_obj_set_style_bg_color(_row_sel, lv_color_hex(C_CARD_ON), 0);
-    lv_obj_set_style_bg_opa(_row_sel, LV_OPA_80, 0);
-    lv_obj_set_style_border_width(_row_sel, 0, 0);
-    lv_obj_set_style_radius(_row_sel, 12, 0);
-    lv_obj_clear_flag(_row_sel, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-
-    for (int i = 0; i < kStationCount; i++) {
-        lv_obj_t* row = lv_obj_create(list);
-        lv_obj_set_size(row, 544, 44);
-        lv_obj_set_pos(row, 8, _row_y(i));
-        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_radius(row, 12, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_user_data(row, (void*)(intptr_t)i);
-        lv_obj_add_event_cb(row, _rowClick_cb, LV_EVENT_CLICKED, this);
-
-        char freq[20];
-        if (kStations[i].freq > 0) snprintf(freq, sizeof(freq), "%d.%d", kStations[i].freq / 10, kStations[i].freq % 10);
-        else                        snprintf(freq, sizeof(freq), "网络");
-        lv_obj_t* fl = lv_label_create(row);
-        lv_obj_set_style_text_font(fl, zh_font_lg(), 0);   // 含中文"网络"
-        lv_obj_set_style_text_color(fl, lv_color_hex(C_ACCENT), 0);
-        lv_label_set_text(fl, freq);
-        lv_obj_align(fl, LV_ALIGN_LEFT_MID, 16, 0);
-
-        lv_obj_t* nl = lv_label_create(row);
-        lv_obj_set_style_text_font(nl, zh_font_lg(), 0);
-        lv_obj_set_style_text_color(nl, lv_color_hex(C_TEXT), 0);
-        lv_label_set_text(nl, kStations[i].name);
-        lv_obj_align(nl, LV_ALIGN_LEFT_MID, 132, 0);
-    }
+    // 行内容由 _rebuildStationRows() 按动态表生成(relay /stations 下发)。
+    _list = lv_obj_create(_scr);
+    lv_obj_set_pos(_list, 40, 28);
+    lv_obj_set_size(_list, 560, 617);
+    lv_obj_set_style_bg_opa(_list, LV_OPA_TRANSP, 0);   // 无卡片底: 与黑底一体
+    lv_obj_set_style_border_width(_list, 0, 0);
+    lv_obj_set_style_radius(_list, 18, 0);
+    lv_obj_set_style_pad_all(_list, 0, 0);
+    lv_obj_set_scrollbar_mode(_list, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_dir(_list, LV_DIR_VER);
+    _rebuildStationRows();
 
     // ── 右: 播放面板 ──
     lv_obj_t* panel = lv_obj_create(_scr);
@@ -799,6 +913,9 @@ void AppRadio::onOpen()
     // 外部输出在播中重进: 音量滑条同步外部设备音量(异步拉取, onRunning 应用)
     if (_output_sel > 0 && _ext_on.load()) _extVolSync();
 
+    // 动态电台表: 进 app 后台拉一次(relay 增删台对终端零改动)
+    GetHAL()->tryRunDetached([this]() { _fetchStations(); });
+
     // 几何版本标记: 从串口确证当前固件的布局参数(排查改了没生效)
     mclog::tagInfo(TAG, "ui-geom: name_y=58 title_y=98 vu_base=384 vu_max=152 btn_play_y=388 vol_y=532");
 
@@ -812,6 +929,13 @@ void AppRadio::onRunning()
 
     if (_state.load() != _ui_state)        _refreshStateUi();
     if (_want_station.load() != _ui_station) _refreshStationUi();
+
+    // 动态表更新落地: 后台线程拉到新表后在这里(LVGL 线程)重建列表
+    if (_stations_dirty.exchange(false)) {
+        _rebuildStationRows();
+        _ui_station = -1;              // 表变了, 强制整套刷新(高亮/台名/指针)
+        _refreshStationUi();
+    }
 
     // ①歌名: 流任务换了新值才拷进 label(seq=0 是写入中, 跳过)
     if (uint32_t sq = s_np_seq.load(); sq != 0 && sq != _np_seen && _now_title) {
@@ -946,11 +1070,12 @@ static constexpr int kBandLow = 880, kBandHigh = 1080;   // 0.1MHz
 
 int AppRadio::_freq_of(int idx) const
 {
-    if (idx < 0 || idx >= kStationCount) return kBandLow;
-    if (kStations[idx].freq != 0) return kStations[idx].freq;
+    StationDyn st;
+    if (!st_at(idx, st)) return kBandLow;
+    if (st.freq != 0) return st.freq;
     // 网络台按列表位置均布(两端内缩, 防指针贴边); 读数不编造频点
     int span = kBandHigh - kBandLow;
-    return kBandLow + span / 8 + (long)idx * span * 3 / 4 / (kStationCount - 1);
+    return kBandLow + span / 8 + (long)idx * span * 3 / 4 / (st_count() - 1);
 }
 
 int AppRadio::_needle_x(int freq_tenths) const
@@ -1053,23 +1178,25 @@ bool AppRadio::streamActive() const
 std::string AppRadio::streamInfo() const
 {
     int w = _want_station.load();
-    if (!_task_running.load() || w < 0 || w >= kStationCount) return std::string();
-    return std::string(kStations[w].name);
+    StationDyn st;
+    if (!_task_running.load() || !st_at(w, st)) return std::string();
+    return st.name;
 }
 
 void AppRadio::_refreshStationUi()
 {
     _ui_station = _want_station.load();
     int show = (_ui_station >= 0) ? _ui_station : _last_station;
-    if (show < 0 || show >= kStationCount) return;
+    StationDyn st;
+    if (show < 0 || !st_at(show, st)) return;
     if (_row_sel) {
         lv_obj_set_y(_row_sel, _row_y(show));
         lv_obj_scroll_to_view(_row_sel, LV_ANIM_ON);
     }
-    if (_now_name) lv_label_set_text(_now_name, kStations[show].name);
+    if (_now_name) lv_label_set_text(_now_name, st.name.c_str());
     if (_now_freq) {
-        if (kStations[show].freq > 0)
-            lv_label_set_text_fmt(_now_freq, "%d.%d MHz", kStations[show].freq / 10, kStations[show].freq % 10);
+        if (st.freq > 0)
+            lv_label_set_text_fmt(_now_freq, "%d.%d MHz", st.freq / 10, st.freq % 10);
         else
             lv_label_set_text(_now_freq, "网络电台");
     }
@@ -1079,7 +1206,7 @@ void AppRadio::_refreshStationUi()
 // ── 交互 ───────────────────────────────────────────────────────────────
 void AppRadio::_play(int idx)
 {
-    if (idx < 0 || idx >= kStationCount) return;
+    if (idx < 0 || idx >= st_count()) return;
     _last_station = idx;
     _want_station.store(idx);
     if (_output_sel > 0) _extStart(idx);   // 外部模式: 转投(本机流被 _ext_on 抑制)
@@ -1106,13 +1233,17 @@ void AppRadio::_playClick_cb(lv_event_t* e)
 void AppRadio::_prevClick_cb(lv_event_t* e)
 {
     auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
-    app->_play((app->_last_station - 1 + kStationCount) % kStationCount);
+    int n = st_count();
+    if (n <= 0) return;
+    app->_play((app->_last_station - 1 + n) % n);
 }
 
 void AppRadio::_nextClick_cb(lv_event_t* e)
 {
     auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
-    app->_play((app->_last_station + 1) % kStationCount);
+    int n = st_count();
+    if (n <= 0) return;
+    app->_play((app->_last_station + 1) % n);
 }
 
 void AppRadio::_vol_cb(lv_event_t* e)
@@ -1165,20 +1296,21 @@ bool AppRadio::_extSimple(const char* pid, const char* cmd, int v)
 void AppRadio::_extStart(int station)
 {
     int sel = _output_sel;
-    if (sel <= 0 || sel >= kOutputCount || station < 0 || station >= kStationCount)
+    StationDyn st;
+    if (sel <= 0 || sel >= kOutputCount || !st_at(station, st))
         return;
     _ext_on.store(true);        // 立即抑制本机拉流(流任务下一轮 teardown)
     _state.store(1);            // 连接中
     _np_kick.store(true);       // 清旧台歌名 + 立即拉新台
-    GetHAL()->tryRunDetached([this, sel, station]() {
+    GetHAL()->tryRunDetached([this, sel, st]() {
         int old = _ext_dev.exchange(-1);          // 先摘牌: 线程内独占设备状态
         if (old >= 0 && old != sel)
             _extSimple(kOutputs[old].pid, "stop");   // 换设备: 旧的停
-        bool ok = _extPlay(kOutputs[sel].pid, kStations[station].path);
+        bool ok = _extPlay(kOutputs[sel].pid, st.path.c_str());
         if (ok) {
             _ext_dev.store(sel);
             mclog::tagInfo(TAG, "ext play: {} -> {}",
-                           kStations[station].name, kOutputs[sel].full);
+                           st.name, kOutputs[sel].full);
         } else {
             // 失败不接播本机(外放失败≠改本机): want 置 -1 防流任务自动拉流,
             // 回待机态, 播放键重试(仍走外部)
