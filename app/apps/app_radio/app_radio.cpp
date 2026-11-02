@@ -370,6 +370,62 @@ void fetch_nowplaying(int idx)
     esp_http_client_cleanup(h);
 }
 
+// 外部播放电平流(2026-11-02): 拉 relay /lv(~40B/s 文本 "b m t\\n"),
+// 解析写三频段电平原子量 —— VU 由真实音频电平驱动(ffmpeg astats 收割)。
+// 阻塞至: 外部停止(ext_on=false)/换台(want 变)/断流。返回是否收到过数据
+// (false 时调用方退避再重连)。
+static bool fetch_levels_stream(int station, TaskCtx& ctx)
+{
+    StationDyn st;
+    if (!st_at(station, st)) return false;
+    char url[160];
+    snprintf(url, sizeof(url), "%s%s/lv", kRelayBase, st.path.c_str());
+    esp_http_client_config_t cfg = {};
+    cfg.url         = url;
+    cfg.timeout_ms  = 4000;
+    cfg.buffer_size = 512;
+    esp_http_client_handle_t h = esp_http_client_init(&cfg);
+    if (!h) return false;
+    char line[32];
+    int line_len = 0;
+    bool got_any = false;
+    if (esp_http_client_open(h, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(h);
+        if (esp_http_client_get_status_code(h) == 200) {
+            esp_http_client_set_timeout_ms(h, 2000);
+            static char inbuf_lv[64];
+            while (!ctx.closing->load() && ctx.ext_on->load() &&
+                   ctx.want->load() == station) {
+                int n = esp_http_client_read(h, inbuf_lv, sizeof(inbuf_lv));
+                if (n == 0) break;          // 服务端关闭
+                if (n < 0) {
+                    if (n == -ESP_ERR_HTTP_EAGAIN) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
+                    break;                  // 断流: 外层重连
+                }
+                got_any = true;
+                for (int i = 0; i < n; i++) {
+                    char c = inbuf_lv[i];
+                    if (c == '\n') {
+                        line[line_len] = 0;
+                        int b, m, t;
+                        if (sscanf(line, "%d %d %d", &b, &m, &t) == 3) {
+                            ctx.lvl_b->store(b);
+                            ctx.lvl_m->store(m);
+                            ctx.lvl_t->store(t);
+                        }
+                        line_len = 0;
+                    } else if (line_len < (int)sizeof(line) - 1) {
+                        line[line_len++] = c;
+                    }
+                }
+            }
+        }
+    }
+    esp_http_client_close(h);
+    esp_http_client_cleanup(h);
+    return got_any;
+}
+
 // 换台失败/断流后进入退避; mark_fail 统一三条失败路径
 void radio_task_fn(TaskCtx ctx)
 {
@@ -427,14 +483,20 @@ void radio_task_fn(TaskCtx ctx)
             }
         }
 
-        // ①外部播放中(2026-11-01): 本机流急停、VU 清零; want<0(外部暂停)
-        // 同步待机态。本机建连逻辑整体跳过 —— 音频归外部设备
+        // ①外部播放中(2026-11-01): 本机流急停; want<0(外部暂停)同步待机态。
+        // 2026-11-02: 外部播放期间拉 relay /lv 电平流(~40B/s)驱动 VU——
+        // 真实音频电平(relay 侧 ffmpeg astats 三频段 RMS), 断流/失败退避重连
         if (ext) {
             if (http) { teardown_stream(http); cur = -1; }
             if (want < 0 && ctx.state->load() != 0)
                 ctx.state->store(0);
-            ctx.lvl_b->store(0); ctx.lvl_m->store(0); ctx.lvl_t->store(0);
-            vTaskDelay(pdMS_TO_TICKS(100));
+            if (want >= 0) {
+                if (!fetch_levels_stream(want, ctx))
+                    vTaskDelay(pdMS_TO_TICKS(2000));   // 连不上: 退避再试
+            } else {
+                ctx.lvl_b->store(0); ctx.lvl_m->store(0); ctx.lvl_t->store(0);
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
             continue;
         }
 
@@ -962,18 +1024,8 @@ void AppRadio::_updateVu()
 {
     if (!_vu_strip) return;
     float b = _lvl_b.load(), m = _lvl_m.load(), t = _lvl_t.load();
-    if (_ext_on.load()) {
-        // 外部播放: 设备无本机 PCM, 电平源头没了 —— 装饰性伪电平(正弦
-        // 起伏 + 随机抖动, 幅度对齐电台典型区间), 让条带保持"在播"的跳动
-        float ms = (float)GetHAL()->millis();
-        auto fake = [&](float base, float ph) {
-            float v = base + 9.0f * sinf(ms / 850.0f + ph)
-                         + 5.0f * sinf(ms / 310.0f + ph * 2.7f);
-            int iv = (int)(v + (rand() % 100) / 10.0f - 5.0f);
-            return iv < 15 ? 15 : (iv > 75 ? 75 : iv);
-        };
-        b = (float)fake(42, 0.0f); m = (float)fake(47, 2.1f); t = (float)fake(38, 4.2f);
-    }
+    // 外部播放时 _lvl_* 由流任务的 /lv 电平流写入(真实音频电平,
+    // 源 ~1-2Hz + 8fps 平滑 = 平滑呼吸式跳动); 伪电平动画已移除
     bool changed = false;
     for (int i = 0; i < 20; i++) {
         float w = i / 19.0f;
