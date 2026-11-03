@@ -99,7 +99,11 @@
           return;
         }
         if (d && d.__tab5radio) { radioCmd(d.__tab5radio); return; }
-        if (d && d.__tab5jpg) { try { decodeJpgForWorker(d.__tab5jpg); } catch (e) { console.warn(e); theWorker && theWorker.postMessage({__tab5jpgdone: {ok: 0}}); } return; }
+        if (d && d.__tab5jpg) {
+          (window.__tab5uart = window.__tab5uart || []).push("jpg-main-recv");
+          try { decodeJpgForWorker(d.__tab5jpg); } catch (e) { console.warn(e); }
+          return;
+        }
         if (d && d.__tab5layout && d.__tab5layout.sab) {
           try {
             SAB = d.__tab5layout.sab;
