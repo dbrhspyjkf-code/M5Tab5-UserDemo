@@ -465,8 +465,10 @@
       const stamp = document.createElement("div");
       stamp.textContent = "v" + window.TAB5_BUILD;
       stamp.style.cssText =
-        "position:fixed;left:4px;bottom:2px;z-index:60;color:#fff;opacity:.22;" +
-        "font:10px ui-monospace,Menlo,monospace;pointer-events:none;";
+        "position:fixed;left:4px;bottom:2px;z-index:70;color:#9fd4a6;" +
+        "background:rgba(0,0,0,.65);border:1px solid rgba(126,200,126,.35);" +
+        "border-radius:4px;padding:1px 6px;font:11px ui-monospace,Menlo,monospace;" +
+        "pointer-events:none;";
       document.body.appendChild(stamp);
     }
   } catch (e) {}
