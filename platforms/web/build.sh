@@ -14,8 +14,11 @@ cd "$BUILD"
 emcmake cmake -DTAB5_PLATFORM=web -DCMAKE_BUILD_TYPE=Release "$ROOT"
 emmake make -j"$(sysctl -n hw.ncpu)" tab5web
 
-# 组装 bin/: 外壳 + 运行时
+# 组装 bin/: 外壳 + 运行时 (index.html 注入构建版本号 → wasm 缓存键)
 BIN="$BUILD/bin"
 cp "$ROOT/platforms/web/shell/index.html" "$ROOT/platforms/web/shell/shell.js" "$BIN/"
+BUILD_TS=$(date +%Y%m%d%H%M%S)
+sed -i '' "s|<script src=\"shell.js\"></script>|<script>window.TAB5_BUILD=\"$BUILD_TS\";</script>\n<script src=\"shell.js\"></script>|" "$BIN/index.html"
+grep -q "TAB5_BUILD" "$BIN/index.html" || { echo "version inject failed"; exit 1; }
 echo "---- build ok: $BIN/ ($(du -sh "$BIN" | cut -f1)) ----"
 ls -la "$BIN"

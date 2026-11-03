@@ -232,9 +232,11 @@
       "white-space:pre-wrap;word-break:break-all;";
     document.body.appendChild(dbg);
     setInterval(() => {
-      const u = (window.__tab5uart || []).slice(-6);
-      dbg.textContent = u.join("\n");
-    }, 500);
+      const u = (window.__tab5uart || []).slice(-8);
+      const ev = (window.__tab5evlog || []).slice(-4)
+        .map(e => "ev " + e[0] + "@" + e[1] + "," + e[2]);
+      dbg.textContent = u.concat(ev).join("\n");
+    }, 400);
   }
 
   /* ---------- emscripten 模块钩子 ---------- */
@@ -245,5 +247,10 @@
   window.__tab5logs = [];
   Module.printErr = function (t) { window.__tab5logs.push("E " + t); console.warn("[wasm]", t); };
   Module.print = function (t) { window.__tab5logs.push(t); console.log("[wasm]", t); };
-  Module.locateFile = function (p) { return p; };
+  Module.locateFile = function (p) {
+    // wasm 地址挂构建版本: 新部署即换缓存键 (部署后旧缓存不再干扰),
+    // 平时可长缓存; index.html 本身 no-cache, 版本号每次部署更新
+    if (p.endsWith(".wasm") && window.TAB5_BUILD) return p + "?v=" + window.TAB5_BUILD;
+    return p;
+  };
 })();
