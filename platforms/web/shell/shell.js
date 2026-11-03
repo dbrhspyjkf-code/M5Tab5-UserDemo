@@ -181,6 +181,16 @@
   window.addEventListener("resize", fit);
   fit();
 
+  /* ---------- iOS 触摸回弹抑制 ----------
+   * WebKit 的整页平移/回弹由原生 touchmove 驱动, pointer 事件里
+   * preventDefault 拦不住它 (iPad 实锤: 主页滚右列卡片整页跟着晃),
+   * html/body 的 touch-action:none 在 CriOS 上也被无视。标准三件套:
+   * 非被动 touchmove 拦默认 + gesturestart 拦双指缩放 + 根元素 fixed
+   * (index.html)。LVGL 输入走 pointer 事件, 不受影响。
+   */
+  document.addEventListener("touchmove", e => e.preventDefault(), { passive: false });
+  document.addEventListener("gesturestart", e => e.preventDefault());
+
   /* ---------- 输入事件 → ring ---------- */
   window.__tab5evlog = [];
   // 事件直写 ring (无重放队列): setInterval 重放在后台标签会被浏览器

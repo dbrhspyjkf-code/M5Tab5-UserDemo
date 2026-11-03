@@ -11,9 +11,15 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     width: 100%; height: 100%; background: #000; overflow: hidden;
+    /* position:fixed 断掉根滚动源: iOS 触摸回弹 (rubber-band) 需要
+     * 可滚动的 root scroller, fixed 后整页晃动失去物理基础 */
+    position: fixed; inset: 0;
     touch-action: none; overscroll-behavior: none;
     font: 14px/1.5 -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
   }
+  /* touch-action 不继承:CriOS 对 html/body 上的值在 canvas 触摸上仍放行
+   * 平移手势 —— 触摸目标元素上再压一层 */
+  #wrap, #screen { touch-action: none; overscroll-behavior: none; }
   #wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
   #screen { display: none; image-rendering: auto; background: #000; }
   #loader {
