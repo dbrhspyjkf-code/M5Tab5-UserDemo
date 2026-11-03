@@ -130,28 +130,33 @@
   // JPEG→RGB565 主线程解码 (图库; worker 经 __tab5jpg 送字节, 忙等回包)
   // 主线程解码: 像素直写共享 SAB, Atomics.notify 唤醒 worker (零消息依赖)
   async function decodeJpgForWorker(payload) {
+    const D = m => (window.__tab5uart = window.__tab5uart || []).push(m);
     const sab = payload.sab;
     const st = new Int32Array(sab, 0, 2);
-    const fail = () => { Atomics.store(st, 0, 2); Atomics.notify(st, 0); };
+    const fail = t => { D("d9-fail " + t); Atomics.store(st, 0, 2); Atomics.notify(st, 0); };
     try {
+      D("d1-bytes " + (payload.bytes && payload.bytes.byteLength));
       const url = URL.createObjectURL(new Blob([payload.bytes], {type: "image/jpeg"}));
       const img = new Image();
-      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("img")); img.src = url; });
+      D("d2-img " + img.naturalWidth + "x" + img.naturalHeight);
       const c = document.createElement("canvas");
       c.width = img.naturalWidth; c.height = img.naturalHeight;
       const ctx = c.getContext("2d");
       ctx.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
       const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      D("d3-ctx ok");
       const maxPx = (sab.byteLength - 8) >> 1;
       const px = new Uint16Array(sab, 8, maxPx);
       const n = Math.min(c.width * c.height, maxPx);
       for (let i = 0, j = 0; j < n; i += 4, j++)
         px[j] = ((d[i] >> 3) << 11) | ((d[i + 1] >> 2) << 5) | (d[i + 2] >> 3);
+      D("d4-px " + n);
       Atomics.store(st, 1, n);
       Atomics.store(st, 0, 1);
       Atomics.notify(st, 0);
-    } catch (e) { console.warn("[tab5web] jpg decode:", e); fail(); }
+    } catch (e) { console.warn("[tab5web] jpg decode:", e); fail(e.message); }
   }
 
   /* ---------- 等比缩放 ---------- */
