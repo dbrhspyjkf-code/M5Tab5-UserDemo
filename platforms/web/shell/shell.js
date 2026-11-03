@@ -182,8 +182,11 @@
       canvas.style.width = Math.floor(W * scale) + "px";
       canvas.style.height = Math.floor(H * scale) + "px";
     } else {
-      canvas.style.width = vw + "px";
-      canvas.style.height = vh + "px";
+      // 满屏用 CSS 相对尺寸 (100% of inset:0 容器 = 布局视口), 不用 JS 一次
+      // 性 innerWidth 快照 —— 缩放/窗口变化后快照会陈旧, 曾留出一侧白条
+      // (2026-11-03 用户实测); CSS 百分比由浏览器实时跟随, 永不错位。
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
     }
     clampBackBtn();
   }
