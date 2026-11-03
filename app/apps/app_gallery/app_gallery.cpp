@@ -239,6 +239,10 @@ void AppGallery::_fetchList()
             bool ok = false;
             int total = 0;
             auto resp = GetHAL()->httpGet(url);
+#ifdef PLATFORM_BUILD_WEB
+            GetHAL()->uartMonitorSend("gal-list sc=" + std::to_string(resp.status) +
+                " len=" + std::to_string(resp.body.size()));
+#endif
             if (resp.ok && resp.status == 200) {
                 try {
                     auto j = nlohmann::json::parse(resp.body);
@@ -354,6 +358,9 @@ void AppGallery::_startThumbWorker()
     for (const Item& it : _items) ids.push_back(it.id);
     const std::string base = _base();
     if (!GetHAL()->tryRunDetached([this, gen, ids, base]() {
+#ifdef PLATFORM_BUILD_WEB
+        GetHAL()->uartMonitorSend("gal-thumbs-start n=" + std::to_string(ids.size()));
+#endif
             std::vector<int> todo;
             for (int i = 0; i < (int)ids.size(); i++) todo.push_back(i);
             // 顺序拉 (SDIO 友好); 失败的隔 3s 补拉, 最多 3 轮
