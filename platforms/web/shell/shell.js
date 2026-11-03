@@ -99,7 +99,7 @@
           return;
         }
         if (d && d.__tab5radio) { radioCmd(d.__tab5radio); return; }
-        if (d && d.__tab5jpg) { try { decodeJpgForWorker(d.__tab5jpg.bytes); } catch (e) { console.warn(e); theWorker && theWorker.postMessage({__tab5jpgdone: {ok: 0}}); } return; }
+        if (d && d.__tab5jpg) { try { decodeJpgForWorker(d.__tab5jpg); } catch (e) { console.warn(e); theWorker && theWorker.postMessage({__tab5jpgdone: {ok: 0}}); } return; }
         if (d && d.__tab5layout && d.__tab5layout.sab) {
           try {
             SAB = d.__tab5layout.sab;
@@ -124,9 +124,13 @@
   };
 
   // JPEG→RGB565 主线程解码 (图库; worker 经 __tab5jpg 送字节, 忙等回包)
-  async function decodeJpgForWorker(buf) {
+  // 主线程解码: 像素直写共享 SAB, Atomics.notify 唤醒 worker (零消息依赖)
+  async function decodeJpgForWorker(payload) {
+    const sab = payload.sab;
+    const st = new Int32Array(sab, 0, 2);
+    const fail = () => { Atomics.store(st, 0, 2); Atomics.notify(st, 0); };
     try {
-      const url = URL.createObjectURL(new Blob([buf], {type: "image/jpeg"}));
+      const url = URL.createObjectURL(new Blob([payload.bytes], {type: "image/jpeg"}));
       const img = new Image();
       await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
       const c = document.createElement("canvas");
@@ -135,14 +139,15 @@
       ctx.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
       const d = ctx.getImageData(0, 0, c.width, c.height).data;
-      const px = new Uint16Array(c.width * c.height);
-      for (let i = 0, j = 0; j < px.length; i += 4, j++)
+      const maxPx = (sab.byteLength - 8) >> 1;
+      const px = new Uint16Array(sab, 8, maxPx);
+      const n = Math.min(c.width * c.height, maxPx);
+      for (let i = 0, j = 0; j < n; i += 4, j++)
         px[j] = ((d[i] >> 3) << 11) | ((d[i + 1] >> 2) << 5) | (d[i + 2] >> 3);
-      theWorker && theWorker.postMessage({__tab5jpgdone: {ok: 1, px: px}});
-    } catch (e) {
-      console.warn("[tab5web] jpg decode:", e);
-      theWorker && theWorker.postMessage({__tab5jpgdone: {ok: 0}});
-    }
+      Atomics.store(st, 1, n);
+      Atomics.store(st, 0, 1);
+      Atomics.notify(st, 0);
+    } catch (e) { console.warn("[tab5web] jpg decode:", e); fail(); }
   }
 
   /* ---------- 等比缩放 ---------- */

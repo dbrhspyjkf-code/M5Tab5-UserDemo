@@ -91,6 +91,10 @@ AppGallery::AppGallery()
 
 void AppGallery::onOpen()
 {
+#ifdef PLATFORM_BUILD_WEB
+    GetHAL()->uartMonitorSend("gal-open");
+#endif
+
     mclog::tagInfo(TAG, "on open");
     if (_scr) _teardown();                   // 残留屏 (失焦收尾未及执行) 先拆, 幂等重建
     _alive = std::make_shared<bool>(true);   // 成对铁律: 拆屏置 false 后此处必须重建
