@@ -75,7 +75,8 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 /* 01 GLM / DeepSeek */
 .glm-grid { display:flex; align-items:center; gap:18px; }
-.glm-grid .grow { min-width:0; }
+.glm-grid .grow { flex:1; min-width:0; }
+#ds { text-align:right; }   /* 推到右缘, 与 head 行「DeepSeek 余额」标签对齐 */
 
 /* 02 提醒/日程 */
 .agenda { text-align:center; }
