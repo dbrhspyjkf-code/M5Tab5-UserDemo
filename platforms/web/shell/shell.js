@@ -85,7 +85,7 @@
   /* ---------- 接收 worker 上报的 SAB ---------- */
   let SAB = null, U32 = null, U16 = null;
 
-  let theWorker = null;   // tab5 wasm worker (回传 jpeg 解码结果用)
+  let theWorker = null;
 
   const _Worker = window.Worker;
   window.Worker = class extends _Worker {
@@ -99,7 +99,7 @@
           return;
         }
         if (d && d.__tab5radio) { radioCmd(d.__tab5radio); return; }
-        if (d && d.__tab5jpg) { decodeJpgForWorker(d.__tab5jpg.bytes); return; }
+        if (d && d.__tab5jpg) { try { decodeJpgForWorker(d.__tab5jpg.bytes); } catch (e) { console.warn(e); theWorker && theWorker.postMessage({__tab5jpgdone: {ok: 0}}); } return; }
         if (d && d.__tab5layout && d.__tab5layout.sab) {
           try {
             SAB = d.__tab5layout.sab;
@@ -113,7 +113,7 @@
             setProgress(1, "启动中…");
             canvas.style.display = "block";
             $("loader").style.display = "none";
-            showBack();
+            try { window.__tab5showback && window.__tab5showback(); } catch (e) {}
             fit();
           } catch (e) {
             fail("共享内存校验失败: " + e);
@@ -122,6 +122,28 @@
       });
     }
   };
+
+  // JPEG→RGB565 主线程解码 (图库; worker 经 __tab5jpg 送字节, 忙等回包)
+  async function decodeJpgForWorker(buf) {
+    try {
+      const url = URL.createObjectURL(new Blob([buf], {type: "image/jpeg"}));
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      const px = new Uint16Array(c.width * c.height);
+      for (let i = 0, j = 0; j < px.length; i += 4, j++)
+        px[j] = ((d[i] >> 3) << 11) | ((d[i + 1] >> 2) << 5) | (d[i + 2] >> 3);
+      theWorker && theWorker.postMessage({__tab5jpgdone: {ok: 1, px: px}});
+    } catch (e) {
+      console.warn("[tab5web] jpg decode:", e);
+      theWorker && theWorker.postMessage({__tab5jpgdone: {ok: 0}});
+    }
+  }
 
   /* ---------- 等比缩放 ---------- */
   function fit() {
@@ -259,57 +281,31 @@
   }
   requestAnimationFrame(blit);
 
-  // 主线程 JPEG→RGB565 解码 (worker 经 postMessage 送字节; DOM canvas 路径)
-  async function decodeJpgForWorker(buf) {
-    const done = (ok, px) => theWorker &&
-      theWorker.postMessage({__tab5jpgdone: {ok, px: px || null}});
-    try {
-      const url = URL.createObjectURL(new Blob([buf], {type: "image/jpeg"}));
-      const img = new Image();
-      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
-      const c = document.createElement("canvas");
-      c.width = img.naturalWidth; c.height = img.naturalHeight;
-      const ctx = c.getContext("2d");
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
-      const d = ctx.getImageData(0, 0, c.width, c.height).data;
-      const px = new Uint16Array(c.width * c.height);
-      for (let i = 0, j = 0; j < px.length; i += 4, j++)
-        px[j] = ((d[i] >> 3) << 11) | ((d[i + 1] >> 2) << 5) | (d[i + 2] >> 3);
-      done(1, px);
-    } catch (e) { console.warn("[tab5web] jpg decode:", e); done(0); }
-  }
-
-  /* ---------- 浮动返回键: 注入标准"底部起手上拨"手势 ---------- */
-  // iPad 上真实上拨会被 Chrome 手势吞掉(返回/关页), 浮动键是网页版的返回。
-  // 序列满足所有 app 的判定: 起点 y>650, dy<-120, 纵向主导。
-  const backBtn = document.createElement("div");
-  backBtn.id = "tab5back";
-  backBtn.style.cssText =
-    "position:fixed;right:14px;top:14px;z-index:50;width:52px;height:52px;" +
-    "border-radius:50%;background:rgba(0,0,0,.45);border:1px solid rgba(126,200,126,.55);" +
-    "display:none;align-items:center;justify-content:center;cursor:pointer;" +
-    "-webkit-user-select:none;user-select:none;touch-action:none;";
-  backBtn.innerHTML =
-    '<svg width="26" height="26" viewBox="0 0 24 24" fill="none">' +
-    '<path d="M12 19V6M6 12l6-6 6 6" stroke="#bfe8c4" stroke-width="2.4" ' +
-    'stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  document.body.appendChild(backBtn);
-  const showBack = () => { backBtn.style.display = "flex"; };
-  const fireBack = () => {
-    if (!SAB) return;
-    pushEvent(EV.MOVE, 640, 700);
-    pushEvent(EV.PRESS, 640, 700);
-    const path = [[640, 620], [640, 520], [640, 400], [640, 280], [640, 160], [640, 110]];
-    path.forEach((p, i) => setTimeout(() => pushEvent(EV.MOVE, p[0], p[1]), 25 + i * 25));
-    setTimeout(() => pushEvent(EV.RELEASE, 640, 100), 25 + path.length * 25 + 40);
-  };
-  backBtn.addEventListener("pointerdown", e => {
-    e.preventDefault(); e.stopPropagation();
-    backBtn.style.background = "rgba(47,90,59,.75)";
-    fireBack();
-  });
-  backBtn.addEventListener("pointerup", () => { backBtn.style.background = "rgba(0,0,0,.45)"; });
+  /* ---------- 浮动返回键 ---------- */
+  try {
+    const backBtn = document.createElement("div");
+    backBtn.style.cssText =
+      "position:fixed;right:14px;top:14px;z-index:50;width:52px;height:52px;" +
+      "border-radius:50%;background:rgba(0,0,0,.45);border:1px solid rgba(126,200,126,.55);" +
+      "display:none;align-items:center;justify-content:center;touch-action:none;" +
+      "-webkit-user-select:none;user-select:none;cursor:pointer;";
+    backBtn.innerHTML =
+      '<svg width="26" height="26" viewBox="0 0 24 24" fill="none">' +
+      '<path d="M12 19V6M6 12l6-6 6 6" stroke="#bfe8c4" stroke-width="2.4" ' +
+      'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    document.body.appendChild(backBtn);
+    window.__tab5showback = () => { backBtn.style.display = "flex"; };
+    backBtn.addEventListener("pointerdown", e => {
+      e.preventDefault(); e.stopPropagation();
+      backBtn.style.background = "rgba(47,90,59,.75)";
+      pushEvent(EV.MOVE, 640, 700);
+      pushEvent(EV.PRESS, 640, 700);
+      [[640,620],[640,520],[640,400],[640,280],[640,160],[640,110]]
+        .forEach((p, i) => setTimeout(() => pushEvent(EV.MOVE, p[0], p[1]), 25 + i * 25));
+      setTimeout(() => pushEvent(EV.RELEASE, 640, 100), 240);
+    });
+    backBtn.addEventListener("pointerup", () => { backBtn.style.background = "rgba(0,0,0,.45)"; });
+  } catch (e) { console.warn("[tab5web] back btn:", e); }
 
   /* ---------- 全屏切换 (F11 / 双击) ---------- */
   window.addEventListener("dblclick", () => toggleFs());
@@ -340,6 +336,11 @@
   window.Module = window.Module || {};
   Module.onRuntimeInitialized = function () {
     setProgress(0.9, "启动驾驶舱…");
+    setTimeout(() => {
+      if (document.getElementById("loader").style.display === "none") return;
+      const u = (window.__tab5uart || []).slice(-4).join(" | ") || "(worker 无日志输出)";
+      document.getElementById("err").textContent = "启动超时12s。worker: " + u.slice(0, 300);
+    }, 12000);
   };
   window.__tab5logs = [];
   Module.printErr = function (t) { window.__tab5logs.push("E " + t); console.warn("[wasm]", t); };
