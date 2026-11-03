@@ -96,6 +96,14 @@ class Handler(BaseHTTPRequestHandler):
         # HA 客户端 token 为空时剥离空 Authorization, 避免上游 401 混乱
         if req.get_header("Authorization") in ("Bearer", "Bearer ", ""):
             req.remove_header("Authorization")
+        # 与生产网关对齐: HA 上游由服务端注入 token (DEV_HA_TOKEN 环境变量,
+        # 等价正式网关的 cfg["ha_token"]); 未设置时保持透传
+        if ":8123" in base:
+            tok = os.environ.get("DEV_HA_TOKEN", "")
+            if tok:
+                if req.get_header("Authorization"):
+                    req.remove_header("Authorization")
+                req.add_header("Authorization", "Bearer " + tok)
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = r.read()
