@@ -31,6 +31,20 @@ cp "$STAGE/tab5web.js"   "$BIN/tab5web-$TS.js"
 cp "$STAGE/tab5web.wasm" "$BIN/tab5web-$TS.wasm"
 cp "$BUILD/assets.img"   "$BIN/assets-$TS.img"
 rm -rf "$STAGE"
+# glue 内裸名 wasm 字面量自版本化: blob 上下文的 worker (scriptDir 失效)
+# 会按字面量拉 "tab5web.wasm" —— 网关裸名 302 永远指最新版, glue 一旦
+# 陈旧(用户缓存)就 新旧 import 表错配 → LinkError (2026-11-03 iPad 实锤)。
+# 改成字面量带 TS: 每版 glue 永远拉自己的 wasm, 陈旧缓存只会跑旧版不会崩。
+python3 - "$BIN/tab5web-$TS.js" "$TS" <<'PYEOF'
+import sys
+p, ts = sys.argv[1], sys.argv[2]
+s = open(p).read()
+old = 'locateFile("tab5web.wasm")'
+new = f'locateFile("tab5web-{ts}.wasm")'
+assert s.count(old) == 1, f"bare wasm literal count={s.count(old)}, expect 1"
+open(p, "w").write(s.replace(old, new))
+print("glue wasm literal versioned ->", ts)
+PYEOF
 python3 - "$BIN" "$TS" <<'PYEOF'
 import sys, os
 bin_dir, ts = sys.argv[1], sys.argv[2]
