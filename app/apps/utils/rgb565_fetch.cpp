@@ -57,14 +57,15 @@ bool download(const std::string& url, void* buf)
     const size_t dot = jpg_url.rfind(".rgb565");
     // ".rgb565" 是 7 字符 —— 曾误替换 8 字符把 '?' 吃掉 (thumb.jpgid= → 404 全挂)
     if (dot != std::string::npos) jpg_url.replace(dot, 7, ".jpg");
-    auto resp = GetHAL()->httpGet(jpg_url);
-    if (!resp.ok || resp.status != 200 || resp.body.empty()) {
-        GetHAL()->uartMonitorSend("thumb-fail sc=" + std::to_string(resp.status) +
-                                  " len=" + std::to_string(resp.body.size()));
+    // 二进制安全拉取 (sync XHR + arraybuffer 在 WebKit 静默退文本, 字节绞碎)
+    extern "C" int web_fetch_bin(const char* url, uint8_t* out, int cap);
+    std::vector<uint8_t> bin(bytes / 2 > 0 ? 262144 : 65536);   // 256KB 容量 (缩略/大图均够)
+    int n = web_fetch_bin(jpg_url.c_str(), bin.data(), (int)bin.size());
+    if (n <= 0) {
+        GetHAL()->uartMonitorSend("thumb-fail n=" + std::to_string(n));
         return false;
     }
-    int px = ::web_jpeg_to_rgb565((const uint8_t*)resp.body.data(), (int)resp.body.size(),
-                                  (uint16_t*)dst, bytes);
+    int px = ::web_jpeg_to_rgb565(bin.data(), n, (uint16_t*)dst, bytes);
     GetHAL()->uartMonitorSend("thumb-decode px=" + std::to_string(px) +
                               " want=" + std::to_string(bytes / 2));
     return px == bytes / 2;
