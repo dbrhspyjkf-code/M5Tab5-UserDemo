@@ -478,7 +478,33 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 #p-idea .link-button:active { background:var(--ibg-3); color:var(--itext-0); }
 #p-idea .link-button.danger { color:var(--idanger); }
 #p-idea .link-button.danger:active { background:rgba(232,93,117,.12); }
+
 #p-idea .link-button:disabled { opacity:.4; cursor:not-allowed; }
+#p-idea .idea-close { position:absolute; right:14px; top:14px; z-index:5; }
+@media (max-width:900px) {
+  #p-idea .idea-main { grid-template-columns:1fr; overflow-y:auto; }
+  #p-idea .day-cards { grid-template-columns:1fr; }
+  #p-idea .header-meta .meta-item { min-width:0; padding:6px 12px; }
+  #p-idea .brand-sub { display:none; }
+}
+
+/* ── 窄屏单列 (iPad 竖屏 / 手机) ── */
+@media (max-width:999px) {
+  .main { flex-direction:column; }
+  .hero { flex:none; width:auto; }
+  .chips { max-height:none; }
+}
+/* 语音 memo 回放条 */
+#p-idea .voice-row { display:flex; align-items:center; gap:10px; margin:8px 0 6px; }
+#p-idea .voice-btn { flex:none; width:40px; height:40px; border-radius:50%;
+  border:none; background:var(--iaccent); color:#fff; font-size:15px;
+  display:grid; place-items:center; cursor:pointer; }
+#p-idea .voice-btn.playing { background:var(--idanger); }
+#p-idea .voice-bar { flex:1; height:8px; border-radius:4px; background:var(--ibg-3);
+  overflow:hidden; }
+#p-idea .voice-fill { height:100%; width:0%; border-radius:4px; background:var(--iaccent); }
+#p-idea .voice-dur { flex:none; color:var(--itext-2); font-size:13px;
+  font-variant-numeric:tabular-nums; }
 #p-idea .idea-close { position:absolute; right:14px; top:14px; z-index:5; }
 @media (max-width:900px) {
   #p-idea .idea-main { grid-template-columns:1fr; overflow-y:auto; }
