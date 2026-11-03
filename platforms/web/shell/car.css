@@ -314,9 +314,66 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .tm-btn.ghost { background:var(--track); color:var(--soft); }
 .tm-btn:active { opacity:.8; }
 
+/* ── 想法面板 (移植 car-inspiration; localStorage 与其互通) ── */
+.idea-wrap { display:flex; gap:18px; align-items:flex-start; }
+.idea-left { flex:0 0 360px; display:flex; flex-direction:column; gap:10px; }
+.idea-right { flex:1; min-width:0; display:flex; flex-direction:column; gap:10px; }
+.idea-text { width:100%; min-height:150px; resize:vertical; background:var(--card1);
+             border:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+             border-radius:14px; color:var(--hi); font-family:inherit; font-size:16px;
+             line-height:1.5; padding:12px 14px; outline:none; }
+.idea-text:focus { border-color:var(--accent); }
+.idea-cats { display:flex; gap:8px; flex-wrap:wrap; }
+.idea-cat { display:flex; align-items:center; gap:6px; border:1px solid var(--border);
+            background:var(--track); color:var(--soft); border-radius:12px;
+            padding:8px 14px; font-size:14px; }
+.idea-cat.on { background:var(--press); color:var(--hi); border-color:var(--accent); }
+.ic-dot { width:10px; height:10px; border-radius:50%; flex:none; }
+.ic-dot.c-work { background:#5b8cff; } .ic-dot.c-life { background:#5cd1a7; }
+.ic-dot.c-idea { background:#f5b942; } .ic-dot.c-todo { background:#e85d75; }
+.idea-acts { display:flex; align-items:center; gap:12px; }
+.idea-mic { width:56px; height:44px; border-radius:14px; border:1px solid var(--border);
+            background:var(--track); color:var(--hi); font-size:20px; }
+.idea-mic.listening { background:var(--danger); border-color:transparent;
+                      animation:micpulse 1.2s ease-in-out infinite; }
+.idea-mic:disabled { opacity:.4; }
+@keyframes micpulse { 0%,100% { box-shadow:0 0 0 0 color-mix(in srgb, var(--danger) 55%, transparent); }
+                      50% { box-shadow:0 0 0 9px transparent; } }
+.idea-mic-st { color:var(--dim); font-size:12px; min-width:0; flex:1; }
+.idea-save { margin-left:auto; height:44px; padding:0 26px; border-radius:14px;
+             border:1px solid transparent; background:var(--press); color:var(--hi);
+             font-size:16px; font-weight:600; }
+.idea-save:active { opacity:.8; }
+.idea-interim { color:var(--dim); font-size:13px; min-height:18px; line-height:1.4; }
+.idea-search { width:100%; background:var(--track); border:1px solid var(--border);
+               color:var(--hi); border-radius:12px; padding:9px 12px; font-size:14px;
+               font-family:inherit; outline:none; }
+.idea-search:focus { border-color:var(--accent); }
+.idea-day { color:var(--dim); font-size:13px; margin:8px 2px 2px; }
+.idea-card { position:relative; border:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+             border-radius:14px; background:var(--card1); padding:10px 12px 10px 18px;
+             margin-bottom:8px; overflow:hidden; }
+.ic-bar { position:absolute; left:0; top:0; bottom:0; width:5px; }
+.ic-bar.c-work { background:#5b8cff; } .ic-bar.c-life { background:#5cd1a7; }
+.ic-bar.c-idea { background:#f5b942; } .ic-bar.c-todo { background:#e85d75; }
+.ic-meta { display:flex; gap:10px; color:var(--dim); font-size:12px; margin-bottom:5px; }
+.ic-text { color:var(--hi); font-size:15px; line-height:1.5; white-space:pre-wrap;
+           word-break:break-word; }
+.ic-acts { display:flex; gap:8px; margin-top:8px; }
+.ic-acts button { border:1px solid var(--border); background:var(--track); color:var(--soft);
+                 border-radius:9px; padding:4px 12px; font-size:12px; }
+.ic-acts button:active { background:var(--press); }
+.ic-acts .del-arm { background:var(--danger); color:#fff; border-color:transparent; }
+.idea-edit { width:100%; min-height:70px; background:var(--track); border:1px solid var(--accent);
+             border-radius:10px; color:var(--hi); font-family:inherit; font-size:15px;
+             line-height:1.5; padding:8px 10px; outline:none; resize:vertical; }
+.idea-empty { color:var(--dim); text-align:center; padding:36px 0; }
+
 /* ── 窄屏单列 (iPad 竖屏 / 手机) ── */
 @media (max-width:999px) {
   .main { flex-direction:column; }
   .hero { flex:none; width:auto; }
   .chips { max-height:none; }
+  .idea-wrap { flex-direction:column; }
+  .idea-left { flex:none; width:100%; }
 }

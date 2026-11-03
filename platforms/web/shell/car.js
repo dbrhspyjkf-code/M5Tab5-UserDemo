@@ -547,10 +547,7 @@ $("r-vol").addEventListener("input", e => {
 /* ════ 底部按钮 (v2: 面板 + 滚动) ════ */
 $("nav").addEventListener("click", e => {
   const b = e.target.closest("button");
-  if (!b) return;
-  const act = b.dataset.act;
-  if (act === "home") window.scrollTo({ top: 0, behavior: "smooth" });
-  else if (b.dataset.panel) openPanel(b.dataset.panel);
+  if (b && b.dataset.panel) openPanel(b.dataset.panel);
 });
 $("btn-theme").addEventListener("click", () => {
   applyTheme(themeIdx + 1);
@@ -1363,6 +1360,221 @@ TOOL_INIT.ssq = function () {
 
 /* 工具面板生命周期: 进出回到菜单 */
 PANEL_OPENERS.tools = { open() { toolHome(); }, close() { toolHome(); } };
+
+/* ════ V2.1 想法: 灵感记录 (移植 ~/Projects/car-inspiration; localStorage
+   沿用其 key, 两个应用数据互通) ════ */
+const IDEA_KEY = "car-inspiration:inspirations:v1";
+const IDEA_CATS = [
+  { id:"work", name:"工作", emoji:"💼" },
+  { id:"life", name:"生活", emoji:"🌿" },
+  { id:"idea", name:"创意", emoji:"💡" },
+  { id:"todo", name:"待办", emoji:"✅" },
+];
+let ideaItems = [], ideaCat = "work", ideaFilter = "all", ideaEditId = null;
+let ideaDelArmId = null, ideaDelArmTimer = 0;
+let recog = null, recogOn = false, ideaInited = false;
+
+function ideaLoad() {
+  try {
+    const raw = localStorage.getItem(IDEA_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    ideaItems = Array.isArray(parsed) ? parsed : [];
+  } catch (e) { ideaItems = []; }
+  // 时间倒序兜底 (与原应用插入队首一致)
+  ideaItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+function ideaPersist() {
+  try { localStorage.setItem(IDEA_KEY, JSON.stringify(ideaItems)); } catch (e) {}
+}
+function ideaCatOf(id) { return IDEA_CATS.find(c => c.id === id) || null; }
+function ideaDayKey(d) { return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate(); }
+function ideaDayLabel(ts) {
+  const d = new Date(ts), now = new Date();
+  if (ideaDayKey(d) === ideaDayKey(now)) return "今天";
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (ideaDayKey(d) === ideaDayKey(y)) return "昨天";
+  const p = v => String(v).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+function ideaHHMM(ts) {
+  const d = new Date(ts), p = v => String(v).padStart(2, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+function renderIdeaCats() {
+  $("idea-cats").innerHTML = IDEA_CATS.map(c =>
+    '<button class="idea-cat' + (ideaCat === c.id ? " on" : "") + '" data-cat="' + c.id + '">' +
+    '<span class="ic-dot c-' + c.id + '"></span>' + c.emoji + " " + c.name + "</button>").join("");
+}
+function renderIdeaFilter() {
+  const n = txt => ideaItems.filter(it => it.categoryId === txt).length;
+  $("idea-filter").innerHTML =
+    '<button class="ptab' + (ideaFilter === "all" ? " on" : "") + '" data-f="all">全部 ' +
+    ideaItems.length + "</button>" +
+    IDEA_CATS.map(c => '<button class="ptab' + (ideaFilter === c.id ? " on" : "") +
+      '" data-f="' + c.id + '">' + c.emoji + " " + c.name + " " + n(c.id) + "</button>").join("");
+}
+function renderIdeaList() {
+  const q = ($("idea-search").value || "").trim().toLowerCase();
+  const list = ideaItems.filter(it =>
+    (ideaFilter === "all" || it.categoryId === ideaFilter) &&
+    (!q || String(it.text || "").toLowerCase().includes(q)));
+  const el = $("idea-list");
+  if (!list.length) {
+    el.innerHTML = '<div class="idea-empty">' +
+      (ideaItems.length ? "没有匹配的想法" : "还没有想法 — 左侧记录第一条") + "</div>";
+    return;
+  }
+  let html = "", lastDay = "";
+  for (const it of list) {
+    const day = ideaDayLabel(it.createdAt);
+    if (day !== lastDay) { html += '<div class="idea-day">' + day + "</div>"; lastDay = day; }
+    const cat = ideaCatOf(it.categoryId);
+    if (ideaEditId === it.id) {
+      html += '<div class="idea-card"><div class="ic-bar c-' + (cat ? cat.id : "idea") + '"></div>' +
+        '<div class="ic-body"><textarea class="idea-edit" id="ie-' + esc(it.id) + '">' +
+        esc(it.text) + "</textarea>" +
+        '<div class="ic-acts"><button data-act="esave" data-id="' + esc(it.id) + '">保存</button>' +
+        '<button data-act="ecancel">取消</button></div></div></div>';
+    } else {
+      html += '<div class="idea-card"><div class="ic-bar c-' + (cat ? cat.id : "idea") + '"></div>' +
+        '<div class="ic-meta"><span>' + (cat ? cat.emoji + " " + cat.name : "未分类") +
+        '</span><span>' + ideaDayLabel(it.createdAt) + " " + ideaHHMM(it.createdAt) + "</span></div>" +
+        '<div class="ic-text">' + esc(it.text) + "</div>" +
+        '<div class="ic-acts"><button data-act="edit" data-id="' + esc(it.id) + '">编辑</button>' +
+        '<button data-act="del" data-id="' + esc(it.id) + '" class="' +
+        (ideaDelArmId === it.id ? "del-arm" : "") + '">' +
+        (ideaDelArmId === it.id ? "确认删除?" : "删除") + "</button></div></div>";
+    }
+  }
+  el.innerHTML = html;
+  if (ideaEditId) { const ta = $("ie-" + ideaEditId); if (ta) { ta.focus(); ta.selectionStart = ta.value.length; } }
+}
+function ideaRefreshAll() {
+  renderIdeaCats(); renderIdeaFilter(); renderIdeaList();
+  setText("idea-sub", "共 " + ideaItems.length + " 条");
+}
+
+/* ── 语音输入 (Web Speech API; 不支持的浏览器禁用按钮走文字) ── */
+function ideaMicInit() {
+  const mic = $("idea-mic");
+  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Ctor) {
+    mic.disabled = true;
+    setText("idea-mic-st", "此浏览器不支持语音输入");
+    return;
+  }
+  recog = new Ctor();
+  recog.lang = "zh-CN";
+  recog.continuous = true;
+  recog.interimResults = true;
+  recog.onresult = e => {
+    let fin = "", interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) fin += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    if (fin) $("idea-text").value += fin;
+    setText("idea-interim", interim ? "识别中: " + interim : "");
+  };
+  recog.onend = () => {
+    recogOn = false;
+    mic.classList.remove("listening");
+    setText("idea-mic-st", "");
+    if ($("idea-interim").textContent.indexOf("识别中") === 0) setText("idea-interim", "");
+  };
+  recog.onerror = ev => {
+    const m = { "not-allowed":"麦克风权限被拒", "no-speech":"没有识别到语音",
+                "network":"语音服务网络错误", "audio-capture":"没有麦克风" };
+    setText("idea-mic-st", m[ev.error] || ("语音错误: " + (ev.error || "?")));
+  };
+}
+function ideaMicToggle() {
+  if (!recog) return;
+  if (recogOn) {
+    try { recog.stop(); } catch (e) {}
+    return;
+  }
+  try {
+    recog.start();
+    recogOn = true;
+    $("idea-mic").classList.add("listening");
+    setText("idea-mic-st", "聆听中… 再点一次结束");
+  } catch (e) {
+    setText("idea-mic-st", "启动失败, 重试");
+  }
+}
+function ideaSubmit() {
+  const ta = $("idea-text"), txt = ta.value.trim();
+  if (!txt) return;
+  ideaItems.unshift({
+    id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+    text: txt, categoryId: ideaCat, createdAt: Date.now(),
+  });
+  ideaPersist();
+  ta.value = "";
+  setText("idea-interim", "");
+  ideaFilter = "all";                        // 新想法立即可见
+  $("idea-search").value = "";
+  ideaRefreshAll();
+}
+
+/* ── 想法面板事件绑定 (一次) ── */
+$("idea-cats").addEventListener("click", e => {
+  const b = e.target.closest(".idea-cat");
+  if (b) { ideaCat = b.dataset.cat; renderIdeaCats(); }
+});
+$("idea-save").addEventListener("click", ideaSubmit);
+$("idea-text").addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") ideaSubmit();
+});
+$("idea-mic").addEventListener("click", ideaMicToggle);
+$("idea-filter").addEventListener("click", e => {
+  const b = e.target.closest(".ptab");
+  if (b) { ideaFilter = b.dataset.f; ideaEditId = null; renderIdeaFilter(); renderIdeaList(); }
+});
+$("idea-search").addEventListener("input", renderIdeaList);
+$("idea-list").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const id = b.dataset.id, act = b.dataset.act;
+  if (act === "edit") {
+    ideaEditId = id; ideaDelArmId = null; renderIdeaList();
+  } else if (act === "esave") {
+    const it = ideaItems.find(x => x.id === id), ta = $("ie-" + id);
+    if (it && ta && ta.value.trim()) { it.text = ta.value.trim(); ideaPersist(); }
+    ideaEditId = null; renderIdeaList();
+  } else if (act === "ecancel") {
+    ideaEditId = null; renderIdeaList();
+  } else if (act === "del") {
+    if (ideaDelArmId !== id) {   // 二次点击确认 (车机防误触), 3s 超时还原
+      ideaDelArmId = id;
+      clearTimeout(ideaDelArmTimer);
+      ideaDelArmTimer = setTimeout(() => { ideaDelArmId = null; renderIdeaList(); }, 3000);
+      renderIdeaList();
+    } else {
+      clearTimeout(ideaDelArmTimer);
+      ideaDelArmId = null;
+      if (ideaEditId === id) ideaEditId = null;
+      ideaItems = ideaItems.filter(x => x.id !== id);
+      ideaPersist(); ideaRefreshAll();
+    }
+  }
+});
+PANEL_OPENERS.idea = {
+  open() {
+    if (!ideaInited) {
+      ideaMicInit();
+      ideaInited = true;
+    }
+    ideaLoad();
+    ideaEditId = null; ideaDelArmId = null;
+    ideaRefreshAll();
+    $("idea-text").focus();
+  },
+  close() { if (recogOn) { try { recog.stop(); } catch (e) {} } }
+};
 
 /* ════ 启动 ════ */
 applyTheme(themeIdx);

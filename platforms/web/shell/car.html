@@ -78,7 +78,7 @@
 
   <!-- ── 底部 6 按钮: v2 全部可用 (小智为设备专属, 首格换家居) ── -->
   <nav class="nav" id="nav">
-    <button class="live" data-act="home">主页</button>
+    <button data-panel="idea">想法</button>
     <button data-panel="ha">家居</button>
     <button data-panel="fin">金融</button>
     <button data-panel="radio">收音机</button>
@@ -88,6 +88,31 @@
 </div>
 
 <!-- ═══ V2 面板 ═══ -->
+<div class="panel" id="p-idea">
+  <div class="p-head"><span class="p-title">想法</span><span class="p-sub" id="idea-sub"></span>
+    <button class="p-close" data-close="1">✕</button></div>
+  <div class="p-body">
+    <div class="idea-wrap">
+      <div class="idea-left">
+        <textarea class="idea-text" id="idea-text"
+                  placeholder="记录驾驶途中的想法…&#10;(⌘/Ctrl+Enter 保存)"></textarea>
+        <div class="idea-cats" id="idea-cats"></div>
+        <div class="idea-acts">
+          <button class="idea-mic" id="idea-mic" title="语音输入">🎙</button>
+          <span class="idea-mic-st" id="idea-mic-st"></span>
+          <button class="idea-save" id="idea-save">保存</button>
+        </div>
+        <div class="idea-interim" id="idea-interim"></div>
+      </div>
+      <div class="idea-right">
+        <div class="p-tabs" id="idea-filter"></div>
+        <input class="idea-search" id="idea-search" placeholder="🔍 搜索想法…">
+        <div id="idea-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="panel" id="p-ha">
   <div class="p-head"><span class="p-title">智能家居</span><span class="p-sub" id="ha-sub"></span>
     <button class="p-close" data-close="1">✕</button></div>
