@@ -180,13 +180,29 @@ class Handler(BaseHTTPRequestHandler):
         ctype = {
             ".html": "text/html; charset=utf-8",
             ".js": "text/javascript",
+            ".css": "text/css",   # Chromium 对非 text/css 的 <link> 样式表直接拒载
             ".wasm": "application/wasm",
             ".json": "application/json",
             ".data": "application/octet-stream",
         }.get(os.path.splitext(fpath)[1], "application/octet-stream")
         # 开发模式全部 no-cache (wasm 迭代频繁, max-age 会污染实验)
         with open(fpath, "rb") as f:
-            self._send(200, f.read(), ctype, cache=False)
+            body = f.read()
+        if fpath.endswith(".html"):
+            # 与生产网关等价的 CSP 模拟 (app.py L177): 内联 <style>/<script>
+            # 在正式网关被拦 —— 本地不模拟就会 "dev 全绿、线上裸页" (两次踩坑)
+            self.send_response(200)
+            self._sec_headers()
+            self.send_header("Content-Type", ctype)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Security-Policy",
+                             "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
+                             "img-src 'self' data:; worker-src 'self'; frame-ancestors 'none'")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self._send(200, body, ctype, cache=False)
 
 
 def main():
