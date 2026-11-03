@@ -102,13 +102,14 @@
 
   /* ---------- 输入事件 → ring ---------- */
   window.__tab5evlog = [];
-  // 事件重放节流: 合成 click/drag 会把 press+轨迹+release 同瞬间灌入,
-  // LVGL 的 CLICKED/GESTURE 判定需要 PRESSED 状态跨多个 indev tick。
-  // 真实手指/鼠标事件自带时间间隔 (队列近乎恒空), 此节流对它们无感。
-  const evQueue = [];
-  setInterval(() => {
-    if (!SAB || evQueue.length === 0) return;
-    const [type, a, b] = evQueue.shift();
+  // 事件直写 ring (无重放队列): setInterval 重放在后台标签会被浏览器
+  // 节流至停摆, 且合并截断曾误删排在 MOVE 后的 PRESS/RELEASE。
+  // 时序保障改由: ①release 延迟 60ms 入队 (PRESS 跨 indev 采样周期);
+  // ②worker 侧 drain 每周期限 2 条; ③事件 seq 自校验防套圈重放。
+  function pushEvent(type, a, b) {
+    if (!SAB) return;
+    window.__tab5evlog.push([type, a, b, Date.now()]);
+    if (window.__tab5evlog.length > 40) window.__tab5evlog.shift();
     const w = Atomics.load(U32, 3);
     const base = 36 + (w % RING_SLOTS) * 4;
     U32[base] = type;
@@ -116,26 +117,6 @@
     U32[base + 2] = (b | 0) >>> 0;
     U32[base + 3] = (w + 1) >>> 0;   // seq: 事件自校验 (防套圈重读幽灵)
     Atomics.store(U32, 3, w + 1);
-  }, 8);
-  function pushEvent(type, a, b) {
-    if (!SAB) return;
-    window.__tab5evlog.push([type, a, b, Date.now()]);
-    if (window.__tab5evlog.length > 40) window.__tab5evlog.shift();
-    // MOVE 合并 (latest-wins): 队列里只保留最新一个 MOVE。指针移动洪流
-    // (60Hz hover/节流恢复) 不再积压 —— 否则慢速重放会把几十秒前的旧
-    // 坐标当"新手势"吐给 LVGL (幽灵点击/幽灵上拨循环的燃料)。
-    // PRESS/RELEASE 永不合并、永不丢弃。
-    if (type === EV.MOVE) {
-      if (evQueue.length > 12) return;               // 洪灾时直接丢 MOVE
-      for (let i = evQueue.length - 1; i >= 0; i--) {
-        if (evQueue[i][0] === EV.MOVE) {
-          if (evQueue[i][1] === a && evQueue[i][2] === b) return;  // 未动
-          evQueue.length = i;                        // 丢弃更旧的 MOVE
-          break;
-        }
-      }
-    }
-    evQueue.push([type, a, b]);
   }
 
   function toScreen(e) {

@@ -2,6 +2,7 @@
 #include "../utils/theme/theme.h"
 #include <hal/hal.h>
 #include <mooncake_log.h>
+#include <chrono>
 #include <string>
 #include <cmath>
 #include <cstdio>
@@ -289,6 +290,7 @@ void AppSettings::_installSwipeGesture()
     while (indev) {
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
             static lv_point_t s_gpress{0, 0};   // PRESSED 起点 (底部起手判定)
+            static int64_t s_last_close_ms = 0; // GESTURE 与 RELEASE 兜底去重
             lv_indev_add_event_cb(indev, [](lv_event_t* e) {
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 const lv_event_code_t code = lv_event_get_code(e);
@@ -297,27 +299,43 @@ void AppSettings::_installSwipeGesture()
                     s_gpress = p;
                     return;
                 }
-                if (code != LV_EVENT_GESTURE) return;
-                if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
-                    // 位置守卫: 只认屏幕最下缘 (y>650) 起手的上拨
-                    // (前台守卫在下方 async 里, 2026-10-27 实锤 indev 广播)
-                    if (s_gpress.y <= 650) return;
-                    lv_async_call([](void* udata) {
-                        auto* app = static_cast<AppSettings*>(udata);
-                        if (!app) return;
-                        // Only act when our screen is actually on display. This
-                        // hook stays installed while another app opened from
-                        // the tools page (e.g. the YRobot cockpit) owns the
-                        // foreground — its joystick drags must not close us.
-                        if (!app->_scr || lv_screen_active() != app->_scr) return;
-                        // Back out of the deepest open sub-page first.
-                        if (app->_email_page)   app->_closeEmail();
-                        else if (app->_unit_page)   app->_closeUnit();
-                        else if (app->_fx_page) app->_closeFx();
-                        else if (app->_calc_page) app->_closeCalculator();
-                        else                     app->close();
-                    }, lv_event_get_user_data(e));
+                // 底部起手上拨 → 退到主页。双轨判据 (与 app_stocks 同款):
+                // GESTURE 承接快速甩动; RELEASE 位移兜底慢速/合成滑动
+                // (LVGL GESTURE 依赖速度阈值, 网页版慢速拖拽常不触发,
+                //  2026-11-03 工具页上拨失效实锤)。两轨 500ms 内只认第一次。
+                const bool gesture_hit = (code == LV_EVENT_GESTURE &&
+                    lv_indev_get_gesture_dir(dev) == LV_DIR_TOP);
+                bool release_hit = false;
+                if (code == LV_EVENT_RELEASED) {
+                    lv_point_t p; lv_indev_get_point(dev, &p);
+                    const int dx = p.x - s_gpress.x, dy = p.y - s_gpress.y;
+                    release_hit = (s_gpress.y > 650 && dy < -120 &&
+                                   abs(dy) > abs(dx) * 2);
                 }
+                if (!gesture_hit && !release_hit) return;
+                if (gesture_hit && s_gpress.y <= 650) return;  // 位置守卫
+                // steady_clock 纪元 (与 app_stocks mono_ms 同款); 桌面/网页
+                // compat 的 esp_timer_get_time 是惰性纪元, 首调前恒 0, 会把
+                // 首次手势困进 500ms 去重窗 (2026-11-03 工具页上拨失效真凶)
+                const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (now_ms - s_last_close_ms < 500) return;
+                s_last_close_ms = now_ms;
+                lv_async_call([](void* udata) {
+                    auto* app = static_cast<AppSettings*>(udata);
+                    if (!app) return;
+                    // Only act when our screen is actually on display. This
+                    // hook stays installed while another app opened from
+                    // the tools page (e.g. the YRobot cockpit) owns the
+                    // foreground — its joystick drags must not close us.
+                    if (!app->_scr || lv_screen_active() != app->_scr) return;
+                    // Back out of the deepest open sub-page first.
+                    if (app->_email_page)   app->_closeEmail();
+                    else if (app->_unit_page)   app->_closeUnit();
+                    else if (app->_fx_page) app->_closeFx();
+                    else if (app->_calc_page) app->_closeCalculator();
+                    else                     app->close();
+                }, lv_event_get_user_data(e));
             }, LV_EVENT_ALL, this);
             _gesture_indev = indev;
             break;
