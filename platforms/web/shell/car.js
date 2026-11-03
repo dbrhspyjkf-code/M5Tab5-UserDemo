@@ -1657,10 +1657,11 @@ function ideaVoiceToggle(id) {
     ideaPlayReset(id);
     playAudio = null; playId = null;
   };
-  playAudio.play().catch(() => {
+  playAudio.play().catch(e => {
     ideaPlayReset(id);
     playAudio = null; playId = null;
-    setText("idea-interim", "播放失败");
+    setText("idea-interim", "播放失败: " + (e.name || e.message || "?") +
+      (e.name === "NotSupportedError" ? " (此浏览器不支持该录音格式)" : ""));
   });
 }
 function ideaRecTeardown() {   // 离开面板: 录音中停止保存, 播放停掉
