@@ -11,16 +11,17 @@
  *     indev read_cb 消费。
  *
  * SAB 布局 (字节):
- *   0 magic | 4 version | 8 frameSeq | 12 inputWrite
- *   16 bbox[2][4] (槽 = seq&1, u32 索引 3+(seq&1)*4)
- *   32 ring[256*4] | 4128 staging u16[1280*720]
+ *   u32[0] magic | [1] version | [2] frameSeq | [3] inputWrite
+ *   u32[4..35] bbox[8][4] (槽 = seq&7) | u32[36..] ring[256][4]
+ *   byte 4240 staging u16[1280*720]
+ *   (bbox/ring 重叠曾致幽灵输入循环, 2026-11-03 修复)
  */
 "use strict";
 
 (function () {
   const W = 1280, H = 720;
   const RING_SLOTS = 256;
-  const STAGING_U16 = 4128 >> 1;
+  const STAGING_U16 = 4240 >> 1;
   const EV = { PRESS: 1, RELEASE: 2, MOVE: 3, WHEEL: 4, KEYDOWN: 5, KEYUP: 6 };
   // KeyboardEvent → LVGL key codes
   const KMAP = {
@@ -47,6 +48,10 @@
   }
 
   setProgress(0.05, "正在加载运行时…");
+
+  // 全局错误 → loader 区直接显示 (设备端排障: iPad/车机无法看 console)
+  window.addEventListener("error", e => fail("JS错误: " + e.message + " @" + (e.filename||"") + ":" + e.lineno));
+  window.addEventListener("unhandledrejection", e => fail("Promise拒绝: " + (e.reason && e.reason.message || e.reason)));
 
   /* ---------- 接收 worker 上报的 SAB ---------- */
   let SAB = null, U32 = null, U16 = null;
@@ -85,8 +90,10 @@
 
   /* ---------- 等比缩放 ---------- */
   function fit() {
-    const vw = window.innerWidth, vh = window.innerHeight;
-    const scale = Math.min(vw / W, vh / H);
+    // 车机 WebView 探针实锤 window 高度可为 0 —— 兜底到屏幕尺寸
+    const vw = window.innerWidth || screen.availWidth || W;
+    const vh = window.innerHeight || screen.availHeight || H;
+    const scale = Math.max(0.1, Math.min(vw / W, vh / H));
     canvas.style.width = Math.floor(W * scale) + "px";
     canvas.style.height = Math.floor(H * scale) + "px";
   }
@@ -103,19 +110,32 @@
     if (!SAB || evQueue.length === 0) return;
     const [type, a, b] = evQueue.shift();
     const w = Atomics.load(U32, 3);
-    const base = 8 + (w % RING_SLOTS) * 4;
+    const base = 36 + (w % RING_SLOTS) * 4;
     U32[base] = type;
     U32[base + 1] = a >>> 0;
     U32[base + 2] = (b | 0) >>> 0;
-    U32[base + 3] = 0;
+    U32[base + 3] = (w + 1) >>> 0;   // seq: 事件自校验 (防套圈重读幽灵)
     Atomics.store(U32, 3, w + 1);
   }, 8);
   function pushEvent(type, a, b) {
     if (!SAB) return;
     window.__tab5evlog.push([type, a, b, Date.now()]);
-    if (window.__tab5evlog.length > 12) window.__tab5evlog.shift();
+    if (window.__tab5evlog.length > 40) window.__tab5evlog.shift();
+    // MOVE 合并 (latest-wins): 队列里只保留最新一个 MOVE。指针移动洪流
+    // (60Hz hover/节流恢复) 不再积压 —— 否则慢速重放会把几十秒前的旧
+    // 坐标当"新手势"吐给 LVGL (幽灵点击/幽灵上拨循环的燃料)。
+    // PRESS/RELEASE 永不合并、永不丢弃。
+    if (type === EV.MOVE) {
+      if (evQueue.length > 12) return;               // 洪灾时直接丢 MOVE
+      for (let i = evQueue.length - 1; i >= 0; i--) {
+        if (evQueue[i][0] === EV.MOVE) {
+          if (evQueue[i][1] === a && evQueue[i][2] === b) return;  // 未动
+          evQueue.length = i;                        // 丢弃更旧的 MOVE
+          break;
+        }
+      }
+    }
     evQueue.push([type, a, b]);
-    if (evQueue.length > 64) evQueue.shift();  // 防洪
   }
 
   function toScreen(e) {
@@ -181,7 +201,7 @@
         if (seq - lastSeq > 8) lastSeq = seq - 8;  // 落后过多直接对齐
         let mx1 = 1 << 30, my1 = 1 << 30, mx2 = -1, my2 = -1;
         for (let s = lastSeq + 1; s <= seq; s++) {
-          const bo = 3 + (s & 7) * 4;
+          const bo = 4 + (s & 7) * 4;
           mx1 = Math.min(mx1, U32[bo]); my1 = Math.min(my1, U32[bo + 1]);
           mx2 = Math.max(mx2, U32[bo + 2]); my2 = Math.max(my2, U32[bo + 3]);
         }
@@ -220,6 +240,20 @@
     const el = document.documentElement;
     if (document.fullscreenElement) document.exitFullscreen && document.exitFullscreen();
     else if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  }
+
+  /* ---------- 调试浮层 (?debug=1): 实时显示 worker uart 日志 ---------- */
+  if (location.search.includes("debug")) {
+    const dbg = document.createElement("div");
+    dbg.style.cssText = "position:fixed;left:4px;bottom:4px;z-index:99;background:rgba(0,0,0,.75);" +
+      "color:#7ec87e;font:10px/1.4 ui-monospace,Menlo,monospace;padding:4px 6px;" +
+      "border-radius:6px;max-width:60vw;max-height:40vh;overflow:hidden;pointer-events:none;" +
+      "white-space:pre-wrap;word-break:break-all;";
+    document.body.appendChild(dbg);
+    setInterval(() => {
+      const u = (window.__tab5uart || []).slice(-6);
+      dbg.textContent = u.join("\n");
+    }, 500);
   }
 
   /* ---------- emscripten 模块钩子 ---------- */

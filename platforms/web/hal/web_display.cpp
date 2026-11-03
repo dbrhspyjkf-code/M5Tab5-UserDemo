@@ -14,15 +14,16 @@
  *     read_cb 消费。
  *
  * SAB 布局 (与 shell.js 逐字段对应, 全部 4 字节):
- *   0     u32  magic 'TAB5'
- *   4     u32  version
- *   8     u32  frameSeq        (worker Atomics.add, 发布一帧脏区后 +1)
- *   12    u32  inputWrite      (主线程 Atomics.store, 写入事件后前进)
- *   16    u32  bbox[8][4]      (环形队列, 槽号 = seq&7 —— 每个 seq 一格,
- *                               主线程逐 seq 消费合并, 启动画廊多块 flush
- *                               挤进一个 rAF 时不会丢上半屏)
- *   32    u32  ring[256*4]     ({type,a,b,0})
- *   4128  u16  staging[1280*720]
+ *   u32[0]  magic 'TAB5'
+ *   u32[1]  version
+ *   u32[2]  frameSeq        (worker Atomics.add, 发布一帧脏区后 +1)
+ *   u32[3]  inputWrite      (主线程 Atomics.store, 写入事件后前进)
+ *   u32[4..35]   bbox[8][4] (环形队列, 槽号 = seq&7; 主线程逐 seq 消费合并)
+ *   u32[36..1059] ring[256][4] ({type,a,b,seq})
+ *   byte 4240 起  staging u16[1280*720]
+ * ⚠️ bbox 与 ring 绝不可重叠: 曾因 bbox 从 u32[3] 起、ring 从 u32[8] 起
+ *    重叠 27 个字 —— 每帧 flush 把 bbox 坐标写进 inputWrite/事件槽,
+ *    渲染越活跃幽灵输入越多 (2026-11-03 iPad/Chrome 幽灵循环实锤)。
  */
 #include <lvgl.h>
 #include <emscripten.h>
@@ -32,6 +33,7 @@
 #include <mutex>
 
 #include "hal_config.h"
+#include "hal/hal.h"
 
 static const std::string _tag = "webdisp";
 
@@ -54,12 +56,12 @@ enum : uint32_t {
 };
 
 static constexpr int SAB_SIZE =
-    4128 + SCREEN_W * SCREEN_H * 2;
+    4240 + SCREEN_W * SCREEN_H * 2;
 
 /* -------------------------- SAB 建立与布局上报 ----------------------------- */
 
 EM_JS(void, sab_init_and_post, (), {
-    const SIZE = 4128 + 1280 * 720 * 2;
+    const SIZE = 4240 + 1280 * 720 * 2;
     const sab = new SharedArrayBuffer(SIZE);
     const u32 = new Uint32Array(sab);
     u32[0] = 0x54414235;  // 'TAB5'
@@ -74,7 +76,7 @@ EM_JS(void, sab_flush, (int x1, int y1, int x2, int y2, int src_ptr, int row_byt
     const sab = globalThis.__tab5sab;
     const u32 = new Uint32Array(sab);
     const u16 = new Uint16Array(sab);
-    const STAGING = 4128 >> 1;   // u16 索引
+    const STAGING = 4240 >> 1;   // u16 索引
     const rows = y2 - y1 + 1;
     const src = HEAPU8.subarray(src_ptr, src_ptr + row_bytes * rows);
     for (let r = 0; r < rows; r++) {
@@ -82,7 +84,7 @@ EM_JS(void, sab_flush, (int x1, int y1, int x2, int y2, int src_ptr, int row_byt
                 STAGING + (y1 + r) * 1280 + x1);
     }
     const nseq = Atomics.add(u32, 2, 1) + 1;
-    const slot = 3 + (nseq & 7) * 4;              // bbox[8][4] @ u32[3..34]
+    const slot = 4 + (nseq & 7) * 4;              // bbox[8][4] @ u32[4..35]
     u32[slot + 0] = x1; u32[slot + 1] = y1; u32[slot + 2] = x2; u32[slot + 3] = y2;
 })
 
@@ -95,12 +97,19 @@ EM_JS(int, sab_pop_event, (int out_ptr),
     const w = Atomics.load(u32, 3);
     if (globalThis.__tab5evIdx === undefined) globalThis.__tab5evIdx = 0;
     if (globalThis.__tab5evIdx === w) return 0;
-    const slot = (globalThis.__tab5evIdx % 256) * 4;
-    const base = 8 + slot;
+    const base = 36 + (globalThis.__tab5evIdx % 256) * 4;
+    // seq 自校验: 槽内序号必须等于期望的 idx+1。生产者套圈 (>256 未消费)
+    // 或换代 (SAB 重建) 时槽里是别的事件/零 —— 此时丢弃积压, 跳到最新,
+    // 绝不把陈旧槽内容当输入重放 (幽灵点击/幽灵手势的根因)。
+    const expect = (globalThis.__tab5evIdx + 1) >>> 0;
+    if (u32[base + 3] !== expect) {
+        globalThis.__tab5evIdx = w;
+        return 0;
+    }
     HEAP32[out_ptr >> 2] = u32[base];
     HEAP32[(out_ptr >> 2) + 1] = u32[base + 1];
     HEAP32[(out_ptr >> 2) + 2] = u32[base + 2];
-    globalThis.__tab5evIdx++;
+    globalThis.__tab5evIdx = w === expect ? w : (globalThis.__tab5evIdx + 1);
     return 1;
 })
 
