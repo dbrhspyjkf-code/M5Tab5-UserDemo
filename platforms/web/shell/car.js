@@ -425,20 +425,63 @@ function playStation(key) {
   });
 }
 /* ── VU 电平: relay /radio/<key>/lv 8Hz "b m t\n" (0-100, 三频段 RMS) ──
-   fetch 流式逐行读; 4s 无数据 (个别 WebView 流式 fetch 受限) 降级 CSS 伪动画 */
+   20 条渲染与设备 app_radio _updateVu 同款: 钟形频段权重(左 bass 右
+   treble)、上升快(0.45)降慢(0.10+i%5×0.04)错落平滑、峰值帽 ×0.92 缓降、
+   单色 accent(C_AMBER=主题 accent)。7s 无数据降级 CSS 伪动画 */
+const VU_N = 20;
 let lvAbort = null, lvFallbackTimer = 0, lvGotData = false;
+let lvl = { b: 0, m: 0, t: 0 };
+let vuCur = new Array(VU_N).fill(4), vuPk = new Array(VU_N).fill(4), vuTimer = 0;
+function buildVU() {
+  $("vu20").innerHTML = Array.from({ length: VU_N }, () =>
+    '<div class="vbar"><div class="vfill"></div><div class="vcap"></div></div>').join("");
+}
+function vuTick() {   // 8fps, 设备 _updateVu 同款
+  const bars = $("vu20").children;
+  for (let i = 0; i < VU_N; i++) {
+    const w = i / (VU_N - 1);
+    const wb = w < 0.5 ? 1 - 2 * w : 0;          // 左半→bass
+    const wt = w > 0.5 ? 2 * w - 1 : 0;          // 右半→treble
+    const wm = 1 - wb - wt;                      // 中间→mid
+    let target = 4 + (lvl.b * wb + lvl.m * wm + lvl.t * wt) * 1.48;
+    if (target > 152) target = 152;
+    const k = target > vuCur[i] ? 0.45 : 0.10 + (i % 5) * 0.04;
+    vuCur[i] += (target - vuCur[i]) * k;
+    let h = Math.round(vuCur[i]);
+    if (h < 3) h = 3;
+    if (h > 152) h = 152;
+    let pk = vuPk[i];
+    pk = (h >= pk) ? h : pk * 0.92;
+    if (pk < h) pk = h;
+    let ph = Math.round(pk);
+    if (ph > 152) ph = 152;
+    if (ph < h) ph = h;
+    vuPk[i] = pk;
+    const fill = bars[i].children[0], cap = bars[i].children[1];
+    const hp = (h / 152 * 100).toFixed(1) + "%", pp = (ph / 152 * 100).toFixed(1) + "%";
+    if (fill.style.height !== hp) fill.style.height = hp;
+    if (cap.style.bottom !== pp) cap.style.bottom = pp;
+  }
+}
 function stopLevelStream() {
   if (lvAbort) { lvAbort.abort(); lvAbort = null; }
   clearTimeout(lvFallbackTimer);
-  $("vu").classList.remove("fake");
-  ["vu-b", "vu-m", "vu-t"].forEach(id => { $(id).style.height = "0%"; });
+  $("vu20").classList.remove("fake");
+  clearInterval(vuTimer); vuTimer = 0;
+  lvl = { b: 0, m: 0, t: 0 };
+  vuCur.fill(4); vuPk.fill(4);
+  if ($("vu20").children.length)
+    Array.of(...$("vu20").children).forEach(bar => {
+      bar.children[0].style.height = "2%";
+      bar.children[1].style.bottom = "0%";
+    });
 }
 function startLevelStream(key) {
   stopLevelStream();
   if (!key) return;
   lvGotData = false;
   lvFallbackTimer = setTimeout(() => {
-    if (!lvGotData && wantPlay) $("vu").classList.add("fake");
+    if (!lvGotData && wantPlay) $("vu20").classList.add("fake");
   }, 7000);
   lvAbort = new AbortController();
   const sig = lvAbort.signal;
@@ -458,16 +501,14 @@ function startLevelStream(key) {
         buf = buf.slice(nl + 1);
         if (p.length < 3) continue;
         lvGotData = true;
-        $("vu").classList.remove("fake");
-        const h = v => Math.max(4, Math.min(100, parseInt(v, 10) || 0)) + "%";
-        $("vu-b").style.height = h(p[0]);
-        $("vu-m").style.height = h(p[1]);
-        $("vu-t").style.height = h(p[2]);
+        $("vu20").classList.remove("fake");
+        lvl = { b: parseInt(p[0], 10) || 0, m: parseInt(p[1], 10) || 0, t: parseInt(p[2], 10) || 0 };
+        if (!vuTimer) vuTimer = setInterval(vuTick, 120);   // 8fps 与设备一致
       }
     }
   })().catch(err => {
     if (sig.aborted) return;
-    if (!lvGotData && wantPlay) $("vu").classList.add("fake");
+    if (!lvGotData && wantPlay) $("vu20").classList.add("fake");
   });
 }
 $("r-play").addEventListener("click", () => {
@@ -1333,6 +1374,7 @@ refreshGlm();      refreshAgenda();
 refreshNews();     refreshHealth();
 refreshOpi();      refreshSentence();
 refreshIpo();      refreshWeather();
+buildVU();
 loadStations();
 setInterval(() => { refreshGlm(); refreshAgenda(); refreshNews(); refreshHealth(); refreshOpi(); }, 60000);
 setInterval(() => { newsIdx++; renderNews(); }, 10000);
