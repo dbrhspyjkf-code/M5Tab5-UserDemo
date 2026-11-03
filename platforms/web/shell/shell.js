@@ -187,6 +187,13 @@
       // (2026-11-03 用户实测); CSS 百分比由浏览器实时跟随, 永不错位。
       canvas.style.width = "100%";
       canvas.style.height = "100%";
+      // macOS Chrome 切全屏时 position:fixed 元素不重排 (Chromium 已知坑):
+      // body/html 高度停在上一个状态 —— 全屏时短一截(底部白条), 退回窗口
+      // 时又长一截(菜单被裁), 2026-11-03 用户两张截图互补实锤。这里显式
+      // px 重钉强制重排; 事件面由上方 resize/fullscreenchange/visualViewport
+      // 三条线保证每个状态转换都会跑到 fit()。
+      document.documentElement.style.height = vh + "px";
+      document.body.style.height = vh + "px";
     }
     clampBackBtn();
   }
