@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hal_web.h"
+#include "assets/assets_partition.h"
 #include <mooncake_log.h>
 #include <lvgl.h>
 #include <emscripten.h>
@@ -221,9 +222,33 @@ void HalWeb::setConfig(const std::string& key, const std::string& value)
 /* -------------------------------------------------------------------------- */
 /*                                   System                                   */
 /* -------------------------------------------------------------------------- */
+// 资产镜像同步拉取 (worker 内同步 XHR 合法; EM_JS 实现 assets_partition 的 import)
+EM_JS(uint8_t*, tab5_fetch_assets_impl, (const char* url), {
+    const u = UTF8ToString(url);
+    try {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", u, false);   // sync, worker only
+        xhr.responseType = "arraybuffer";
+        xhr.timeout = 15000;
+        xhr.send(null);
+        if (xhr.status !== 200) return 0;
+        const resp = new Uint8Array(xhr.response);
+        const p = Module._malloc(resp.length);
+        HEAPU8.set(resp, p);
+        return p;
+    } catch (e) { console.warn("[tab5web] assets fetch failed:", u, e); return 0; }
+})
+extern "C" {
+uint8_t* tab5_fetch_assets(const char* url) {
+    uint8_t* p = tab5_fetch_assets_impl(url);
+    GetHAL()->uartMonitorSend(std::string("assets-fetch ") + (p ? "ok" : "FAIL"));
+    return p;
+}
+
 void HalWeb::init()
 {
     mclog::tagInfo(_tag, "init (web)");
+    assets_part::web_preload();   // 三档 cbin 字体镜像 (在首次用字体的 UI 前加载)
     lvgl_init();
 }
 
@@ -261,6 +286,15 @@ void HalWeb::uartMonitorSend(std::string msg, bool newLine)
 {
     uart_bridge(msg.c_str(), (int)msg.size());
 }
+
+}  // extern "C"
+
+namespace webui {
+void _dbg_font_log(const char* tag, void* p)
+{
+    GetHAL()->uartMonitorSend(std::string(tag) + (p ? "=ok" : "=NULL"));
+}
+}  // namespace webui
 
 void HalWeb::setSpeakerVolume(uint8_t volume)
 {

@@ -29,6 +29,11 @@ static const lv_font_t* zh20()
     }();
     return f;
 }
+#elif defined(PLATFORM_BUILD_WEB)
+// web: 三档 cbin 与真机逐字节一致 (资产镜像)
+#include "web_fonts.h"
+static const lv_font_t* zh30() { return webui::font_30(); }
+static const lv_font_t* zh20() { return webui::font_20(); }
 #else
 extern "C" const lv_font_t font_puhui_20_4;
 static const lv_font_t* zh30() { return &font_puhui_20_4; }

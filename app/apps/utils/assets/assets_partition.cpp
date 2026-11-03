@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "assets_partition.h"
+#include <string.h>
 
 #ifndef PLATFORM_BUILD_DESKTOP
 
@@ -89,6 +90,52 @@ const uint8_t* find(const char* name, size_t* size)
     return nullptr;
 }
 
+}  // namespace assets_part
+
+#elif defined(PLATFORM_BUILD_WEB)
+
+// web: 资产镜像(与真机 res 分区同格式 'ASTB', 三档 cbin 字体)由 worker
+// 启动时同步 XHR 拉取到 malloc 缓冲 —— 不链进 wasm(巨型 const 数组会
+// 触发启动期越界, 且运行时拉取可独立缓存/版本化)。
+extern "C" const char* tab5_web_assets_name;
+
+namespace {
+struct TableW {
+    uint32_t magic, version, count, reserved;
+};
+struct EntryW {
+    char name[32];
+    uint32_t offset, size;
+};
+uint8_t* g_img = nullptr;
+
+// 同步 XHR (worker 内合法) → malloc 缓冲; 返回指针或 nullptr
+__attribute__((import_name("tab5_fetch_assets"))) extern "C" uint8_t* tab5_fetch_assets(const char* url);
+}  // namespace
+
+namespace assets_part {
+
+void web_preload()
+{
+    if (g_img) return;
+    g_img = tab5_fetch_assets(tab5_web_assets_name);
+    auto* t = reinterpret_cast<const TableW*>(g_img);
+    if (!g_img || t->magic != 0x42545341 || t->version != 1) g_img = nullptr;
+}
+
+const uint8_t* find(const char* name, size_t* size)
+{
+    if (!g_img) return nullptr;
+    auto* t = reinterpret_cast<const TableW*>(g_img);
+    auto* e = reinterpret_cast<const EntryW*>(g_img + sizeof(TableW));
+    for (uint32_t i = 0; i < t->count; ++i) {
+        if (strncmp(e[i].name, name, sizeof(EntryW::name)) == 0) {
+            if (size) *size = e[i].size;
+            return g_img + e[i].offset;
+        }
+    }
+    return nullptr;
+}
 }  // namespace assets_part
 
 #else  // PLATFORM_BUILD_DESKTOP

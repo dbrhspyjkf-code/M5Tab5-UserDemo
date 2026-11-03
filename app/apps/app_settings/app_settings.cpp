@@ -14,6 +14,8 @@
 #include <nlohmann/json.hpp>
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
+#elif defined(PLATFORM_BUILD_WEB)
+#include "web_fonts.h"
 #else
 extern "C" const lv_font_t font_puhui_20_4;
 #endif
@@ -23,7 +25,9 @@ static const std::string _tag = "app-tools";
 // Xiaozhi's puhui common 30px cbin font — GB2312 ~3500 glyphs, XIP from flash.
 static const lv_font_t* zh_font_30()
 {
-#ifndef PLATFORM_BUILD_DESKTOP
+#if defined(PLATFORM_BUILD_WEB)
+    return webui::font_30();
+#elif !defined(PLATFORM_BUILD_DESKTOP)
     extern const uint8_t font_puhui_common_30_4_bin_start[] asm("_binary_font_puhui_common_30_4_bin_start");
     static lv_font_t* f = nullptr;
     if (!f) f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);

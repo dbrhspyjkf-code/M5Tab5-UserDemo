@@ -18,6 +18,12 @@
 #include <cstddef>
 #include <cstdint>
 
+#if defined(PLATFORM_BUILD_WEB)
+namespace assets_part {
+void web_preload();   // worker 启动时同步拉取资产镜像 (三档 cbin 字体)
+}
+#endif
+
 namespace assets_part {
 
 // 按名查找资产；成功返回只读数据指针（生命周期 = 整个分区 mmap，恒有效），

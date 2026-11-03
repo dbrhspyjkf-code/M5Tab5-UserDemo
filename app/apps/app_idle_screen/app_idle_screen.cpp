@@ -29,6 +29,10 @@ static const lv_font_t* zh_font_lg()
     static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
     return f;
 }
+#elif defined(PLATFORM_BUILD_WEB)
+// web: 三档 cbin 与真机逐字节一致 (资产镜像)
+#include "web_fonts.h"
+static const lv_font_t* zh_font_lg() { return webui::font_30(); }
 #else
 extern "C" const lv_font_t font_puhui_20_4;
 static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }

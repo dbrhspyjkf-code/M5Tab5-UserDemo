@@ -27,12 +27,18 @@ static const std::string _tag = "app-home";
 // res 异常时回退 xiaozhi 内嵌 30px 聊天字体 (已在镜像, 不额外占 flash)。
 // 桌面: 无 res 分区, 用 xiaozhi-fonts 编译进的 puhui_20 子集——缺股票生僻
 // 字 (钶锶等), 仅影响模拟器观感, 设备端 res 20px 正常 (2026-10-28 实锤)。
-#ifdef PLATFORM_BUILD_DESKTOP
+#if defined(PLATFORM_BUILD_DESKTOP) && !defined(PLATFORM_BUILD_WEB)
 #include "../../../platforms/tab5/managed_components/78__xiaozhi-fonts/include/cbin_font.h"
 extern "C" const lv_font_t font_puhui_20_4;
 static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_md() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
+#elif defined(PLATFORM_BUILD_WEB)
+// web: 三档 cbin 与真机逐字节一致 (资产镜像 assets.img)
+#include "web_fonts.h"
+static const lv_font_t* zh_font_lg() { return webui::font_30(); }
+static const lv_font_t* zh_font_md() { return webui::font_24(); }
+static const lv_font_t* zh_font_sm() { return webui::font_20(); }
 #else
 #include <cbin_font.h>
 extern const uint8_t font_puhui_common_30_4_bin_start[]
