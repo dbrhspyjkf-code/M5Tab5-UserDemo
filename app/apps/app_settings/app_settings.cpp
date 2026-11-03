@@ -311,6 +311,10 @@ void AppSettings::_installSwipeGesture()
                     const int dx = p.x - s_gpress.x, dy = p.y - s_gpress.y;
                     release_hit = (s_gpress.y > 650 && dy < -120 &&
                                    abs(dy) > abs(dx) * 2);
+#ifdef PLATFORM_BUILD_WEB
+                    GetHAL()->uartMonitorSend("T-rel gp=" + std::to_string(s_gpress.y) +
+                        " dy=" + std::to_string(dy) + " hit=" + (release_hit ? "1" : "0"));
+#endif
                 }
                 if (!gesture_hit && !release_hit) return;
                 if (gesture_hit && s_gpress.y <= 650) return;  // 位置守卫
@@ -324,6 +328,11 @@ void AppSettings::_installSwipeGesture()
                 lv_async_call([](void* udata) {
                     auto* app = static_cast<AppSettings*>(udata);
                     if (!app) return;
+#ifdef PLATFORM_BUILD_WEB
+                    GetHAL()->uartMonitorSend("T-async scr=" +
+                        std::to_string(app->_scr ? 1 : 0) + " act=" +
+                        std::to_string((int)(uintptr_t)lv_screen_active()));
+#endif
                     // Only act when our screen is actually on display. This
                     // hook stays installed while another app opened from
                     // the tools page (e.g. the YRobot cockpit) owns the

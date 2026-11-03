@@ -51,6 +51,7 @@ set(APP_LAYER_INCS
     "${TAB5_PROJECT_ROOT}/platforms/tab5/components/xiaozhi_core/xiaozhi-esp32/main/"
     "${TAB5_PROJECT_ROOT}/platforms/desktop/compat/"
     "${TAB5_PROJECT_ROOT}/platforms/desktop/hal/"
+    "${TAB5_PROJECT_ROOT}/platforms/web/hal/"
 )
 
 # Web 平台源码 + 桌面 compat stubs (xiaozhi_ctl_stub 等)

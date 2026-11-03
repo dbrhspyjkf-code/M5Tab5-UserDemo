@@ -20,7 +20,8 @@
  *   u32[3]  inputWrite      (主线程 Atomics.store, 写入事件后前进)
  *   u32[4..35]   bbox[8][4] (环形队列, 槽号 = seq&7; 主线程逐 seq 消费合并)
  *   u32[36..1059] ring[256][4] ({type,a,b,seq})
- *   byte 4240 起  staging u16[1280*720]
+ *   u32[1060..1063] media 状态 {playing, volume, err, rsv} (主线程写)
+ *   byte 4272 起  staging u16[1280*720]
  * ⚠️ bbox 与 ring 绝不可重叠: 曾因 bbox 从 u32[3] 起、ring 从 u32[8] 起
  *    重叠 27 个字 —— 每帧 flush 把 bbox 坐标写进 inputWrite/事件槽,
  *    渲染越活跃幽灵输入越多 (2026-11-03 iPad/Chrome 幽灵循环实锤)。
@@ -56,12 +57,12 @@ enum : uint32_t {
 };
 
 static constexpr int SAB_SIZE =
-    4240 + SCREEN_W * SCREEN_H * 2;
+    4272 + SCREEN_W * SCREEN_H * 2;
 
 /* -------------------------- SAB 建立与布局上报 ----------------------------- */
 
 EM_JS(void, sab_init_and_post, (), {
-    const SIZE = 4240 + 1280 * 720 * 2;
+    const SIZE = 4272 + 1280 * 720 * 2;
     const sab = new SharedArrayBuffer(SIZE);
     const u32 = new Uint32Array(sab);
     u32[0] = 0x54414235;  // 'TAB5'
@@ -76,7 +77,7 @@ EM_JS(void, sab_flush, (int x1, int y1, int x2, int y2, int src_ptr, int row_byt
     const sab = globalThis.__tab5sab;
     const u32 = new Uint32Array(sab);
     const u16 = new Uint16Array(sab);
-    const STAGING = 4240 >> 1;   // u16 索引
+    const STAGING = 4272 >> 1;   // u16 索引
     const rows = y2 - y1 + 1;
     const src = HEAPU8.subarray(src_ptr, src_ptr + row_bytes * rows);
     for (let r = 0; r < rows; r++) {
@@ -112,6 +113,35 @@ EM_JS(int, sab_pop_event, (int out_ptr),
     globalThis.__tab5evIdx = w === expect ? w : (globalThis.__tab5evIdx + 1);
     return 1;
 })
+
+/* --------------------------- web_media (收音机音频) ------------------------
+ * worker 经 postMessage 命令主线程 <audio> 播放 relay 的 mp3 直流
+ * (/gw/8769/radio/<key>/ext); 播放状态由 shell 写回 SAB u32[1060..1063]。
+ */
+EM_JS(void, web_media_radio_js, (const char* key, int play), {
+    postMessage({__tab5radio: {cmd: play ? "play" : "stop",
+                               key: key ? UTF8ToString(key) : ""}});
+})
+
+EM_JS(void, web_media_volume_js, (int v), {
+    postMessage({__tab5radio: {cmd: "vol", v: v}});
+})
+
+EM_JS(int, web_media_playing, (), {
+    const sab = globalThis.__tab5sab;
+    return sab ? Atomics.load(new Uint32Array(sab), 1060) : 0;
+})
+
+EM_JS(int, web_media_err, (), {
+    const sab = globalThis.__tab5sab;
+    return sab ? Atomics.load(new Uint32Array(sab), 1062) : 0;
+})
+
+// (本文件已在 namespace webui 内 —— 勿再包一层, 否则符号变 webui::webui::)
+void web_media_radio(const char* key, bool play) { web_media_radio_js(key, play ? 1 : 0); }
+void web_media_volume(int v)                     { web_media_volume_js(v); }
+int  web_media_is_playing()                      { return web_media_playing(); }
+int  web_media_has_err()                         { return web_media_err(); }
 
 /* --------------------------------- flush --------------------------------- */
 

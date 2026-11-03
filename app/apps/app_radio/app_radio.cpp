@@ -12,6 +12,9 @@
  * esp_wifi_set_ps 在播放链路里疑似崩溃源(2026-10-26 "连接中"即重启)。
  */
 #include "app_radio.h"
+#ifdef PLATFORM_BUILD_WEB
+#include "web_media.h"   // platforms/web/hal (仅 web 构建在 include 路径)
+#endif
 #include "../utils/theme/theme.h"
 #include <hal/hal.h>
 #include <mooncake_log.h>
@@ -632,7 +635,13 @@ void AppRadio::_startTask()
 }
 
 #else   // 桌面模拟器: 无流引擎
+#ifdef PLATFORM_BUILD_WEB
+// web: 音频由主线程 <audio> 承担 (web_media), 无流任务线程。
+// _task_running 在首次 _play 时置位 (♪ 图标/播放判定语义与真机一致)。
 void AppRadio::_startTask() {}
+#else
+void AppRadio::_startTask() {}
+#endif
 #endif
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -991,6 +1000,13 @@ void AppRadio::onOpen()
 
 void AppRadio::onRunning()
 {
+#ifdef PLATFORM_BUILD_WEB
+    // web: <audio> 状态回读 (SAB) —— 连接中(1) → 播放(2)/错误(3)
+    if (_want_station.load() >= 0 && _state.load() == 1) {
+        if (webui::web_media_is_playing())      _state.store(2);
+        else if (webui::web_media_has_err())    _state.store(3);
+    }
+#endif
     // 若上次任务已退出(如 app 重开竞态)而用户想播 → 拉起新任务
     if (!_task_running.load()) _startTask();
 
@@ -1266,7 +1282,14 @@ void AppRadio::_play(int idx)
     if (idx < 0 || idx >= st_count()) return;
     _last_station = idx;
     _want_station.store(idx);
-    if (_output_sel > 0) _extStart(idx);   // 外部模式: 转投(本机流被 _ext_on 抑制)
+    if (_output_sel > 0) { _extStart(idx); return; }   // 外部模式: 转投
+#ifdef PLATFORM_BUILD_WEB
+    // web 本机模式: <audio> 播 relay mp3 直流; 状态由 onRunning 轮询回读
+    _task_running.store(true);
+    _state.store(1);   // 连接中
+    StationDyn st;
+    if (st_at(idx, st)) webui::web_media_radio(st.path.c_str(), true);
+#endif
 }
 
 void AppRadio::_rowClick_cb(lv_event_t* e)
@@ -1283,6 +1306,9 @@ void AppRadio::_playClick_cb(lv_event_t* e)
     if (st == 1 || st == 2) {
         if (app->_ext_on.load()) app->_extStop();   // 外部: 停投(流任务见 ext_on=false+want<0 置待机)
         app->_want_station.store(-1);               // 暂停(本机断流)
+#ifdef PLATFORM_BUILD_WEB
+        if (app->_output_sel == 0) webui::web_media_radio(nullptr, false);
+#endif
     }
     else                    app->_play(app->_last_station); // 播放/重试
 }
@@ -1314,7 +1340,11 @@ void AppRadio::_vol_cb(lv_event_t* e)
             app->_extSimple(kOutputs[sel].pid, "volume_set", v);
         });
     } else {
+#ifdef PLATFORM_BUILD_WEB
+        webui::web_media_volume(v);
+#else
         xiaozhi_set_speaker_volume(v);
+#endif
     }
 }
 

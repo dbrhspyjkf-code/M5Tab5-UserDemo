@@ -21,7 +21,7 @@
 (function () {
   const W = 1280, H = 720;
   const RING_SLOTS = 256;
-  const STAGING_U16 = 4240 >> 1;
+  const STAGING_U16 = 4272 >> 1;
   const EV = { PRESS: 1, RELEASE: 2, MOVE: 3, WHEEL: 4, KEYDOWN: 5, KEYUP: 6 };
   // KeyboardEvent → LVGL key codes
   const KMAP = {
@@ -53,6 +53,35 @@
   window.addEventListener("error", e => fail("JS错误: " + e.message + " @" + (e.filename||"") + ":" + e.lineno));
   window.addEventListener("unhandledrejection", e => fail("Promise拒绝: " + (e.reason && e.reason.message || e.reason)));
 
+  /* ---------- 收音机 <audio> (主线程; worker 经 postMessage 命令) ---------- */
+  const radio = document.createElement("audio");
+  radio.preload = "none";
+  radio.crossOrigin = "use-credentials";   // 同源 cookie (网关会话)
+  document.body.appendChild(radio);
+  let radioUnlocked = false;
+  const writeRadioStatus = () => {
+    if (!SAB) return;
+    U32[1060] = (!radio.paused && radio.readyState >= 2) ? 1 : 0;
+    U32[1061] = Math.round(radio.volume * 100);
+    U32[1062] = radio.error ? 1 : 0;
+  };
+  ["play", "pause", "playing", "error", "volumechange", "stalled", "waiting"]
+    .forEach(ev => radio.addEventListener(ev, writeRadioStatus));
+
+  const radioCmd = (c) => {
+    if (c.cmd === "play" && c.key) {
+      radio.src = "/gw/8769/radio/" + encodeURIComponent(c.key) + "/ext";
+      radio.play().catch(e => console.warn("[tab5web] radio play:", e.message));
+    } else if (c.cmd === "stop") {
+      radio.pause();
+      radio.removeAttribute("src");
+      radio.load();
+    } else if (c.cmd === "vol") {
+      radio.volume = Math.max(0, Math.min(1, (c.v | 0) / 100));
+    }
+    setTimeout(writeRadioStatus, 50);
+  };
+
   /* ---------- 接收 worker 上报的 SAB ---------- */
   let SAB = null, U32 = null, U16 = null;
 
@@ -66,6 +95,7 @@
           (window.__tab5uart = window.__tab5uart || []).push(d.__tab5uart);
           return;
         }
+        if (d && d.__tab5radio) { radioCmd(d.__tab5radio); return; }
         if (d && d.__tab5layout && d.__tab5layout.sab) {
           try {
             SAB = d.__tab5layout.sab;
@@ -129,6 +159,16 @@
 
   canvas.addEventListener("pointerdown", e => {
     e.preventDefault();
+    // Safari/iOS: play() 必须发生在真实手势内 —— 首次按下用静音空源
+    // 解锁元素, 之后 worker 触发的 play() 才被放行 (Chrome 靠粘性激活天然通过)
+    if (!radioUnlocked) {
+      radioUnlocked = true;
+      const keep = radio.src;
+      radio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+      radio.muted = true;
+      radio.play().then(() => { radio.pause(); radio.muted = false; if (keep) radio.src = keep; })
+                  .catch(() => { radio.muted = false; if (keep) radio.src = keep; });
+    }
     const [x, y] = toScreen(e);
     pushEvent(EV.MOVE, x, y);
     pushEvent(EV.PRESS, x, y);
