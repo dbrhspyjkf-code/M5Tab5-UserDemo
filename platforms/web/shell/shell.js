@@ -191,6 +191,11 @@
     clampBackBtn();
   }
   window.addEventListener("resize", fit);
+  // iPad 全屏切换不派发 resize (iOS 实测) —— 补 fullscreenchange 与
+  // visualViewport 两条事件线, 触发 fit 重算 (contain 模式靠它; fill 模式
+  // CSS 100% 自跟随, 这里主要是把返回键 clamp 进新视口)
+  document.addEventListener("fullscreenchange", fit);
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", fit);
   fit();
 
   /* ---------- iOS 触摸回弹抑制 ----------
