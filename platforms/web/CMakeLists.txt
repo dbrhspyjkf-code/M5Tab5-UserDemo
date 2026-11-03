@@ -47,6 +47,7 @@ list(APPEND APP_LAYER_SRCS
     "${TAB5_PROJECT_ROOT}/platforms/tab5/managed_components/78__xiaozhi-fonts/src/font_puhui_20_4.c"
     "${TAB5_PROJECT_ROOT}/platforms/tab5/managed_components/78__xiaozhi-fonts/src/cbin_font.c"
     "${CMAKE_CURRENT_LIST_DIR}/assets_name.cc"  # 构建时生成: 版本化资产文件名
+    "${CMAKE_CURRENT_LIST_DIR}/hal/web_jpeg.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/fonts/font_zh_web_30.c"
     "${CMAKE_CURRENT_LIST_DIR}/fonts/font_zh_web_24.c"
 )

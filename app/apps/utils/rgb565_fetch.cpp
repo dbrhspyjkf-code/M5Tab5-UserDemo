@@ -10,6 +10,8 @@
 #include <freertos/task.h>
 #endif
 
+extern "C" int web_jpeg_to_rgb565(const uint8_t* jpg, int jpg_len, uint16_t* out, int out_bytes);
+
 namespace rgb565 {
 
 void* alloc(int w, int h)
@@ -49,7 +51,17 @@ bool download(const std::string& url, void* buf)
     const int bytes = (int)dsc->data_size;
     char* dst = const_cast<char*>(reinterpret_cast<const char*>(dsc->data));
 
-#ifdef PLATFORM_BUILD_DESKTOP
+#if defined(PLATFORM_BUILD_WEB)
+    // web: 拉 JPEG (~1/10 流量) → worker OffscreenCanvas 解码 → RGB565 写入
+    std::string jpg_url = url;
+    const size_t dot = jpg_url.rfind(".rgb565");
+    if (dot != std::string::npos) jpg_url.replace(dot, 8, ".jpg");
+    auto resp = GetHAL()->httpGet(jpg_url);
+    if (!resp.ok || resp.status != 200 || resp.body.empty()) return false;
+    // 解码: 返回像素数 (w*h=成功)
+    return ::web_jpeg_to_rgb565((const uint8_t*)resp.body.data(), (int)resp.body.size(),
+                                (uint16_t*)dst, bytes) == bytes / 2;
+#elif defined(PLATFORM_BUILD_DESKTOP)
     auto resp = GetHAL()->httpGet(url);
     if (!resp.ok || resp.status != 200 || (int)resp.body.size() != bytes) return false;
     memcpy(dst, resp.body.data(), bytes);
