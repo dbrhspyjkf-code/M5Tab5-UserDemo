@@ -15,6 +15,7 @@ int main()
 {
     // 浏览器无闲置/熄屏概念: 关掉屏保 worker (与桌面 TAB5_SS_EN 惯例一致)
     setenv("TAB5_SS_EN", "0", 1);
+    setenv("TAB5_OPEN_APP", "gallery", 1);  // TEMP-DIAG
     setenv("TAB5_IDLE_MS", "0", 1);
 
     app::InitCallback_t callback;

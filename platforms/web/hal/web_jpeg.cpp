@@ -10,18 +10,43 @@
 // 二进制安全拉取: WebKit 的 sync XHR 不支持 responseType=arraybuffer
 // (静默退回文本, JPEG 字节被文本解码绞碎 —— iPad px=-1 真凶)。
 // x-user-defined: 每字节映射为 U+0000..U+00FF, charCodeAt 即原字节。
+// SAB 命令区 (byte): STAGING_END = 4272+1843200 = 1847472
+//   [0..3]  seq   (worker 每次请求 +1)
+//   [4..7]  op    (1=fetch 请求; 0=空闲)
+//   [8..11] status(0=处理中 1=ok 2=err)
+//   [12..15] len
+//   [16..207] url (ASCII)
+//   [208..]  数据缓冲 2MB
+// 页面 shell 每 30ms 轮询 op; 全程 SAB+Atomics, 零 postMessage
+// (CriOS 上 pthread→page 消息不到达, 访问日志实锤; 而 SAB/Atomics 是
+//  屏幕/触摸一直在用的、iPad 探针 wait-ok 验证过的原语)
 EM_JS(int, web_fetch_bin_js, (const char* url, uint8_t* out, int cap), {
-    // 主线程原生 fetch + SAB 回传: 异步/二进制安全/无 sync XHR 限制
-    // (CriOS 对大块 sync XHR 异常 → 1.8MB 大图 n=-1 实锤)
-    const sab = new SharedArrayBuffer(8 + cap);
-    const st = new Int32Array(sab, 0, 2);   // [0]=0pending/1ok/2http码, [1]=len
-    postMessage({__tab5bin: {sab: sab, url: UTF8ToString(url)}});
-    const r = Atomics.wait(st, 0, 0, 30000);
-    if (r !== "ok") return -1;
-    const code = Atomics.load(st, 0);
-    if (code !== 1) return -code;
-    const n = Math.min(Atomics.load(st, 1), cap);
-    HEAPU8.set(new Uint8Array(sab, 8, n), out);
+    const sab = globalThis.__tab5sab;
+    if (!sab) return -1;
+    const BASE = 4272 + 1280 * 720 * 2;
+    const u32 = new Uint32Array(sab, BASE, 4);
+    const urlBuf = new Uint8Array(sab, BASE + 16, 192);
+    const dataBuf = new Uint8Array(sab, BASE + 208);
+    const DATA_CAP = dataBuf.length;
+    const c = new Uint8Array(sab, BASE, 1);
+    // 写 url
+    const u = UTF8ToString(url);
+    if (u.length >= 192) return -1;
+    for (let i = 0; i < u.length; i++) urlBuf[i] = u.charCodeAt(i);
+    urlBuf[u.length] = 0;
+    Atomics.store(u32, 2, 0);                    // status=处理中
+    Atomics.store(u32, 0, Atomics.load(u32, 0) + 1);  // seq++
+    Atomics.store(u32, 1, 1);                    // op=fetch
+    const t0 = Date.now();
+    for (;;) {
+        const st = Atomics.wait(u32, 2, 0, 50);  // worker 内合法
+        if (Atomics.load(u32, 2) !== 0) break;
+        if (Date.now() - t0 > 30000) return -1;
+    }
+    if (Atomics.load(u32, 2) !== 1) return -(Atomics.load(u32, 2));
+    const n = Math.min(Atomics.load(u32, 3), cap, DATA_CAP);
+    HEAPU8.set(dataBuf.subarray(0, n), out);
+    Atomics.store(u32, 1, 0);                    // op=空闲
     return n;
 })
 

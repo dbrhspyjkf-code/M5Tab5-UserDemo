@@ -270,6 +270,31 @@
     pushEvent(EV.KEYUP, 0, code);
   });
 
+  /* ---------- SAB fetch 服务者 (零消息; CriOS pthread→page 消息不到达) */
+  setInterval(() => {
+    if (!SAB) return;
+    const BASE = 4272 + 1280 * 720 * 2;
+    const u32 = new Uint32Array(SAB, BASE, 4);
+    if (Atomics.load(u32, 1) !== 1) return;
+    const seq = Atomics.load(u32, 0);
+    if (window.__tab5fs === seq) return;         // 已处理
+    window.__tab5fs = seq;
+    const url = String.fromCharCode(...new Uint8Array(SAB, BASE + 16, 192)
+      .subarray(0, new Uint8Array(SAB, BASE + 16, 192).indexOf(0)));
+    fetch(url, {credentials: "same-origin"}).then(r => r.ok ? r.arrayBuffer() : null).then(b => {
+      const dataBuf = new Uint8Array(SAB, BASE + 208);
+      if (b) {
+        const n = Math.min(b.byteLength, dataBuf.length);
+        dataBuf.set(new Uint8Array(b).subarray(0, n));
+        Atomics.store(u32, 3, n);
+        Atomics.store(u32, 2, 1);
+      } else {
+        Atomics.store(u32, 2, 2);
+      }
+      Atomics.notify(u32, 2);
+    }).catch(() => { Atomics.store(u32, 2, 2); Atomics.notify(u32, 2); });
+  }, 30);
+
   /* ---------- rAF 绘制: 读 seq 配对的 bbox → RGBA → canvas ---------- */
   let lastSeq = 0;
   function blit() {
