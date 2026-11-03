@@ -24,3 +24,17 @@ BIN="$BUILD/bin"
 cp "$ROOT/platforms/web/shell/index.html" "$ROOT/platforms/web/shell/shell.js" "$BIN/"
 cp "$BUILD/assets.img" "$BIN/assets-$BUILD_TS_PRE.img"
 
+BUILD_TS=$(date +%Y%m%d%H%M%S)
+python3 - "$BIN/index.html" "$BUILD_TS" <<'PYEOF'
+import sys
+p, ts = sys.argv[1], sys.argv[2]
+s = open(p).read()
+tag = '<script>window.TAB5_BUILD="%s";</script>' % ts
+if "TAB5_BUILD" not in s:
+    s = s.replace('<script src="shell.js"></script>', tag + '\n<script src="shell.js"></script>')
+    open(p, "w").write(s)
+print("version:", ts)
+PYEOF
+grep -q "TAB5_BUILD" "$BIN/index.html" || { echo "version inject FAILED"; exit 1; }
+ls "$BIN"/assets-*.img 2>/dev/null | grep -v "assets-$BUILD_TS_PRE.img" | xargs rm -f 2>/dev/null
+echo "---- build ok: $BIN (v$BUILD_TS) ----"
