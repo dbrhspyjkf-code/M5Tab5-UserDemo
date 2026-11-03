@@ -82,7 +82,7 @@ target_link_options(tab5web PRIVATE
     "-sINITIAL_MEMORY=134217728"       # 128MB
     "-sMAXIMUM_MEMORY=2147483648"      # 2GB
     -sALLOW_MEMORY_GROWTH=1
-    "-sEXPORTED_FUNCTIONS=_malloc,_free"
+    "-sEXPORTED_FUNCTIONS=_malloc,_free,_tab5_jpeg_finish"
     "-sENVIRONMENT=web,worker"
     "-sEXIT_RUNTIME=0"
 )
