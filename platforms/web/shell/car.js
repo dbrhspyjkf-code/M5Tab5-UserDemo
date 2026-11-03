@@ -1371,7 +1371,13 @@ const IDEA_CATS = [
   { id:"todo", name:"待办", emoji:"✅" },
 ];
 let ideaItems = [], ideaCat = "work", ideaFilter = "all", ideaEditId = null;
-let recog = null, recogOn = false, ideaInited = false, ideaClockTimer = 0;
+let ideaInited = false, ideaClockTimer = 0;
+/* 语音 memo: IndexedDB 存 Blob (localStorage 存不了二进制); 文字 memo
+   仍走 localStorage (与原 car-inspiration 应用互通), 时间线合并展示 */
+let ideaDB = null, voiceItems = [];
+let recStream = null, recRecorder = null, recChunks = [], recMime = "";
+let recSec = 0, recTimer = 0, recStartAt = 0, recActive = false;
+let playAudio = null, playId = null;
 
 function ideaLoad() {
   try {
@@ -1410,6 +1416,10 @@ function renderIdeaCats() {
     '" data-cat="' + c.id + '"><span class="category-emoji">' + c.emoji +
     '</span><span class="category-name">' + c.name + "</span></button>").join("");
 }
+function ideaCatCount(fid) {   // 文字 + 语音合并计数
+  return ideaItems.filter(it => fid === "all" || it.categoryId === fid).length +
+         voiceItems.filter(it => fid === "all" || it.categoryId === fid).length;
+}
 function renderIdeaFilter() {
   $("idea-filter").innerHTML =
     '<button class="mini-chip all' + (ideaFilter === "all" ? " is-active" : "") +
@@ -1420,24 +1430,31 @@ function renderIdeaFilter() {
 }
 function renderIdeaList() {
   const q = ($("idea-search").value || "").trim().toLowerCase();
-  const list = ideaItems.filter(it =>
-    (ideaFilter === "all" || it.categoryId === ideaFilter) &&
-    (!q || String(it.text || "").toLowerCase().includes(q)));
-  setText("idea-count", String(ideaItems.length));
-  setText("idea-count2", list.length + " / " + ideaItems.length);
+  const textHit = it => !q || String(it.text || "").toLowerCase().includes(q);
+  const items = []
+    .concat(ideaItems.filter(it =>
+      (ideaFilter === "all" || it.categoryId === ideaFilter) && textHit(it))
+      .map(it => ({ kind: "text", it })))
+    .concat(voiceItems.filter(it =>
+      (ideaFilter === "all" || it.categoryId === ideaFilter) && textHit(it))
+      .map(it => ({ kind: "audio", it })));
+  items.sort((a, b) => (b.it.createdAt || 0) - (a.it.createdAt || 0));
+  const total = ideaItems.length + voiceItems.length;
+  setText("idea-count", String(total));
+  setText("idea-count2", items.length + " / " + total);
   const el = $("idea-list");
-  if (!list.length) {
+  if (!items.length) {
     el.innerHTML = '<div class="empty-state"><div class="empty-emoji">🛣️</div>' +
       '<p class="empty-title">还没有灵感</p><p class="empty-hint">' +
-      (ideaItems.length ? "当前筛选下没有匹配的灵感" : "点击左侧输入或按下 🎙 开始语音记录") + "</p></div>";
+      (total ? "当前筛选下没有匹配的灵感" : "点击左侧输入或按下 🎙 开始语音记录") + "</p></div>";
     return;
   }
   let html = "", lastDay = "";
-  for (const it of list) {
+  for (const { kind, it } of items) {
     const day = ideaDayLabel(it.createdAt);
     if (day !== lastDay) {
-      const n = list.filter(x => ideaDayLabel(x.createdAt) === day).length;
-      if (lastDay !== "") html += "</div></div>";   // 收上一个 day-cards+group
+      if (lastDay !== "") html += "</div></div>";
+      const n = items.filter(x => ideaDayLabel(x.it.createdAt) === day).length;
       html += '<div class="list-day-group"><div class="day-divider">' +
               '<span class="day-label">' + day + '</span><span class="day-line"></span>' +
               '<span class="day-count">' + n + " 条</span></div>" +
@@ -1446,32 +1463,39 @@ function renderIdeaList() {
     }
     const cat = ideaCatOf(it.categoryId);
     const catCls = cat ? " c-" + cat.id : " c-none";
+    const meta = '<header class="card-meta"><span class="card-category' + catCls + '">' +
+      (cat ? '<span>' + cat.emoji + '</span> ' + cat.name : "未分类") + "</span>" +
+      '<span class="card-time">' + ideaFullTime(it.createdAt) + "</span></header>";
+    const note = it.text ? '<p class="card-text">' + esc(it.text) + "</p>" : "";
     if (ideaEditId === it.id) {
-      html += '<article class="inspiration-card' + (cat ? catCls : "") + '">' +
-        '<header class="card-meta"><span class="card-category' + catCls + '">' +
-        (cat ? '<span>' + cat.emoji + '</span> ' + cat.name : "未分类") + "</span>" +
-        '<span class="card-time">' + ideaFullTime(it.createdAt) + "</span></header>" +
-        '<textarea class="card-edit" id="ie-' + esc(it.id) + '" rows="3">' + esc(it.text) + "</textarea>" +
+      html += '<article class="inspiration-card' + catCls + '">' + meta +
+        '<textarea class="card-edit" id="ie-' + esc(it.id) + '" rows="3" placeholder="' +
+        (kind === "audio" ? "给这段语音写点备注…" : "") + '">' + esc(it.text || "") + "</textarea>" +
         '<footer class="card-footer"><div class="card-category-edit">' +
         IDEA_CATS.map(c => '<button class="mini-chip mchip c-' + c.id +
-          (it.categoryId === c.id ? " is-active" : "") + '" data-mc="' + c.id +
-          '" data-id="' + esc(it.id) + '">' + c.emoji + " " + c.name + "</button>").join("") +
+          (it.categoryId === c.id ? " is-active" : "") + '" data-act="mc" data-mc="' + c.id +
+          '" data-id="' + esc(it.id) + '" data-kind="' + kind + '">' + c.emoji + " " + c.name + "</button>").join("") +
         '</div><div class="card-actions">' +
-        '<button class="link-button" data-act="esave" data-id="' + esc(it.id) + '">保存</button>' +
+        '<button class="link-button" data-act="esave" data-id="' + esc(it.id) +
+        '" data-kind="' + kind + '">保存</button>' +
         '<button class="link-button" data-act="ecancel">取消</button></div></footer></article>';
     } else {
-      html += '<article class="inspiration-card' + catCls + '">' +
-        '<header class="card-meta"><span class="card-category' + catCls + '">' +
-        (cat ? '<span>' + cat.emoji + '</span> ' + cat.name : "未分类") + "</span>" +
-        '<span class="card-time">' + ideaFullTime(it.createdAt) + "</span></header>" +
-        '<p class="card-text">' + esc(it.text) + "</p>" +
+      const voice = kind === "audio"
+        ? '<div class="voice-row"><button class="voice-btn' + (playId === it.id ? " playing" : "") +
+          '" data-act="voice" data-id="' + esc(it.id) + '">' +
+          (playId === it.id ? "⏸" : "▶") + "</button>" +
+          '<div class="voice-bar"><div class="voice-fill" id="vf-' + esc(it.id) + '"></div></div>' +
+          '<span class="voice-dur">' + it.dur + '″</span></div>'
+        : "";
+      html += '<article class="inspiration-card' + catCls + '">' + meta + voice + note +
         '<footer class="card-footer"><span></span><div class="card-actions">' +
-        '<button class="link-button" data-act="edit" data-id="' + esc(it.id) + '">编辑</button>' +
-        '<button class="link-button danger" data-act="del" data-id="' + esc(it.id) + '">删除</button>' +
-        "</div></footer></article>";
+        '<button class="link-button" data-act="edit" data-id="' + esc(it.id) + '" data-kind="' + kind + '">' +
+        (kind === "audio" ? "备注" : "编辑") + "</button>" +
+        '<button class="link-button danger" data-act="del" data-id="' + esc(it.id) +
+        '" data-kind="' + kind + '">删除</button></div></footer></article>';
     }
   }
-  html += "</div></div>";   // 收最后一个 group
+  html += "</div></div>";
   el.innerHTML = html;
   if (ideaEditId) {
     const ta = $("ie-" + ideaEditId);
@@ -1481,54 +1505,169 @@ function renderIdeaList() {
 function ideaRefreshAll() {
   renderIdeaCats(); renderIdeaFilter(); renderIdeaList(); ideaMetaTick();
 }
+/* 文字+语音全量刷新 (IDB 异步) — 所有增删改后调用 */
+async function ideaRefreshData() {
+  ideaLoad();
+  voiceItems = await idbAll();
+  voiceItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  ideaRefreshAll();
+}
+function ideaRefreshAll() {
+  renderIdeaCats(); renderIdeaFilter(); renderIdeaList(); ideaMetaTick();
+}
 
-/* ── 语音输入 (Web Speech API; 生产网关 CSP 已放开 Google 语音 connect-src) ── */
-function ideaMicInit() {
-  const mic = $("idea-mic"), micT = $("idea-mic-t");
-  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Ctor) {
-    mic.disabled = true;
-    mic.classList.add("is-disabled");
-    micT.textContent = "语音不可用";
+/* ── 语音 memo: MediaRecorder 录音 → IndexedDB Blob → 时间线可回放 ── */
+function idbOpen() {
+  return new Promise(res => {
+    if (ideaDB) return res(ideaDB);
+    let rq;
+    try { rq = indexedDB.open("car-inspiration-audio", 1); }
+    catch (e) { return res(null); }
+    rq.onupgradeneeded = () => rq.result.createObjectStore("memos", { keyPath: "id" });
+    rq.onsuccess = () => { ideaDB = rq.result; res(ideaDB); };
+    rq.onerror = () => res(null);
+  });
+}
+function idbAll() {
+  return idbOpen().then(db => new Promise(res => {
+    if (!db) return res([]);
+    const rq = db.transaction("memos").objectStore("memos").getAll();
+    rq.onsuccess = () => res(rq.result || []);
+    rq.onerror = () => res([]);
+  }));
+}
+function idbPut(m) {
+  return idbOpen().then(db => new Promise(res => {
+    if (!db) return res();
+    const tx = db.transaction("memos", "readwrite");
+    tx.objectStore("memos").put(m);
+    tx.oncomplete = res; tx.onerror = res;
+  }));
+}
+function idbDel(id) {
+  return idbOpen().then(db => new Promise(res => {
+    if (!db) return res();
+    const tx = db.transaction("memos", "readwrite");
+    tx.objectStore("memos").delete(id);
+    tx.oncomplete = res; tx.onerror = res;
+  }));
+}
+function recUIReset() {
+  recActive = false;
+  clearInterval(recTimer); recTimer = 0;
+  $("idea-mic").classList.remove("is-listening");
+  $("idea-mic-t").textContent = "按下说话";
+}
+function ideaRecStop() {   // 停止 → 合成 Blob → IDB → 刷新
+  if (recTimer) { clearInterval(recTimer); recTimer = 0; }
+  try { recRecorder.stop(); } catch (e) {}
+}
+async function ideaRecToggle() {
+  if (recActive) { ideaRecStop(); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    setText("idea-interim", "此浏览器不支持录音");
     return;
   }
-  recog = new Ctor();
-  recog.lang = "zh-CN";
-  recog.continuous = true;
-  recog.interimResults = true;
-  recog.onresult = e => {
-    let fin = "", interim = "";
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const r = e.results[i];
-      if (r.isFinal) fin += r[0].transcript;
-      else interim += r[0].transcript;
-    }
-    if (fin) $("idea-text").value += fin;
-    setText("idea-interim", interim ? "识别中: " + interim : "");
-  };
-  recog.onend = () => {
-    recogOn = false;
-    mic.classList.remove("is-listening");
-    micT.textContent = "按下说话";
-    if ($("idea-interim").textContent.indexOf("识别中") === 0) setText("idea-interim", "");
-  };
-  recog.onerror = ev => {
-    const m = { "not-allowed":"麦克风权限被拒", "no-speech":"没有识别到语音",
-                "network":"语音服务网络错误", "audio-capture":"没有麦克风",
-                "service-not-allowed":"语音服务被禁用" };
-    setText("idea-interim", m[ev.error] || ("语音错误: " + (ev.error || "?")));
-  };
-}
-function ideaMicToggle() {
-  if (!recog) return;
-  if (recogOn) { try { recog.stop(); } catch (e) {} return; }
+  let stream;
   try {
-    recog.start();
-    recogOn = true;
-    $("idea-mic").classList.add("is-listening");
-    $("idea-mic-t").textContent = "聆听中… 点击结束";
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    setText("idea-interim", "启动失败, 重试");
+    const m = { "NotAllowedError": "麦克风权限被拒 — 浏览器地址栏权限里允许后重试",
+                "NotFoundError": "没有检测到麦克风" };
+    setText("idea-interim", m[e.name] || ("麦克风打开失败: " + e.name));
+    return;
+  }
+  recMime = "";
+  for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"])
+    if (MediaRecorder.isTypeSupported(m)) { recMime = m; break; }
+  try {
+    recRecorder = new MediaRecorder(stream, recMime ? { mimeType: recMime } : undefined);
+  } catch (e) {
+    stream.getTracks().forEach(t => t.stop());
+    setText("idea-interim", "录音器初始化失败");
+    return;
+  }
+  recStream = stream;
+  recChunks = []; recSec = 0;
+  recRecorder.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  recRecorder.onstop = async () => {
+    if (recStream) { recStream.getTracks().forEach(t => t.stop()); recStream = null; }
+    recUIReset();
+    const type = (recRecorder && recRecorder.mimeType) || recMime || "audio/webm";
+    const blob = new Blob(recChunks, { type });
+    recChunks = [];
+    if (blob.size < 800 || recSec < 1) {   // 太短视为误触
+      setText("idea-interim", "录音太短, 已丢弃");
+      return;
+    }
+    await idbPut({
+      id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+      blob, mime: type, dur: recSec,
+      categoryId: ideaCat, text: "", createdAt: Date.now(),
+    });
+    setText("idea-interim", "语音已保存 (" + recSec + "s · " + ideaCatOf(ideaCat).name + ")");
+    await ideaRefreshData();
+  };
+  recRecorder.start();
+  recActive = true;
+  recStartAt = Date.now();
+  $("idea-mic").classList.add("is-listening");
+  $("idea-mic-t").textContent = "⏹ 停止 · 0s";
+  recTimer = setInterval(() => {
+    recSec = Math.round((Date.now() - recStartAt) / 1000);
+    $("idea-mic-t").textContent = "⏹ 停止 · " + recSec + "s";
+  }, 250);
+}
+/* ── 语音回放 (单实例; 进度条随 timeupdate) ── */
+function ideaPlayReset(id) {
+  const btn = document.querySelector('.voice-btn[data-id="' + id + '"]');
+  if (btn) { btn.textContent = "▶"; btn.classList.remove("playing"); }
+  const fill = $("vf-" + id);
+  if (fill && playId === id) fill.style.width = "0%";
+}
+function ideaVoiceToggle(id) {
+  if (playId === id && playAudio) {          // 再点 = 暂停
+    playAudio.pause();
+    playAudio.onended = playAudio.ontimeupdate = null;
+    playAudio = null; playId = null;
+    ideaPlayReset(id);
+    return;
+  }
+  if (playAudio) {                            // 切换播放前停旧的
+    const old = playId;
+    playAudio.onended = playAudio.ontimeupdate = null;
+    playAudio.pause();
+    playAudio = null; playId = null;
+    ideaPlayReset(old);
+  }
+  const memo = voiceItems.find(x => x.id === id);
+  if (!memo) return;
+  playId = id;
+  playAudio = new Audio(URL.createObjectURL(memo.blob));
+  const btn = document.querySelector('.voice-btn[data-id="' + id + '"]');
+  if (btn) { btn.textContent = "⏸"; btn.classList.add("playing"); }
+  playAudio.ontimeupdate = () => {
+    if (!playAudio) return;
+    const d = isFinite(playAudio.duration) && playAudio.duration > 0 ? playAudio.duration : memo.dur;
+    const pct = Math.min(100, playAudio.currentTime / d * 100);
+    const fill = $("vf-" + id);
+    if (fill) fill.style.width = pct.toFixed(1) + "%";
+  };
+  playAudio.onended = () => {
+    ideaPlayReset(id);
+    playAudio = null; playId = null;
+  };
+  playAudio.play().catch(() => {
+    ideaPlayReset(id);
+    playAudio = null; playId = null;
+    setText("idea-interim", "播放失败");
+  });
+}
+function ideaRecTeardown() {   // 离开面板: 录音中停止保存, 播放停掉
+  if (recActive) ideaRecStop();
+  if (playAudio) {
+    playAudio.onended = playAudio.ontimeupdate = null;
+    playAudio.pause(); playAudio = null; playId = null;
   }
 }
 function ideaSubmit() {
@@ -1543,7 +1682,7 @@ function ideaSubmit() {
   setText("idea-interim", "");
   ideaFilter = "all";
   $("idea-search").value = "";
-  ideaRefreshAll();
+  ideaRefreshData();
 }
 
 /* ── 想法面板事件绑定 (一次) ── */
@@ -1555,52 +1694,78 @@ $("idea-save").addEventListener("click", ideaSubmit);
 $("idea-text").addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); ideaSubmit(); }
 });
-$("idea-mic").addEventListener("click", ideaMicToggle);
+$("idea-mic").addEventListener("click", ideaRecToggle);
 $("idea-filter").addEventListener("click", e => {
   const b = e.target.closest(".mini-chip");
   if (b) { ideaFilter = b.dataset.f; ideaEditId = null; renderIdeaFilter(); renderIdeaList(); }
 });
 $("idea-search").addEventListener("input", renderIdeaList);
 $("idea-clear").addEventListener("click", () => {
-  if (!ideaItems.length) return;
-  if (confirm("确认清空全部 " + ideaItems.length + " 条灵感？此操作不可恢复。")) {
-    ideaItems = []; ideaEditId = null; ideaPersist(); ideaRefreshAll();
+  const total = ideaItems.length + voiceItems.length;
+  if (!total) return;
+  if (confirm("确认清空全部 " + total + " 条灵感（含语音）？此操作不可恢复。")) {
+    ideaItems = []; ideaEditId = null; ideaPersist();
+    Promise.all(voiceItems.map(m => idbDel(m.id))).then(() => ideaRefreshData());
   }
 });
 $("idea-list").addEventListener("click", e => {
   const b = e.target.closest("button");
   if (!b) return;
-  const id = b.dataset.id, act = b.dataset.act;
-  if (act === "edit") {
+  const id = b.dataset.id, act = b.dataset.act, kind = b.dataset.kind || "text";
+  if (act === "voice") {
+    ideaVoiceToggle(id);
+  } else if (act === "edit") {
     ideaEditId = id; renderIdeaList();
   } else if (act === "esave") {
-    const it = ideaItems.find(x => x.id === id), ta = $("ie-" + id);
-    if (it && ta && ta.value.trim()) { it.text = ta.value.trim(); ideaPersist(); }
-    ideaEditId = null; renderIdeaList();
+    const ta = $("ie-" + id), txt = ta ? ta.value.trim() : "";
+    if (kind === "audio") {
+      const m = voiceItems.find(x => x.id === id);
+      if (m && ta) { m.text = txt; idbPut(m); }   // 语音备注可空
+    } else {
+      const it = ideaItems.find(x => x.id === id);
+      if (it && ta && txt) { it.text = txt; ideaPersist(); }
+    }
+    ideaEditId = null; ideaRefreshAll();
   } else if (act === "ecancel") {
     ideaEditId = null; renderIdeaList();
   } else if (act === "del") {
-    ideaItems = ideaItems.filter(x => x.id !== id);
-    if (ideaEditId === id) ideaEditId = null;
-    ideaPersist(); ideaRefreshAll();
+    if (kind === "audio") {
+      idbDel(id).then(() => ideaRefreshData());
+    } else {
+      ideaItems = ideaItems.filter(x => x.id !== id);
+      if (ideaEditId === id) ideaEditId = null;
+      ideaPersist(); ideaRefreshData();
+    }
   } else if (act === "mc") {
-    const it = ideaItems.find(x => x.id === id);
-    if (it) { it.categoryId = b.dataset.mc; ideaPersist(); renderIdeaList(); }
+    if (kind === "audio") {
+      const m = voiceItems.find(x => x.id === id);
+      if (m) { m.categoryId = b.dataset.mc; idbPut(m).then(() => ideaRefreshData()); }
+    } else {
+      const it = ideaItems.find(x => x.id === id);
+      if (it) { it.categoryId = b.dataset.mc; ideaPersist(); ideaRefreshAll(); }
+    }
   }
 });
 PANEL_OPENERS.idea = {
   open() {
-    if (!ideaInited) { ideaMicInit(); ideaInited = true; }
-    ideaLoad();
     ideaEditId = null;
-    ideaRefreshAll();
+    ideaRefreshData();
+    if (!ideaInited) {
+      if (!navigator.mediaDevices || !window.MediaRecorder) {
+        $("idea-mic").disabled = true;
+        $("idea-mic").classList.add("is-disabled");
+        $("idea-mic-t").textContent = "录音不可用";
+      }
+      ideaInited = true;
+    }
     clearInterval(ideaClockTimer);
     ideaClockTimer = setInterval(ideaMetaTick, 30000);
+    ideaMetaTick();
     $("idea-text").focus();
   },
   close() {
     clearInterval(ideaClockTimer); ideaClockTimer = 0;
-    if (recogOn) { try { recog.stop(); } catch (e) {} }
+    ideaRecTeardown();
   }
 };
 
