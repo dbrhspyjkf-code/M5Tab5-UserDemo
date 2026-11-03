@@ -11,11 +11,11 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     width: 100%; height: 100%; background: #000; overflow: hidden;
-    /* position:fixed 断掉根滚动源: iOS 触摸回弹 (rubber-band) 需要
-     * 可滚动的 root scroller, fixed 后整页晃动失去物理基础。
-     * inset:0 之外再给显式 width/height —— iOS 全屏切换时 fixed+inset
-     * 的尺寸解析有坑 (底部留白, 2026-11-03 iPad 实测), 双保险 */
-    position: fixed; inset: 0;
+    /* 不用 position:fixed: macOS Chrome 全屏切换时 fixed 元素不重排
+     * (高度停在上一个状态, 2026-11-03 用户截图实锤)。absolute 挂
+     * ICB 同样铺满, 回弹由 overflow:hidden + touchmove preventDefault
+     * (shell.js) 负责抑制 */
+    position: absolute; inset: 0;
     touch-action: none; overscroll-behavior: none;
     font: 14px/1.5 -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
   }

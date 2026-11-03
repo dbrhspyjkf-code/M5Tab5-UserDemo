@@ -198,10 +198,11 @@
     clampBackBtn();
   }
   window.addEventListener("resize", fit);
-  // iPad 全屏切换不派发 resize (iOS 实测) —— 补 fullscreenchange 与
-  // visualViewport 两条事件线, 触发 fit 重算 (contain 模式靠它; fill 模式
-  // CSS 100% 自跟随, 这里主要是把返回键 clamp 进新视口)
-  document.addEventListener("fullscreenchange", fit);
+  // 全屏切换/视口变化可能晚于事件到达才定型 (fullscreenchange 触发瞬间
+  // innerHeight 还是旧值 → 钉了旧尺寸), 延时多次重钉赢时序竞争
+  document.addEventListener("fullscreenchange", () => {
+    [0, 150, 400, 900].forEach(ms => setTimeout(fit, ms));
+  });
   if (window.visualViewport) window.visualViewport.addEventListener("resize", fit);
   fit();
 
@@ -457,6 +458,18 @@
     if (document.fullscreenElement) document.exitFullscreen && document.exitFullscreen();
     else if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
   }
+
+  /* ---------- 版本戳: 左下角常驻 (排障时一眼确认加载的构建) ---------- */
+  try {
+    if (window.TAB5_BUILD) {
+      const stamp = document.createElement("div");
+      stamp.textContent = "v" + window.TAB5_BUILD;
+      stamp.style.cssText =
+        "position:fixed;left:4px;bottom:2px;z-index:60;color:#fff;opacity:.22;" +
+        "font:10px ui-monospace,Menlo,monospace;pointer-events:none;";
+      document.body.appendChild(stamp);
+    }
+  } catch (e) {}
 
   /* ---------- 调试浮层 (?debug=1): 实时显示 worker uart 日志 ---------- */
   if (location.search.includes("debug")) {
