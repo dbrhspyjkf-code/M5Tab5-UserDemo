@@ -54,9 +54,8 @@ bool download(const std::string& url, void* buf)
     char* dst = const_cast<char*>(reinterpret_cast<const char*>(dsc->data));
 
 #if defined(PLATFORM_BUILD_WEB)
-    // web: 拉 JPEG (~1/10 流量) → worker OffscreenCanvas 解码 → RGB565 写入
-    // 回退简案 (用户指定): 直接拉原始 RGB565 —— 无解码/无 SAB/无消息,
-    // 仅 x-user-defined 字节通道 (WebKit sync XHR 无 arraybuffer)
+    // web: 直接拉原始 RGB565 (无解码), 经 web_fetch.cpp S4 通道 ——
+    // 命令区(wasm 线性内存) → proxy-main lv_timer 转发 → 页面原生 fetch
     int n = web_fetch_bin(url.c_str(), (uint8_t*)dst, bytes);
     GetHAL()->uartMonitorSend("rgb n=" + std::to_string(n) + " want=" + std::to_string(bytes));
     return n == (int)bytes;

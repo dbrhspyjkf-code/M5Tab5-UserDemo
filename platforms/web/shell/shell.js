@@ -86,6 +86,7 @@
   let SAB = null, U32 = null, U16 = null;
 
   let theWorker = null;
+  let heapSAB = null, heapCmd = 0, heapHandled = 0;  // wasm 堆引用+命令区 (二进制拉取)
 
   const _Worker = window.Worker;
   window.Worker = class extends _Worker {
@@ -99,21 +100,13 @@
           return;
         }
         if (d && d.__tab5radio) { radioCmd(d.__tab5radio); return; }
-        if (d && d.__tab5bin) {
-          (window.__tab5uart = window.__tab5uart || []).push("bin-recv");
-          const p = d.__tab5bin, st = new Int32Array(p.sab, 0, 2);
-          const fail = c => { Atomics.store(st, 0, c); Atomics.notify(st, 0); };
-          fetch(p.url, {credentials: "same-origin"}).then(r => {
-            if (!r.ok) { fail(r.status || 3); return null; }
-            return r.arrayBuffer();
-          }).then(b => {
-            if (!b) return;
-            const n = Math.min(b.byteLength, p.sab.byteLength - 8);
-            new Uint8Array(p.sab, 8, n).set(new Uint8Array(b));
-            Atomics.store(st, 1, n);
-            Atomics.store(st, 0, 1);
-            Atomics.notify(st, 0);
-          }).catch(e => { console.warn("[tab5web] bin fetch:", e); fail(2); });
+        if (d && d.__tab5heap) {
+          // 二进制拉取通道 (web_fetch.cpp): 收到 wasm 堆 SAB + 命令区地址。
+          // 跑 main/LVGL 的 em-pthread 事件循环永不泵动 (futex 阻塞 sleep),
+          // 页→worker 消息是死路 —— 所以回包不走消息, 由本文件轮询命令区
+          // → 原生 fetch → 直写共享堆。
+          heapSAB = d.__tab5heap.sab;
+          heapCmd = d.__tab5heap.cmd;
           return;
         }
         if (d && d.__tab5jpg) {
@@ -270,30 +263,38 @@
     pushEvent(EV.KEYUP, 0, code);
   });
 
-  /* ---------- SAB fetch 服务者 (零消息; CriOS pthread→page 消息不到达) */
+  /* ---------- 二进制拉取服务 (web_fetch.cpp S4 通道) ----------
+   * 命令区在 wasm 线性内存 (pthread 构建 = shared memory, 页面直读直写):
+   *   u32[0]=want  [1]=status(0处理中/1ok/2err/3弃单/4写入中) [2]=len [3]=out [4]=cap
+   *   byte+24 url (z 串)
+   * 请求方 (图库 pthread) 填命令区自旋; 本服务 10ms 轮询 → 原生 fetch →
+   * CAS 抢写权 (0→4) → 直写堆 out 地址。页面 fetch 二进制安全, 带会话
+   * cookie; 30s 未取回由请求方弃单。
+   */
   setInterval(() => {
-    if (!SAB) return;
-    const BASE = 4272 + 1280 * 720 * 2;
-    const u32 = new Uint32Array(SAB, BASE, 4);
-    if (Atomics.load(u32, 1) !== 1) return;
-    const seq = Atomics.load(u32, 0);
-    if (window.__tab5fs === seq) return;         // 已处理
-    window.__tab5fs = seq;
-    const url = String.fromCharCode(...new Uint8Array(SAB, BASE + 16, 192)
-      .subarray(0, new Uint8Array(SAB, BASE + 16, 192).indexOf(0)));
-    fetch(url, {credentials: "same-origin"}).then(r => r.ok ? r.arrayBuffer() : null).then(b => {
-      const dataBuf = new Uint8Array(SAB, BASE + 208);
-      if (b) {
-        const n = Math.min(b.byteLength, dataBuf.length);
-        dataBuf.set(new Uint8Array(b).subarray(0, n));
-        Atomics.store(u32, 3, n);
-        Atomics.store(u32, 2, 1);
-      } else {
-        Atomics.store(u32, 2, 2);
-      }
-      Atomics.notify(u32, 2);
-    }).catch(() => { Atomics.store(u32, 2, 2); Atomics.notify(u32, 2); });
-  }, 30);
+    if (!heapSAB) return;
+    const u32 = new Uint32Array(heapSAB, heapCmd, 6);
+    const want = Atomics.load(u32, 0);
+    if (want === 0 || want === heapHandled) return;
+    if (Atomics.load(u32, 1) !== 0) { heapHandled = want; return; }  // 3=弃单残留
+    heapHandled = want;
+    const ub = new Uint8Array(heapSAB, heapCmd + 24, 192);
+    let url = "";
+    for (let i = 0; i < 192 && ub[i]; i++) url += String.fromCharCode(ub[i]);
+    const out = Atomics.load(u32, 3), cap = Atomics.load(u32, 4);
+    (window.__tab5uart = window.__tab5uart || []).push("binS " + want + " " + url.slice(0, 60));
+    fetch(url, {credentials: "same-origin"}).then(r => {
+      if (!r.ok) { if (Atomics.compareExchange(u32, 1, 0, 2) === 0) return; return null; }
+      return r.arrayBuffer().then(b => {
+        const n = Math.min(b.byteLength | 0, cap | 0);
+        if (Atomics.compareExchange(u32, 1, 0, 4) !== 0) return;   // 已弃单, 不落笔
+        new Uint8Array(heapSAB, out, n).set(new Uint8Array(b, 0, n));
+        Atomics.store(u32, 2, n);
+        Atomics.store(u32, 1, 1);
+        (window.__tab5uart = window.__tab5uart || []).push("binS ok n=" + n);
+      });
+    }).catch(() => { Atomics.compareExchange(u32, 1, 0, 2); });
+  }, 10);
 
   /* ---------- rAF 绘制: 读 seq 配对的 bbox → RGBA → canvas ---------- */
   let lastSeq = 0;

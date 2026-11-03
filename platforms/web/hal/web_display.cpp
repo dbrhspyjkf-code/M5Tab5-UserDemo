@@ -62,7 +62,7 @@ static constexpr int SAB_SIZE =
 /* -------------------------- SAB 建立与布局上报 ----------------------------- */
 
 EM_JS(void, sab_init_and_post, (), {
-    const SIZE = 4272 + 1280 * 720 * 2 + 16 + 192 + 2101248;  // +fetch 命令区
+    const SIZE = 4272 + 1280 * 720 * 2;
     const sab = new SharedArrayBuffer(SIZE);
     const u32 = new Uint32Array(sab);
     u32[0] = 0x54414235;  // 'TAB5'

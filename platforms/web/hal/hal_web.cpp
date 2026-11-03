@@ -111,6 +111,10 @@ static std::string rewrite_url(const std::string& url)
     return url;
 }
 
+namespace webui {
+std::string gateway_url(const std::string& device_url) { return rewrite_url(device_url); }
+}  // namespace webui
+
 static std::string flatten_headers(const std::vector<std::pair<std::string, std::string>>& headers)
 {
     std::string out;
@@ -323,6 +327,7 @@ void HalWeb::lvgl_init()
     lv_group_set_default(lv_group_create());
     lv_tick_set_cb([]() -> uint32_t { return webui::steadyMillis(); });
     webui::lvgl_display_init();
+    webui::web_fetch_bin_init();   // 二进制拉取通道 (web_fetch.cpp)
 }
 
 /* -------------------------------------------------------------------------- */

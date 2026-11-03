@@ -7,6 +7,14 @@
 
 namespace webui {
 void sleepMs(uint32_t ms);
+uint32_t steadyMillis();
+
+// 设备侧绝对 URL → 同源网关路径 (/gw/<port>/...; 腾讯行情 → /gw/ext/...)
+std::string gateway_url(const std::string& device_url);
+
+// 二进制拉取通道 (web_fetch.cpp): 注册页面回包 listener + 转发轮询 lv_timer。
+// 在 lvgl_init (LVGL 上下文) 调用。
+void web_fetch_bin_init();
 }  // namespace webui
 
 class HalWeb : public hal::HalBase {
