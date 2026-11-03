@@ -363,7 +363,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
   box-shadow:0 0 0 4px var(--iaccent-soft); }
 #p-idea .record-actions { display:flex; gap:12px; margin-top:14px; }
 #p-idea .mic-button { position:relative; flex:1; display:flex; align-items:center;
-  justify-content:center; gap:12px; height:64px; border-radius:12px;
+  justify-content:center; gap:12px; height:128px; border-radius:12px;
   border:1px solid var(--iborder-strong); background:var(--ibg-2);
   color:var(--itext-0); font-size:17px; font-weight:600; font-family:inherit;
   transition:transform .1s ease, background .15s ease, border-color .15s ease; }
@@ -480,7 +480,6 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 #p-idea .link-button.danger:active { background:rgba(232,93,117,.12); }
 
 #p-idea .link-button:disabled { opacity:.4; cursor:not-allowed; }
-#p-idea .idea-close { position:absolute; right:14px; top:14px; z-index:5; }
 @media (max-width:900px) {
   #p-idea .idea-main { grid-template-columns:1fr; overflow-y:auto; }
   #p-idea .day-cards { grid-template-columns:1fr; }
@@ -505,7 +504,9 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 #p-idea .voice-fill { height:100%; width:0%; border-radius:4px; background:var(--iaccent); }
 #p-idea .voice-dur { flex:none; color:var(--itext-2); font-size:13px;
   font-variant-numeric:tabular-nums; }
-#p-idea .idea-close { position:absolute; right:14px; top:14px; z-index:5; }
+#p-idea .idea-close { position:absolute; right:16px; top:50%;
+  transform:translateY(-50%); z-index:5; }
+#p-idea .app-header { padding-right:72px; }   /* 关闭钮让位, 不压「灵感总数」 */
 @media (max-width:900px) {
   #p-idea .idea-main { grid-template-columns:1fr; overflow-y:auto; }
   #p-idea .day-cards { grid-template-columns:1fr; }
