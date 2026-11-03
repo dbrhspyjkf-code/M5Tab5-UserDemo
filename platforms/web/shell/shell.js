@@ -99,6 +99,23 @@
           return;
         }
         if (d && d.__tab5radio) { radioCmd(d.__tab5radio); return; }
+        if (d && d.__tab5bin) {
+          (window.__tab5uart = window.__tab5uart || []).push("bin-recv");
+          const p = d.__tab5bin, st = new Int32Array(p.sab, 0, 2);
+          const fail = c => { Atomics.store(st, 0, c); Atomics.notify(st, 0); };
+          fetch(p.url, {credentials: "same-origin"}).then(r => {
+            if (!r.ok) { fail(r.status || 3); return null; }
+            return r.arrayBuffer();
+          }).then(b => {
+            if (!b) return;
+            const n = Math.min(b.byteLength, p.sab.byteLength - 8);
+            new Uint8Array(p.sab, 8, n).set(new Uint8Array(b));
+            Atomics.store(st, 1, n);
+            Atomics.store(st, 0, 1);
+            Atomics.notify(st, 0);
+          }).catch(e => { console.warn("[tab5web] bin fetch:", e); fail(2); });
+          return;
+        }
         if (d && d.__tab5jpg) {
           (window.__tab5uart = window.__tab5uart || []).push("jpg-main-recv");
           try { decodeJpgForWorker(d.__tab5jpg); } catch (e) { console.warn(e); }

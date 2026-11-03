@@ -11,18 +11,18 @@
 // (静默退回文本, JPEG 字节被文本解码绞碎 —— iPad px=-1 真凶)。
 // x-user-defined: 每字节映射为 U+0000..U+00FF, charCodeAt 即原字节。
 EM_JS(int, web_fetch_bin_js, (const char* url, uint8_t* out, int cap), {
-    try {
-        const xhr = new XMLHttpRequest();
-        xhr.open("GET", UTF8ToString(url), false);
-        xhr.overrideMimeType("text/plain; charset=x-user-defined");
-        xhr.timeout = 30000;
-        xhr.send(null);
-        if (xhr.status !== 200) return -xhr.status;
-        const t = xhr.responseText;
-        const n = Math.min(t.length, cap);
-        for (let i = 0; i < n; i++) HEAPU8[out + i] = t.charCodeAt(i) & 0xFF;
-        return n;
-    } catch (e) { return -1; }
+    // 主线程原生 fetch + SAB 回传: 异步/二进制安全/无 sync XHR 限制
+    // (CriOS 对大块 sync XHR 异常 → 1.8MB 大图 n=-1 实锤)
+    const sab = new SharedArrayBuffer(8 + cap);
+    const st = new Int32Array(sab, 0, 2);   // [0]=0pending/1ok/2http码, [1]=len
+    postMessage({__tab5bin: {sab: sab, url: UTF8ToString(url)}});
+    const r = Atomics.wait(st, 0, 0, 30000);
+    if (r !== "ok") return -1;
+    const code = Atomics.load(st, 0);
+    if (code !== 1) return -code;
+    const n = Math.min(Atomics.load(st, 1), cap);
+    HEAPU8.set(new Uint8Array(sab, 8, n), out);
+    return n;
 })
 
 extern "C" int web_fetch_bin(const char* url, uint8_t* out, int cap)
