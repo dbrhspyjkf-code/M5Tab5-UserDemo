@@ -274,6 +274,10 @@ void AppHome::onOpen()
     lv_obj_set_flex_flow(sbox, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(sbox, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(sbox, 6, 0);
+    // 不裁切: LVGL9 默认裁掉超出 sbox 的子内容 —— 长句底部被 150px 盒硬切
+    // (2026-11-03 用户实锤)。放开后极端长句向上/下溢出到天气与 IPO 的
+    // 空余区 (IPO/天气常为空), 而不是丢内容。
+    lv_obj_add_flag(sbox, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_clear_flag(sbox, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
     _hero_sent_en = lv_label_create(sbox);
@@ -517,9 +521,12 @@ void AppHome::onOpen()
             _dash_h_val[i] = mk_lbl(card, zh_font_lg(), theme::cur().text_hi, "-",
                                     LV_ALIGN_TOP_LEFT, cx, cy + 24);
         }
-        // 右下角数据时间 (updated_at 的 HH:MM, 数据新鲜度一眼可见)
+        // 数据时间 (updated_at 的 HH:MM, 数据新鲜度一眼可见) — 右上角:
+        // 右下角曾与睡眠值 (4x2 格第 8 格恰在右下) 重叠 (2026-11-03 用户
+        // 实锤); 右上角与 OPi 卡右上角运行时长同款式, x 范围与"血氧"标签
+        // (641..683) 不相交 (time ≈738..783)
         _dash_h_time = mk_lbl(card, zh_font_sm(), theme::cur().text_dim, "--:--",
-                              LV_ALIGN_BOTTOM_RIGHT, -24, -6);
+                              LV_ALIGN_TOP_RIGHT, -24, 2);
         // 长按打开健康 app (app_installer 注入回调; 新闻卡长按同款接法)
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
@@ -764,6 +771,19 @@ void AppHome::onRunning()
         if (_dash_sent_en && !_dash_sent_en_txt.empty()
             && _dash_sent_en_txt.compare(lv_label_get_text(_dash_sent_en)) != 0)
             lv_label_set_text(_dash_sent_en, _dash_sent_en_txt.c_str());
+        // 长句自动降档 lg(30px)→md(24px): 按 352 宽估算行数 (en ~21 字符/
+        // 行, cn ~12 字/行), 估算 ≥5 行 (150px 盒只装得下 4 行) 即降档;
+        // 极端句由 OVERFLOW_VISIBLE 溢出到空余区兜底, 不截内容 (2026-11-03)
+        {
+            const int en_lines = ((int)_hero_sent_en_txt.size() + 20) / 21;
+            const int cn_lines = ((int)(_hero_sent_cn_txt.size() / 3) + 11) / 12;
+            const bool long_sent = en_lines + cn_lines > 4;
+            const lv_font_t* want = long_sent ? zh_font_md() : zh_font_lg();
+            if (_hero_sent_en && lv_obj_get_style_text_font(_hero_sent_en, 0) != want)
+                lv_obj_set_style_text_font(_hero_sent_en, want, 0);
+            if (_hero_sent_cn && lv_obj_get_style_text_font(_hero_sent_cn, 0) != want)
+                lv_obj_set_style_text_font(_hero_sent_cn, want, 0);
+        }
         if (_hero_sent_en && _hero_sent_en_txt.compare(lv_label_get_text(_hero_sent_en)) != 0)
             lv_label_set_text(_hero_sent_en, _hero_sent_en_txt.c_str());
         if (_hero_sent_cn && _hero_sent_cn_txt.compare(lv_label_get_text(_hero_sent_cn)) != 0)
