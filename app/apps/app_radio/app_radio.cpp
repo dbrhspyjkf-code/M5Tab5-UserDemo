@@ -776,6 +776,9 @@ void AppRadio::onOpen()
     // 输出选择恢复(NVS; 只记选择, 不自动恢复播放 —— 按播放才播)
     _output_sel = atoi(GetHAL()->getConfig("radio_out", "0").c_str());
     if (_output_sel < 0 || _output_sel >= kOutputCount) _output_sel = 0;
+#ifdef PLATFORM_BUILD_WEB
+    _output_sel = 0;   // web: 固定浏览器本机播放
+#endif
 
     _scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
@@ -847,6 +850,10 @@ void AppRadio::onOpen()
         lv_obj_align(tl, LV_ALIGN_LEFT_MID, 48, 0);
         lv_obj_set_user_data(_out_chip, tl);
     }
+#ifdef PLATFORM_BUILD_WEB
+    // web 版只在浏览器播放: 隐藏输出选择 chip (真机 Sonos/HomePod 转投不适用)
+    lv_obj_add_flag(_out_chip, LV_OBJ_FLAG_HIDDEN);
+#endif
     lv_obj_add_event_cb(_out_chip, _outChip_cb, LV_EVENT_CLICKED, this);
     _refreshOutputUi();
 
