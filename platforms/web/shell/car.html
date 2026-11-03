@@ -14,7 +14,7 @@
     <section class="card hero" id="hero">
       <div class="clock" id="clock">--:--<span class="sec">:--</span></div>
       <div class="hero-sub" id="date">--</div>
-      <div class="hero-sub" id="lunar" style="font-size:15px;">农历 --</div>
+      <div class="hero-sub" id="lunar">农历 --</div>
       <div class="wx"><span id="wx-t">--°C</span><span class="cond" id="wx-c"></span></div>
       <div class="rule"></div>
       <div class="sent" id="sent" title="点击换一句">
@@ -41,7 +41,7 @@
             <div class="val" id="glm">--</div>
             <div class="sub dim" id="glm-sub"></div>
           </div>
-          <div class="val" id="ds" style="flex:none;">--</div>
+          <div class="val" id="ds">--</div>
         </div>
       </div>
 
@@ -73,19 +73,6 @@
           <span class="fr" id="opi-up">--</span></div>
         <div class="body ogrid" id="ogrid"></div>
       </div>
-
-      <div class="card c1">
-        <div class="head"><span class="idx">06</span><span class="nm">收音机</span>
-          <span class="fr" id="r-stat">加载电台…</span></div>
-        <div class="body">
-          <div class="chips" id="chips"></div>
-          <div class="rctrl">
-            <button class="pbtn" id="r-play" title="播放/暂停">⏵</button>
-            <input class="rvol" id="r-vol" type="range" min="0" max="100" value="80">
-            <span class="rstat" id="r-cur">点击电台开始播放</span>
-          </div>
-        </div>
-      </div>
     </section>
   </div>
 
@@ -94,7 +81,7 @@
     <button class="live" data-act="home">主页</button>
     <button data-panel="ha">家居</button>
     <button data-panel="fin">金融</button>
-    <button class="live" data-act="radio">收音机</button>
+    <button data-panel="radio">收音机</button>
     <button data-panel="timer">计时器</button>
     <button data-panel="tools">工具</button>
   </nav>
@@ -104,19 +91,19 @@
 <div class="panel" id="p-ha">
   <div class="p-head"><span class="p-title">智能家居</span><span class="p-sub" id="ha-sub"></span>
     <button class="p-close" data-close="1">✕</button></div>
-  <div class="p-body" id="ha-body"><div class="dim" style="text-align:center;padding:48px 0;">加载中…</div></div>
+  <div class="p-body" id="ha-body"><div class="dim ph">加载中…</div></div>
 </div>
 
 <div class="panel" id="p-fin">
   <div class="p-head"><span class="p-title">金融行情</span><span class="p-sub" id="fin-sub"></span>
     <button class="p-close" data-close="1">✕</button></div>
   <div class="p-body">
-    <div class="sec" style="margin-top:2px;">自选股（点击开走势图）</div>
+    <div class="sec">自选股（点击开走势图）</div>
     <div class="fgrid" id="fin-grid"></div>
     <div class="sec">指数看板</div>
     <div class="fgrid" id="idx-grid"></div>
     <div id="chart-wrap" hidden>
-      <div class="p-tabs" style="margin-top:18px;">
+      <div class="p-tabs">
         <button class="ptab on" data-cv="min">分时</button>
         <button class="ptab" data-cv="day">日K</button>
         <span id="chart-title"></span>
@@ -150,8 +137,27 @@
   </div>
 </div>
 
+<div class="panel" id="p-radio">
+  <div class="p-head"><span class="p-title">收音机</span><span class="p-sub" id="r-stat">加载电台…</span>
+    <button class="p-close" data-close="1">✕</button></div>
+  <div class="p-body">
+    <div class="vu" id="vu">
+      <div class="vcol"><div class="vtrack"><div class="vfill" id="vu-b"></div></div><span>低</span></div>
+      <div class="vcol"><div class="vtrack"><div class="vfill" id="vu-m"></div></div><span>中</span></div>
+      <div class="vcol"><div class="vtrack"><div class="vfill" id="vu-t"></div></div><span>高</span></div>
+    </div>
+    <div class="rstat" id="r-cur">点击电台开始播放</div>
+    <div class="rctrl">
+      <button class="pbtn" id="r-play" title="播放/暂停">⏵</button>
+      <input class="rvol" id="r-vol" type="range" min="0" max="100" value="80">
+    </div>
+    <div class="sec">电台</div>
+    <div class="chips" id="chips"></div>
+  </div>
+</div>
+
 <div class="panel" id="p-tools">
-  <div class="p-head"><button class="p-close" id="tool-back" hidden style="margin-left:0;">‹</button>
+  <div class="p-head"><button class="p-close" id="tool-back" hidden>‹</button>
     <span class="p-title" id="tool-title">工具</span><span class="p-sub" id="tool-sub"></span>
     <button class="p-close" data-close="1">✕</button></div>
   <div class="p-body">

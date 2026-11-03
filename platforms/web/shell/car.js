@@ -422,6 +422,52 @@ function playStation(key) {
     $("r-play").textContent = "⏵";
   });
 }
+/* ── VU 电平: relay /radio/<key>/lv 8Hz "b m t\n" (0-100, 三频段 RMS) ──
+   fetch 流式逐行读; 4s 无数据 (个别 WebView 流式 fetch 受限) 降级 CSS 伪动画 */
+let lvAbort = null, lvFallbackTimer = 0, lvGotData = false;
+function stopLevelStream() {
+  if (lvAbort) { lvAbort.abort(); lvAbort = null; }
+  clearTimeout(lvFallbackTimer);
+  $("vu").classList.remove("fake");
+  ["vu-b", "vu-m", "vu-t"].forEach(id => { $(id).style.height = "0%"; });
+}
+function startLevelStream(key) {
+  stopLevelStream();
+  if (!key) return;
+  lvGotData = false;
+  lvFallbackTimer = setTimeout(() => {
+    if (!lvGotData && wantPlay) $("vu").classList.add("fake");
+  }, 4000);
+  lvAbort = new AbortController();
+  const sig = lvAbort.signal;
+  (async () => {
+    const r = await fetch("/gw/8769/radio/" + key + "/lv",
+                          { signal: sig, credentials: "same-origin" });
+    if (!r.ok || !r.body) throw new Error("lv " + r.status);
+    const rd = r.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const p = buf.slice(0, nl).trim().split(" ");
+        buf = buf.slice(nl + 1);
+        if (p.length < 3) continue;
+        lvGotData = true;
+        $("vu").classList.remove("fake");
+        const h = v => Math.max(4, Math.min(100, parseInt(v, 10) || 0)) + "%";
+        $("vu-b").style.height = h(p[0]);
+        $("vu-m").style.height = h(p[1]);
+        $("vu-t").style.height = h(p[2]);
+      }
+    }
+  })().catch(err => {
+    if (sig.aborted) return;
+    if (!lvGotData && wantPlay) $("vu").classList.add("fake");
+  });
+}
 $("r-play").addEventListener("click", () => {
   if (!stations.length) return;
   if (!audio.paused) {          // 暂停 (流停, 与设备"彻底停止=页内暂停"一致)
@@ -436,12 +482,15 @@ audio.addEventListener("playing", () => {
   const st = stations.find(s => s.key === curKey);
   setText("r-cur", st ? st.name : "");
   $("r-play").textContent = "⏸";
+  startLevelStream(curKey);
 });
 audio.addEventListener("pause", () => {
   setText("r-stat", "已暂停");
   $("r-play").textContent = "⏵";
+  stopLevelStream();
 });
 audio.addEventListener("error", () => {
+  stopLevelStream();
   if (!wantPlay) return;
   wantPlay = false;
   setText("r-stat", "连接失败");
@@ -451,6 +500,7 @@ $("r-vol").addEventListener("input", e => {
   audio.volume = vol / 100;
   try { localStorage.setItem("car_vol", String(vol)); } catch (err) {}
 });
+/* 注意: PANEL_OPENERS.radio 的注册在文件后部 V2 通用段之后 (const TDZ) */
 
 /* ════ 底部按钮 (v2: 面板 + 滚动) ════ */
 $("nav").addEventListener("click", e => {
@@ -458,7 +508,6 @@ $("nav").addEventListener("click", e => {
   if (!b) return;
   const act = b.dataset.act;
   if (act === "home") window.scrollTo({ top: 0, behavior: "smooth" });
-  else if (act === "radio") $("chips").closest(".card").scrollIntoView({ behavior: "smooth", block: "center" });
   else if (b.dataset.panel) openPanel(b.dataset.panel);
 });
 $("btn-theme").addEventListener("click", () => {
@@ -547,35 +596,45 @@ function haStateTxt(e) {
   if (s === "unavailable" || s === "unknown") return "不可用";
   return s;
 }
-function haRowHTML(e) {
+function haCardHTML(e) {
   const dom = e.entity_id.split(".")[0], on = e.state === "on",
         bad = e.state === "unavailable" || e.state === "unknown";
-  let ctrl = "";
-  if (bad) ctrl = "";
-  else if (dom === "cover")
-    ctrl = '<button class="ha-btn" data-svc="open_cover">开</button>' +
+  const name = '<div class="fnm"><span class="fn">' + esc(haName(e)) + "</span>";
+  if (bad)
+    return '<div class="fcard hacard bad" data-eid="' + esc(e.entity_id) + '">' + name +
+           '<span class="fc">不可用</span></div></div>';
+  if (dom === "cover") {
+    const st = e.state === "open" ? "开" : e.state === "closed" ? "关" : esc(e.state);
+    return '<div class="fcard hacard" data-eid="' + esc(e.entity_id) + '">' + name +
+           '<span class="fc">' + st + "</span></div>" +
+           '<div class="ha-acts">' +
+           '<button class="ha-btn" data-svc="open_cover">开</button>' +
            '<button class="ha-btn" data-svc="close_cover">关</button>' +
-           '<button class="ha-btn" data-svc="stop_cover">停</button>';
-  else if (dom === "climate") {
+           '<button class="ha-btn" data-svc="stop_cover">停</button></div></div>';
+  }
+  if (dom === "climate") {
     const at = e.attributes || {};
-    const cur = (at.current_temperature != null) ? Math.round(at.current_temperature) + "℃ " : "";
-    ctrl = '<button class="ha-btn" data-act="t-" style="min-width:40px;">−</button>' +
-           '<span class="ha-temp">' + cur + Math.round(at.temperature || 0) + "℃</span>" +
-           '<button class="ha-btn" data-act="t+" style="min-width:40px;">＋</button>' +
+    return '<div class="fcard hacard" data-eid="' + esc(e.entity_id) + '">' + name +
+           '<span class="fc">' + esc(haStateTxt(e)) + "</span></div>" +
+           '<div class="ha-temp-big">' + Math.round(at.temperature || 0) + "℃</div>" +
+           (at.current_temperature != null
+             ? '<div class="ha-cur">室温 ' + Math.round(at.current_temperature) + "℃</div>" : "") +
+           '<div class="ha-acts">' +
+           '<button class="ha-btn narrow" data-act="t-">−</button>' +
+           '<button class="ha-btn narrow" data-act="t+">＋</button>' +
            '<button class="ha-btn' + (on ? " on" : "") + '" data-svc="' + (on ? "turn_off" : "turn_on") + '">' +
-           (on ? "开" : "关") + "</button>";
-  } else
-    ctrl = '<button class="ha-btn' + (on ? " on" : "") + '" data-svc="' + (on ? "turn_off" : "turn_on") + '">' +
-           (on ? "开" : "关") + "</button>";
-  return '<div class="ha-row" data-eid="' + esc(e.entity_id) + '">' +
-         '<span class="ha-name">' + esc(haName(e)) + "</span>" +
-         '<span class="ha-st">' + esc(haStateTxt(e)) + "</span>" + ctrl + "</div>";
+           (on ? "开" : "关") + "</button></div></div>";
+  }
+  return '<div class="fcard hacard" data-eid="' + esc(e.entity_id) + '">' + name + "</div>" +
+         '<div class="ha-state' + (on ? " on" : "") + '">' + esc(haStateTxt(e)) + "</div>" +
+         '<div class="ha-acts"><button class="ha-btn' + (on ? " on" : "") + '" data-svc="' +
+         (on ? "turn_off" : "turn_on") + '">' + (on ? "开" : "关") + "</button></div></div>";
 }
 function renderHa() {
   if (!haEntities) return;
   const body = $("ha-body");
   if (!haEntities.length) {
-    body.innerHTML = '<div class="dim" style="text-align:center;padding:48px 0;">' +
+    body.innerHTML = '<div class="dim ph">' +
                      "HA 里没有可控制设备 (light/switch/fan/cover/climate)</div>";
     setText("ha-sub", "0 台设备");
     return;
@@ -586,7 +645,7 @@ function renderHa() {
                            .sort((a, b) => haName(a).localeCompare(haName(b), "zh"));
     if (!list.length) continue;
     html += '<div class="sec">' + HA_SEC_NAMES[dom] + " · " + list.length + "</div>" +
-            list.map(haRowHTML).join("");
+            '<div class="fgrid">' + list.map(haCardHTML).join("") + "</div>";
   }
   body.innerHTML = html;
   setText("ha-sub", haEntities.length + " 台设备 · " + fmtTime(new Date()));
@@ -599,7 +658,7 @@ async function haCall(svcPath, body) {   // svcPath 形如 light/turn_on
 $("ha-body").addEventListener("click", e => {
   const btn = e.target.closest("button");
   if (!btn) return;
-  const row = btn.closest(".ha-row");
+  const row = btn.closest("[data-eid]");
   if (!row) return;
   const eid = row.dataset.eid, dom = eid.split(".")[0];
   if (btn.dataset.svc) haCall(dom + "/" + btn.dataset.svc, { entity_id: eid });
@@ -617,9 +676,9 @@ $("ha-body").addEventListener("click", e => {
 PANEL_OPENERS.ha = {
   open() {
     setText("ha-sub", "加载中…");
-    $("ha-body").innerHTML = '<div class="dim" style="text-align:center;padding:48px 0;">加载中…</div>';
+    $("ha-body").innerHTML = '<div class="dim ph">加载中…</div>';
     haFetch().then(ok => { ok ? renderHa() :
-      ($("ha-body").innerHTML = '<div class="dim" style="text-align:center;padding:48px 0;">HA 不可达</div>',
+      ($("ha-body").innerHTML = '<div class="dim ph">HA 不可达</div>',
        setText("ha-sub", "连接失败")); });
     haTimer = setInterval(() => { if (panelNow === "ha") haFetch().then(ok => ok && renderHa()); }, 60000);
   },
@@ -657,7 +716,7 @@ async function finFetchStocks() {
 function renderFinStocks() {
   const g = $("fin-grid");
   if (!finStocks.length) {
-    g.innerHTML = '<div class="dim" style="padding:6px 2px;">自选股列表为空 (hermes portfolio)</div>';
+    g.innerHTML = '<div class="dim fin-note">自选股列表为空 (hermes portfolio)</div>';
     return;
   }
   g.innerHTML = finStocks.map((s, i) => {
@@ -1004,6 +1063,10 @@ $("tm-reset").addEventListener("click", () => {
   tmLeft = tmDur; tmRender();
 });
 PANEL_OPENERS.timer = { open() { tmRender(); }, close() {} };
+PANEL_OPENERS.radio = {
+  open() { if (!stations.length) loadStations(); },
+  close() { stopLevelStream(); }   // 音频继续播 (与设备后台播放一致), 只停电平流
+};
 
 /* ════ V2 工具抽屉: 图库 / 万年历 / 换算 / 双色球 ════ */
 const TOOL_INIT = {};
@@ -1029,7 +1092,7 @@ let galItems = [], galIdx = -1;
 TOOL_INIT.gallery = function () {
   setText("tool-title", "图库"); setText("tool-sub", "加载中…");
   $("tool-view").innerHTML = '<div class="ggrid" id="ggrid"></div>' +
-    '<div class="dim" id="gal-msg" style="text-align:center;padding:20px 0;"></div>';
+    '<div class="dim" id="gal-msg"></div>';
   getJSON("/gw/8766/gallery/list").then(j => {
     if (!j || !j.ok || !Array.isArray(j.items) || !j.items.length) {
       setText("tool-sub", "加载失败");
@@ -1243,11 +1306,11 @@ TOOL_INIT.ssq = function () {
   };
   if (ssqData && Date.now() - ssqAt < 10 * 60000) { render(); return; }
   setText("tool-sub", "加载中…");
-  $("tool-view").innerHTML = '<div class="dim" style="text-align:center;padding:40px 0;">加载中…</div>';
+  $("tool-view").innerHTML = '<div class="dim ph">加载中…</div>';
   getJSON("/gw/8766/api/ssq/history").then(j => {
     if (!j || !j.ok || !Array.isArray(j.issues) || !j.issues.length) {
       setText("tool-sub", "加载失败");
-      $("tool-view").innerHTML = '<div class="dim" style="text-align:center;padding:40px 0;">开奖数据不可达</div>';
+      $("tool-view").innerHTML = '<div class="dim ph">开奖数据不可达</div>';
       return;
     }
     ssqData = j.issues[0]; ssqList = j.issues; ssqAt = Date.now();
