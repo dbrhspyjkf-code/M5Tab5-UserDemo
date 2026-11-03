@@ -360,9 +360,12 @@
   Module.printErr = function (t) { window.__tab5logs.push("E " + t); console.warn("[wasm]", t); };
   Module.print = function (t) { window.__tab5logs.push(t); console.log("[wasm]", t); };
   Module.locateFile = function (p) {
-    // wasm 地址挂构建版本: 新部署即换缓存键 (部署后旧缓存不再干扰),
-    // 平时可长缓存; index.html 本身 no-cache, 版本号每次部署更新
-    if (p.endsWith(".wasm") && window.TAB5_BUILD) return p + "?v=" + window.TAB5_BUILD;
+    // 全静态文件构建时已物理改名 (shell/glue/wasm/assets 同 TS) ——
+    // 这里把 glue 内部请求的原始名映射到版本化名, 缓存键天然隔离
+    const v = window.TAB5_BUILD;
+    if (!v) return p;
+    if (p === "tab5web.wasm") return "tab5web-" + v + ".wasm";
+    if (p === "tab5web.js")   return "tab5web-" + v + ".js";
     return p;
   };
 })();

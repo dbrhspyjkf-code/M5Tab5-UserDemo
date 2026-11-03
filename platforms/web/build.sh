@@ -28,7 +28,7 @@ rm -rf "$BIN"; mkdir -p "$BIN"
 cp "$ROOT/platforms/web/shell/index.html" "$BIN/"
 cp "$ROOT/platforms/web/shell/shell.js" "$BIN/shell-$TS.js"
 cp "$STAGE/tab5web.js"   "$BIN/tab5web-$TS.js"
-cp "$STAGE/tab5web.wasm" "$BIN/tab5web.wasm"
+cp "$STAGE/tab5web.wasm" "$BIN/tab5web-$TS.wasm"
 cp "$BUILD/assets.img"   "$BIN/assets-$TS.img"
 rm -rf "$STAGE"
 python3 - "$BIN" "$TS" <<'PYEOF'
@@ -46,7 +46,7 @@ print("versioned:", ts)
 PYEOF
 
 # 4) brotli 预压缩
-command -v brotli >/dev/null && for f in "$BIN"/shell-*.js "$BIN"/tab5web-*.js "$BIN"/tab5web.wasm "$BIN"/assets-*.img; do
+command -v brotli >/dev/null && for f in "$BIN"/shell-*.js "$BIN"/tab5web-*.js "$BIN"/tab5web-*.wasm "$BIN"/assets-*.img; do
   brotli -q 11 -f -k "$f"
 done || true
 
