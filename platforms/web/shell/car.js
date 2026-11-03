@@ -415,8 +415,10 @@ function playStation(key) {
   audio.volume = vol / 100;
   setText("r-cur", st.name + " · 连接中…");
   setText("r-stat", "缓冲中…");
+  startLevelStream(key);   // 立即预热: audio 缓冲与 ffmpeg 冷启动并行
   audio.play().catch(() => {   // 自动播放策略/网络失败 → 静默给状态行
     wantPlay = false;
+    stopLevelStream();
     setText("r-cur", st.name + " · 播放失败");
     setText("r-stat", "播放失败");
     $("r-play").textContent = "⏵";
@@ -437,7 +439,7 @@ function startLevelStream(key) {
   lvGotData = false;
   lvFallbackTimer = setTimeout(() => {
     if (!lvGotData && wantPlay) $("vu").classList.add("fake");
-  }, 4000);
+  }, 7000);
   lvAbort = new AbortController();
   const sig = lvAbort.signal;
   (async () => {
@@ -482,7 +484,6 @@ audio.addEventListener("playing", () => {
   const st = stations.find(s => s.key === curKey);
   setText("r-cur", st ? st.name : "");
   $("r-play").textContent = "⏸";
-  startLevelStream(curKey);
 });
 audio.addEventListener("pause", () => {
   setText("r-stat", "已暂停");

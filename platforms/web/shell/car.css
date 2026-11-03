@@ -86,7 +86,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 #r-cur { display:block; text-align:center; font-size:15px; color:var(--soft); margin-bottom:14px; }
 #p-radio .rctrl { justify-content:center; margin-top:0; }
 #p-radio .rvol { flex:none; width:280px; }
-#p-radio .chips { max-height:none; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); }
+/* (#p-radio .chips 布局在收音机面板段统一定义) */
 #gal-msg { text-align:center; padding:20px 0; }
 .ph { color:var(--dim); text-align:center; padding:40px 0; }
 .ha-btn.narrow { min-width:40px; }
@@ -186,11 +186,16 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .ha-btn.on { background:var(--ok); color:var(--page); border-color:transparent; font-weight:600; }
 .ha-btn:active { background:var(--press); }
 
-/* ── 收音机面板 VU 电平表 (relay /lv 8Hz "b m t\n" 0-100) ── */
-.vu { display:flex; gap:26px; justify-content:center; margin:6px 0 20px; }
+/* ── 收音机面板: 内容限宽居中 (拒绝大屏铺满留白), VU 电平表 ── */
+#p-radio .p-body { max-width:1080px; margin:0 auto; width:100%; }
+#p-radio .chips { max-height:none; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); }
+#p-radio .chip { padding:18px 6px; min-height:96px; font-size:15px; border-radius:14px;
+                 display:flex; flex-direction:column; align-items:center; justify-content:center; }
+#p-radio .chip .fq { font-size:12px; margin-top:4px; }
+.vu { display:flex; gap:30px; justify-content:center; margin:6px 0 20px; }
 .vcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
 .vcol span { color:var(--dim); font-size:12px; }
-.vtrack { width:54px; height:150px; border-radius:14px; background:var(--track);
+.vtrack { width:64px; height:190px; border-radius:14px; background:var(--track);
           border:1px solid color-mix(in srgb, var(--border) 70%, transparent);
           display:flex; align-items:flex-end; overflow:hidden; }
 .vfill { width:100%; height:0%; border-radius:14px;

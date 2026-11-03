@@ -106,9 +106,26 @@ class Handler(BaseHTTPRequestHandler):
                 req.add_header("Authorization", "Bearer " + tok)
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
-                data = r.read()
                 ctype = r.headers.get("Content-Type", "application/octet-stream")
-                self._send(r.status, data, ctype, cache=True)
+                # 流式透传: /lv 电平流(80B/s)等 tiny 流必须逐块转发, 全量
+                # read 会把流憋死(与生产网关流式行为对齐, 本地才能测 VU)。
+                # 无 Content-Length → Connection: close 定界。
+                self.send_response(r.status)
+                self._sec_headers()
+                self.send_header("Content-Type", ctype)
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "close")
+                self.close_connection = True
+                self.end_headers()
+                while True:
+                    try:
+                        chunk = r.read1(1024)   # read1: 有多少读多少, 不攒满
+                    except AttributeError:
+                        chunk = r.read(256)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
         except urllib.error.HTTPError as e:
             self._send(e.code, e.read(), e.headers.get("Content-Type", "text/plain"))
         except Exception as e:
