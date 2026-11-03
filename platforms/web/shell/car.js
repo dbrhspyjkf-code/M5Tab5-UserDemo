@@ -1377,7 +1377,7 @@ let ideaInited = false, ideaClockTimer = 0;
 let ideaDB = null, voiceItems = [];
 let recStream = null, recRecorder = null, recChunks = [], recMime = "";
 let recSec = 0, recTimer = 0, recStartAt = 0, recActive = false;
-let playAudio = null, playId = null;
+
 
 function ideaLoad() {
   try {
@@ -1618,58 +1618,62 @@ async function ideaRecToggle() {
     $("idea-mic-t").textContent = "⏹ 停止 · " + recSec + "s";
   }, 250);
 }
-/* ── 语音回放 (单实例; 进度条随 timeupdate) ── */
-function ideaPlayReset(id) {
+/* ── 语音回放: Web Audio API (MediaRecorder 的 webm 无 duration=Infinity,
+   <audio> 元素播这种 blob 会无声/不推进 —— decodeAudioData+BufferSource
+   彻底绕开; 进度用 ctx.currentTime 自驱动, 也不受 CSP media-src 管) ── */
+let actx = null, playSrc = null, playId = null, playStartAt = 0, playTickT = 0;
+function ideaPlayUI(id, playing) {
   const btn = document.querySelector('.voice-btn[data-id="' + id + '"]');
-  if (btn) { btn.textContent = "▶"; btn.classList.remove("playing"); }
-  const fill = $("vf-" + id);
-  if (fill && playId === id) fill.style.width = "0%";
+  if (btn) { btn.textContent = playing ? "⏹" : "▶"; btn.classList.toggle("playing", playing); }
 }
-function ideaVoiceToggle(id) {
-  if (playId === id && playAudio) {          // 再点 = 暂停
-    playAudio.pause();
-    playAudio.onended = playAudio.ontimeupdate = null;
-    playAudio = null; playId = null;
-    ideaPlayReset(id);
-    return;
+function ideaPlayStop() {   // 停止当前播放, UI 归位
+  if (playSrc) { try { playSrc.stop(); } catch (e) {} try { playSrc.disconnect(); } catch (e) {} playSrc = null; }
+  clearInterval(playTickT); playTickT = 0;
+  if (playId) {
+    const fill = $("vf-" + playId);
+    if (fill) fill.style.width = "0%";
+    ideaPlayUI(playId, false);
   }
-  if (playAudio) {                            // 切换播放前停旧的
-    const old = playId;
-    playAudio.onended = playAudio.ontimeupdate = null;
-    playAudio.pause();
-    playAudio = null; playId = null;
-    ideaPlayReset(old);
-  }
+  playId = null;
+}
+async function ideaVoiceToggle(id) {
+  if (playId === id) { ideaPlayStop(); return; }   // 播放中再点 = 停止
+  ideaPlayStop();
   const memo = voiceItems.find(x => x.id === id);
   if (!memo) return;
-  playId = id;
-  playAudio = new Audio(URL.createObjectURL(memo.blob));
-  const btn = document.querySelector('.voice-btn[data-id="' + id + '"]');
-  if (btn) { btn.textContent = "⏸"; btn.classList.add("playing"); }
-  playAudio.ontimeupdate = () => {
-    if (!playAudio) return;
-    const d = isFinite(playAudio.duration) && playAudio.duration > 0 ? playAudio.duration : memo.dur;
-    const pct = Math.min(100, playAudio.currentTime / d * 100);
-    const fill = $("vf-" + id);
-    if (fill) fill.style.width = pct.toFixed(1) + "%";
-  };
-  playAudio.onended = () => {
-    ideaPlayReset(id);
-    playAudio = null; playId = null;
-  };
-  playAudio.play().catch(e => {
-    ideaPlayReset(id);
-    playAudio = null; playId = null;
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") await actx.resume();
+    const ab = await memo.blob.arrayBuffer();
+    const buf = await new Promise((res, rej) => {
+      const p = actx.decodeAudioData(ab, res, rej);
+      if (p && p.then) p.then(res, rej);           // 新版返回 promise
+    });
+    playId = id;
+    playSrc = actx.createBufferSource();
+    playSrc.buffer = buf;
+    playSrc.connect(actx.destination);
+    playSrc.onended = () => { if (playId === id) ideaPlayStop(); };
+    playSrc.start();
+    playStartAt = actx.currentTime;
+    ideaPlayUI(id, true);
+    clearInterval(playTickT);
+    playTickT = setInterval(() => {
+      if (!playSrc) return;
+      const cur = actx.currentTime - playStartAt;
+      const pct = Math.min(100, cur / buf.duration * 100);
+      const fill = $("vf-" + id);
+      if (fill) fill.style.width = pct.toFixed(1) + "%";
+    }, 100);
+  } catch (e) {
+    ideaPlayStop();
     setText("idea-interim", "播放失败: " + (e.name || e.message || "?") +
-      (e.name === "NotSupportedError" ? " (此浏览器不支持该录音格式)" : ""));
-  });
+      (e.name === "EncodingError" || e.name === "NotSupportedError" ? " (此浏览器不支持该录音格式)" : ""));
+  }
 }
 function ideaRecTeardown() {   // 离开面板: 录音中停止保存, 播放停掉
   if (recActive) ideaRecStop();
-  if (playAudio) {
-    playAudio.onended = playAudio.ontimeupdate = null;
-    playAudio.pause(); playAudio = null; playId = null;
-  }
+  ideaPlayStop();
 }
 function ideaSubmit() {
   const ta = $("idea-text"), txt = ta.value.trim();
