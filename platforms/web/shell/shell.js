@@ -30,6 +30,7 @@
   };
 
   const $ = id => document.getElementById(id);
+  let backBtnEl = null;   // 浮动返回键 (fit() 里 clamp 用, 建立前为 null)
   const canvas = $("screen");
   const ctx = canvas.getContext("2d", { alpha: false });
   const off = document.createElement("canvas");
@@ -169,14 +170,22 @@
     } catch (e) { console.warn("[tab5web] jpg decode:", e); fail(e.message); }
   }
 
-  /* ---------- 等比缩放 ---------- */
+  /* ---------- 缩放: 默认满屏 (宽高独立拉伸填满窗口), ?fit=contain 等比 ----------
+   * 满屏 = 轻度纵横比失真 (驾驶舱面板各屏比例不一, 用户指定满屏优先);
+   * 输入映射按 canvas 实际 rect 两轴独立换算 (toScreen), 拉伸下依然准确。 */
   function fit() {
     // 车机 WebView 探针实锤 window 高度可为 0 —— 兜底到屏幕尺寸
     const vw = window.innerWidth || screen.availWidth || W;
     const vh = window.innerHeight || screen.availHeight || H;
-    const scale = Math.max(0.1, Math.min(vw / W, vh / H));
-    canvas.style.width = Math.floor(W * scale) + "px";
-    canvas.style.height = Math.floor(H * scale) + "px";
+    if (location.search.includes("contain")) {
+      const scale = Math.max(0.1, Math.min(vw / W, vh / H));
+      canvas.style.width = Math.floor(W * scale) + "px";
+      canvas.style.height = Math.floor(H * scale) + "px";
+    } else {
+      canvas.style.width = vw + "px";
+      canvas.style.height = vh + "px";
+    }
+    clampBackBtn();
   }
   window.addEventListener("resize", fit);
   fit();
@@ -348,11 +357,29 @@
   }
   requestAnimationFrame(blit);
 
-  /* ---------- 浮动返回键 ---------- */
+  /* ---------- 浮动返回键 (可拖动) ----------
+   * 点按 = 注入标准上拨手势; 拖过 8px = 挪位置 (存 localStorage, 刷新保留)。
+   * 满屏缩放下窗口任意比例, 固定角落可能盖住内容 —— 位置交用户调。
+   * 状态 (btnPos/clampPos) 放 IIFE 层: clampBackBtn 会被 fit() 在按钮
+   * 创建前调用, 引用 try 块内 const 会直接 ReferenceError (被 catch 吞掉,
+   * 表现为返回键永不显示 —— 2026-11-03 实测踩过)。
+   */
+  const clampPos = (x, y) => [
+    Math.max(4, Math.min(x | 0, (window.innerWidth || W) - 56)),
+    Math.max(4, Math.min(y | 0, (window.innerHeight || H) - 56)),
+  ];
+  let btnPos = [14, 14];   // [x, y] 左上角
+  function clampBackBtn() {
+    if (!backBtnEl) return;
+    btnPos = clampPos(btnPos[0], btnPos[1]);
+    backBtnEl.style.left = btnPos[0] + "px";
+    backBtnEl.style.top = btnPos[1] + "px";
+  }
   try {
     const backBtn = document.createElement("div");
+    backBtnEl = backBtn;
     backBtn.style.cssText =
-      "position:fixed;right:14px;top:14px;z-index:50;width:52px;height:52px;" +
+      "position:fixed;left:14px;top:14px;z-index:50;width:52px;height:52px;" +
       "border-radius:50%;background:rgba(0,0,0,.45);border:1px solid rgba(126,200,126,.55);" +
       "display:none;align-items:center;justify-content:center;touch-action:none;" +
       "-webkit-user-select:none;user-select:none;cursor:pointer;";
@@ -361,17 +388,50 @@
       '<path d="M12 19V6M6 12l6-6 6 6" stroke="#bfe8c4" stroke-width="2.4" ' +
       'stroke-linecap="round" stroke-linejoin="round"/></svg>';
     document.body.appendChild(backBtn);
+
+    try {
+      const saved = JSON.parse(localStorage.getItem("tab5_back_btn") || "null");
+      if (Array.isArray(saved) && saved.length === 2 &&
+          isFinite(saved[0]) && isFinite(saved[1])) btnPos = saved;
+    } catch (e) { /* 私密模式等: 用默认位置 */ }
+    clampBackBtn();
     window.__tab5showback = () => { backBtn.style.display = "flex"; };
-    backBtn.addEventListener("pointerdown", e => {
-      e.preventDefault(); e.stopPropagation();
-      backBtn.style.background = "rgba(47,90,59,.75)";
+
+    const swipeOut = () => {
       pushEvent(EV.MOVE, 640, 700);
       pushEvent(EV.PRESS, 640, 700);
       [[640,620],[640,520],[640,400],[640,280],[640,160],[640,110]]
         .forEach((p, i) => setTimeout(() => pushEvent(EV.MOVE, p[0], p[1]), 25 + i * 25));
       setTimeout(() => pushEvent(EV.RELEASE, 640, 100), 240);
+    };
+
+    let drag = null;
+    backBtn.addEventListener("pointerdown", e => {
+      e.preventDefault(); e.stopPropagation();
+      try { backBtn.setPointerCapture(e.pointerId); } catch (err) {
+        // 合成事件/指针已释放时抛 NotFoundError —— 不能让它跳过 drag 初始化
+      }
+      backBtn.style.background = "rgba(47,90,59,.75)";
+      drag = { x0: e.clientX, y0: e.clientY, bx0: btnPos[0], by0: btnPos[1], moved: false };
     });
-    backBtn.addEventListener("pointerup", () => { backBtn.style.background = "rgba(0,0,0,.45)"; });
+    backBtn.addEventListener("pointermove", e => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+      if (!drag.moved && dx * dx + dy * dy < 64) return;   // 8px 内算点按
+      drag.moved = true;
+      btnPos = [drag.bx0 + dx, drag.by0 + dy];
+      clampBackBtn();
+    });
+    const endDrag = () => { backBtn.style.background = "rgba(0,0,0,.45)"; drag = null; };
+    backBtn.addEventListener("pointerup", e => {
+      if (drag && drag.moved) {
+        try { localStorage.setItem("tab5_back_btn", JSON.stringify(btnPos)); } catch (err) {}
+      } else if (drag) {
+        swipeOut();   // 未拖动 = 点按 → 上拨退出
+      }
+      endDrag();
+    });
+    backBtn.addEventListener("pointercancel", endDrag);
   } catch (e) { console.warn("[tab5web] back btn:", e); }
 
   /* ---------- 全屏切换 (F11 / 双击) ---------- */
