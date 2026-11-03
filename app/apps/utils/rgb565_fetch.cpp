@@ -58,10 +58,16 @@ bool download(const std::string& url, void* buf)
     // ".rgb565" 是 7 字符 —— 曾误替换 8 字符把 '?' 吃掉 (thumb.jpgid= → 404 全挂)
     if (dot != std::string::npos) jpg_url.replace(dot, 7, ".jpg");
     auto resp = GetHAL()->httpGet(jpg_url);
-    if (!resp.ok || resp.status != 200 || resp.body.empty()) return false;
-    // 解码: 返回像素数 (w*h=成功)
-    return ::web_jpeg_to_rgb565((const uint8_t*)resp.body.data(), (int)resp.body.size(),
-                                (uint16_t*)dst, bytes) == bytes / 2;
+    if (!resp.ok || resp.status != 200 || resp.body.empty()) {
+        GetHAL()->uartMonitorSend("thumb-fail sc=" + std::to_string(resp.status) +
+                                  " len=" + std::to_string(resp.body.size()));
+        return false;
+    }
+    int px = ::web_jpeg_to_rgb565((const uint8_t*)resp.body.data(), (int)resp.body.size(),
+                                  (uint16_t*)dst, bytes);
+    GetHAL()->uartMonitorSend("thumb-decode px=" + std::to_string(px) +
+                              " want=" + std::to_string(bytes / 2));
+    return px == bytes / 2;
 #elif defined(PLATFORM_BUILD_DESKTOP)
     auto resp = GetHAL()->httpGet(url);
     if (!resp.ok || resp.status != 200 || (int)resp.body.size() != bytes) return false;
