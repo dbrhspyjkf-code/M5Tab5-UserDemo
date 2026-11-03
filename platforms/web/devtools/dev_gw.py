@@ -144,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/gw/ext/"):
-            rest = path[len("/gw/ext/"):]
+            rest = raw[len("/gw/ext/"):]   # raw: 保留 query
             name = rest.split("/", 1)[0]
             if name in EXT:
                 self._proxy(EXT[name], rest[len(name):])
@@ -153,8 +153,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/gw/"):
-            rest = path[len("/gw/"):]
-            port = rest.split("/", 1)[0]
+            rest = raw[len("/gw/"):]      # raw: 保留 query (id/w/h 等)
+            from urllib.parse import urlsplit
+            port = urlsplit(rest).path.split("/", 1)[0]
             sub = rest[len(port):] if "/" in rest else "/"
             if port in GW_PORTS:
                 self._proxy(GW_PORTS[port], sub)
