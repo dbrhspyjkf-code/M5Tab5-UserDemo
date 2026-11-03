@@ -1,40 +1,54 @@
 #!/bin/bash
 # tab5web 构建 — Emscripten WASM 多线程版
 # 用法: platforms/web/build.sh [build-dir]   (默认 build/web)
-# 前置: source ~/emsdk/emsdk_env.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD="${1:-$ROOT/build/web}"
+TS="$(date +%Y%m%d%H%M%S)"
 
 source ~/emsdk/emsdk_env.sh >/dev/null 2>&1 || true
-command -v emcc >/dev/null || { echo "emcc not found — source ~/emsdk/emsdk_env.sh first"; exit 1; }
+command -v emcc >/dev/null || { echo "emcc not found"; exit 1; }
 
-# 资产镜像 (三档 cbin 字体) → C 数组 (assets_partition web 分支解析)
-BUILD_TS_PRE=$(date +%Y%m%d%H%M%S)
-python3 "$ROOT/platforms/web/tools/pack_web_assets.py" "$BUILD/assets.img" >/dev/null
-python3 "$ROOT/platforms/web/tools/gen_assets_name.py" "assets-$BUILD_TS_PRE.img" "$ROOT/platforms/web/assets_name.cc"
-
+# 1) 资产镜像 (版本化文件名)
 mkdir -p "$BUILD"
+python3 "$ROOT/platforms/web/tools/pack_web_assets.py" "$BUILD/assets.img" >/dev/null
+python3 "$ROOT/platforms/web/tools/gen_assets_name.py" "assets-$TS.img" "$ROOT/platforms/web/assets_name.cc"
+
+# 2) 编译
 cd "$BUILD"
-emcmake cmake -DTAB5_PLATFORM=web -DCMAKE_BUILD_TYPE=Release "$ROOT"
+emcmake cmake -DTAB5_PLATFORM=web -DCMAKE_BUILD_TYPE=Release "$ROOT" >/dev/null
 emmake make -j"$(sysctl -n hw.ncpu)" tab5web
 
-# 组装 bin/: 外壳 + 运行时 (index.html 注入构建版本号 → wasm 缓存键)
+# 3) 组装 bin/: 全静态资源版本化 (杜绝新旧缓存错配)
+#    (make 产物在 $BUILD/bin, 先暂存再清空重建, 避免 rm 掉刚生成的产物)
+STAGE="$BUILD/.stage"; rm -rf "$STAGE"; mkdir -p "$STAGE"
+cp "$BUILD/bin/tab5web.js" "$BUILD/bin/tab5web.wasm" "$STAGE/" 2>/dev/null || { echo "make artifacts missing"; exit 1; }
 BIN="$BUILD/bin"
-cp "$ROOT/platforms/web/shell/index.html" "$ROOT/platforms/web/shell/shell.js" "$BIN/"
-cp "$BUILD/assets.img" "$BIN/assets-$BUILD_TS_PRE.img"
-
-BUILD_TS=$(date +%Y%m%d%H%M%S)
-python3 - "$BIN/index.html" "$BUILD_TS" <<'PYEOF'
-import sys
-p, ts = sys.argv[1], sys.argv[2]
+rm -rf "$BIN"; mkdir -p "$BIN"
+cp "$ROOT/platforms/web/shell/index.html" "$BIN/"
+cp "$ROOT/platforms/web/shell/shell.js" "$BIN/shell-$TS.js"
+cp "$STAGE/tab5web.js"   "$BIN/tab5web-$TS.js"
+cp "$STAGE/tab5web.wasm" "$BIN/tab5web.wasm"
+cp "$BUILD/assets.img"   "$BIN/assets-$TS.img"
+rm -rf "$STAGE"
+python3 - "$BIN" "$TS" <<'PYEOF'
+import sys, os
+bin_dir, ts = sys.argv[1], sys.argv[2]
+p = os.path.join(bin_dir, "index.html")
 s = open(p).read()
-tag = '<script>window.TAB5_BUILD="%s";</script>' % ts
-if "TAB5_BUILD" not in s:
-    s = s.replace('<script src="shell.js"></script>', tag + '\n<script src="shell.js"></script>')
-    open(p, "w").write(s)
-print("version:", ts)
+s = s.replace("<script src=\"shell.js\"></script>",
+              f'<script>window.TAB5_BUILD="{ts}";</script>\n<script src="shell-{ts}.js"></script>')
+s = s.replace("<script src=\"tab5web.js\"></script>",
+              f'<script src="tab5web-{ts}.js"></script>')
+open(p, "w").write(s)
+assert f"shell-{ts}.js" in s and f"tab5web-{ts}.js" in s and f'TAB5_BUILD="{ts}"' in s
+print("versioned:", ts)
 PYEOF
-grep -q "TAB5_BUILD" "$BIN/index.html" || { echo "version inject FAILED"; exit 1; }
-ls "$BIN"/assets-*.img 2>/dev/null | grep -v "assets-$BUILD_TS_PRE.img" | xargs rm -f 2>/dev/null
-echo "---- build ok: $BIN (v$BUILD_TS) ----"
+
+# 4) brotli 预压缩
+command -v brotli >/dev/null && for f in "$BIN"/shell-*.js "$BIN"/tab5web-*.js "$BIN"/tab5web.wasm "$BIN"/assets-*.img; do
+  brotli -q 11 -f -k "$f"
+done || true
+
+echo "---- build ok: $BIN (v$TS) ----"
+ls -la "$BIN" | awk '{print $5, $9}' | grep -vE "^ |^$"

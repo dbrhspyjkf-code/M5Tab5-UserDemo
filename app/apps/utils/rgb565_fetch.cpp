@@ -12,6 +12,8 @@
 
 extern "C" int web_jpeg_to_rgb565(const uint8_t* jpg, int jpg_len, uint16_t* out, int out_bytes);
 
+extern "C" int web_fetch_bin(const char* url, uint8_t* out, int cap);
+
 namespace rgb565 {
 
 void* alloc(int w, int h)
@@ -58,7 +60,6 @@ bool download(const std::string& url, void* buf)
     // ".rgb565" 是 7 字符 —— 曾误替换 8 字符把 '?' 吃掉 (thumb.jpgid= → 404 全挂)
     if (dot != std::string::npos) jpg_url.replace(dot, 7, ".jpg");
     // 二进制安全拉取 (sync XHR + arraybuffer 在 WebKit 静默退文本, 字节绞碎)
-    extern "C" int web_fetch_bin(const char* url, uint8_t* out, int cap);
     std::vector<uint8_t> bin(bytes / 2 > 0 ? 262144 : 65536);   // 256KB 容量 (缩略/大图均够)
     int n = web_fetch_bin(jpg_url.c_str(), bin.data(), (int)bin.size());
     if (n <= 0) {
