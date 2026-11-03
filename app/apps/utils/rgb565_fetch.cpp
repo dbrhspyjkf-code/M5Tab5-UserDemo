@@ -55,21 +55,11 @@ bool download(const std::string& url, void* buf)
 
 #if defined(PLATFORM_BUILD_WEB)
     // web: 拉 JPEG (~1/10 流量) → worker OffscreenCanvas 解码 → RGB565 写入
-    std::string jpg_url = url;
-    const size_t dot = jpg_url.rfind(".rgb565");
-    // ".rgb565" 是 7 字符 —— 曾误替换 8 字符把 '?' 吃掉 (thumb.jpgid= → 404 全挂)
-    if (dot != std::string::npos) jpg_url.replace(dot, 7, ".jpg");
-    // 二进制安全拉取 (sync XHR + arraybuffer 在 WebKit 静默退文本, 字节绞碎)
-    std::vector<uint8_t> bin(bytes / 2 > 0 ? 262144 : 65536);   // 256KB 容量 (缩略/大图均够)
-    int n = web_fetch_bin(jpg_url.c_str(), bin.data(), (int)bin.size());
-    if (n <= 0) {
-        GetHAL()->uartMonitorSend("thumb-fail n=" + std::to_string(n));
-        return false;
-    }
-    int px = ::web_jpeg_to_rgb565(bin.data(), n, (uint16_t*)dst, bytes);
-    GetHAL()->uartMonitorSend("thumb-decode px=" + std::to_string(px) +
-                              " want=" + std::to_string(bytes / 2));
-    return px == bytes / 2;
+    // 回退简案 (用户指定): 直接拉原始 RGB565 —— 无解码/无 SAB/无消息,
+    // 仅 x-user-defined 字节通道 (WebKit sync XHR 无 arraybuffer)
+    int n = web_fetch_bin(url.c_str(), (uint8_t*)dst, bytes);
+    GetHAL()->uartMonitorSend("rgb n=" + std::to_string(n) + " want=" + std::to_string(bytes));
+    return n == (int)bytes;
 #elif defined(PLATFORM_BUILD_DESKTOP)
     auto resp = GetHAL()->httpGet(url);
     if (!resp.ok || resp.status != 200 || (int)resp.body.size() != bytes) return false;
