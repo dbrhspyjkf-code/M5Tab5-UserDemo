@@ -55,7 +55,8 @@ bool download(const std::string& url, void* buf)
     // web: 拉 JPEG (~1/10 流量) → worker OffscreenCanvas 解码 → RGB565 写入
     std::string jpg_url = url;
     const size_t dot = jpg_url.rfind(".rgb565");
-    if (dot != std::string::npos) jpg_url.replace(dot, 8, ".jpg");
+    // ".rgb565" 是 7 字符 —— 曾误替换 8 字符把 '?' 吃掉 (thumb.jpgid= → 404 全挂)
+    if (dot != std::string::npos) jpg_url.replace(dot, 7, ".jpg");
     auto resp = GetHAL()->httpGet(jpg_url);
     if (!resp.ok || resp.status != 200 || resp.body.empty()) return false;
     // 解码: 返回像素数 (w*h=成功)

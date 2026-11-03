@@ -248,7 +248,7 @@ uint8_t* tab5_fetch_assets(const char* url) {
 void HalWeb::init()
 {
     mclog::tagInfo(_tag, "init (web)");
-    assets_part::web_preload();   // 三档 cbin 字体镜像 (在首次用字体的 UI 前加载)
+    // assets_part::web_preload();  // 字体已改 C 数组, 资产镜像暂无消费者 (省 5.4MB 冷启动)
     lvgl_init();
 }
 

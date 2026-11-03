@@ -118,11 +118,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def route(self):
         from urllib.parse import urlsplit
+        raw = self.path
         path = urlsplit(self.path).path   # 剥掉 query, 否则 /?v=x 落入静态分支 404
 
-        if path.startswith("/gw/prefs"):
+        if path == "/gw/prefs" or raw.startswith("/gw/prefs?"):
             if self.command == "GET":
-                q = path.split("key=")
+                q = raw.split("key=")
                 prefs = load_prefs()
                 if len(q) > 1:
                     key = q[1].split("&")[0]
