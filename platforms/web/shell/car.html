@@ -89,28 +89,57 @@
 
 <!-- ═══ V2 面板 ═══ -->
 <div class="panel" id="p-idea">
-  <div class="p-head"><span class="p-title">想法</span><span class="p-sub" id="idea-sub"></span>
-    <button class="p-close" data-close="1">✕</button></div>
-  <div class="p-body">
-    <div class="idea-wrap">
-      <div class="idea-left">
-        <textarea class="idea-text" id="idea-text"
-                  placeholder="记录驾驶途中的想法…&#10;(⌘/Ctrl+Enter 保存)"></textarea>
-        <div class="idea-cats" id="idea-cats"></div>
-        <div class="idea-acts">
-          <button class="idea-mic" id="idea-mic" title="语音输入">🎙</button>
-          <span class="idea-mic-st" id="idea-mic-st"></span>
-          <button class="idea-save" id="idea-save">保存</button>
+  <div class="idea-shell">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-logo">🚗</span>
+        <div class="brand-text">
+          <h1 class="brand-title">车机灵感</h1>
+          <p class="brand-sub">驾驶途中的想法 · 一键语音落库</p>
         </div>
-        <div class="idea-interim" id="idea-interim"></div>
       </div>
-      <div class="idea-right">
-        <div class="p-tabs" id="idea-filter"></div>
-        <input class="idea-search" id="idea-search" placeholder="🔍 搜索想法…">
-        <div id="idea-list"></div>
+      <div class="header-meta">
+        <div class="meta-item"><span class="meta-label">日期</span><span class="meta-value" id="idea-date">--</span></div>
+        <div class="meta-item"><span class="meta-label">时间</span><span class="meta-value clock" id="idea-clock">--</span></div>
+        <div class="meta-item"><span class="meta-label">灵感总数</span><span class="meta-value highlight" id="idea-count">0</span></div>
       </div>
-    </div>
+    </header>
+    <main class="idea-main">
+      <section class="record-panel">
+        <header class="record-header">
+          <h2 class="record-title">记录灵感</h2>
+          <p class="record-hint">支持语音 + 文字，按 ⌘/Ctrl + Enter 快速保存</p>
+        </header>
+        <textarea class="record-textarea" id="idea-text" rows="4" spellcheck="false"
+                  placeholder="此刻想到了什么？例如：在加油站旁的咖啡店拍照打卡……"></textarea>
+        <div class="record-actions">
+          <button class="mic-button" id="idea-mic">
+            <span class="mic-icon">🎙</span><span id="idea-mic-t">按下说话</span>
+          </button>
+          <button class="submit-button" id="idea-save">保存灵感<span class="submit-shortcut">⌘ ↵</span></button>
+        </div>
+        <div class="category-selector" id="idea-cats"></div>
+        <div class="speech-line" id="idea-interim"></div>
+      </section>
+      <section class="inspiration-list">
+        <header class="list-header">
+          <div class="list-title-row">
+            <h2 class="list-title">灵感时间线</h2>
+            <span class="list-count" id="idea-count2">0 / 0</span>
+          </div>
+          <div class="list-controls">
+            <div class="filter-chips" id="idea-filter"></div>
+            <div class="list-toolbar">
+              <input type="search" class="search-input" id="idea-search" placeholder="搜索关键词…">
+              <button class="link-button danger" id="idea-clear">清空</button>
+            </div>
+          </div>
+        </header>
+        <div class="list-body" id="idea-list"></div>
+      </section>
+    </main>
   </div>
+  <button class="p-close idea-close" data-close="1">✕</button>
 </div>
 
 <div class="panel" id="p-ha">

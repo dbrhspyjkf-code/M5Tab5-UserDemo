@@ -214,6 +214,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Content-Security-Policy",
                              "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
+                             "connect-src 'self' https://*.google.com https://*.gstatic.com; "
                              "img-src 'self' data:; worker-src 'self'; frame-ancestors 'none'")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

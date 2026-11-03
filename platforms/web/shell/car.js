@@ -1361,8 +1361,8 @@ TOOL_INIT.ssq = function () {
 /* 工具面板生命周期: 进出回到菜单 */
 PANEL_OPENERS.tools = { open() { toolHome(); }, close() { toolHome(); } };
 
-/* ════ V2.1 想法: 灵感记录 (移植 ~/Projects/car-inspiration; localStorage
-   沿用其 key, 两个应用数据互通) ════ */
+/* ════ V2.1 想法: 灵感记录 (完整复刻 ~/Projects/car-inspiration 源方案;
+   localStorage 沿用其 key, 两个应用数据互通; 语音 Web Speech API) ════ */
 const IDEA_KEY = "car-inspiration:inspirations:v1";
 const IDEA_CATS = [
   { id:"work", name:"工作", emoji:"💼" },
@@ -1371,8 +1371,7 @@ const IDEA_CATS = [
   { id:"todo", name:"待办", emoji:"✅" },
 ];
 let ideaItems = [], ideaCat = "work", ideaFilter = "all", ideaEditId = null;
-let ideaDelArmId = null, ideaDelArmTimer = 0;
-let recog = null, recogOn = false, ideaInited = false;
+let recog = null, recogOn = false, ideaInited = false, ideaClockTimer = 0;
 
 function ideaLoad() {
   try {
@@ -1380,88 +1379,117 @@ function ideaLoad() {
     const parsed = raw ? JSON.parse(raw) : [];
     ideaItems = Array.isArray(parsed) ? parsed : [];
   } catch (e) { ideaItems = []; }
-  // 时间倒序兜底 (与原应用插入队首一致)
-  ideaItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  ideaItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));   // 时间倒序兜底
 }
 function ideaPersist() {
   try { localStorage.setItem(IDEA_KEY, JSON.stringify(ideaItems)); } catch (e) {}
 }
 function ideaCatOf(id) { return IDEA_CATS.find(c => c.id === id) || null; }
-function ideaDayKey(d) { return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate(); }
 function ideaDayLabel(ts) {
   const d = new Date(ts), now = new Date();
-  if (ideaDayKey(d) === ideaDayKey(now)) return "今天";
+  if (d.toDateString() === now.toDateString()) return "今天";
   const y = new Date(now); y.setDate(now.getDate() - 1);
-  if (ideaDayKey(d) === ideaDayKey(y)) return "昨天";
+  if (d.toDateString() === y.toDateString()) return "昨天";
   const p = v => String(v).padStart(2, "0");
   return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
 }
-function ideaHHMM(ts) {
+function ideaFullTime(ts) {
   const d = new Date(ts), p = v => String(v).padStart(2, "0");
-  return p(d.getHours()) + ":" + p(d.getMinutes());
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+         " " + p(d.getHours()) + ":" + p(d.getMinutes());
 }
-
+function ideaMetaTick() {
+  const d = new Date(), p = v => String(v).padStart(2, "0");
+  const week = "日一二三四五六"[d.getDay()];
+  setText("idea-date", d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()));
+  setText("idea-clock", p(d.getHours()) + ":" + p(d.getMinutes()) + " · 周" + week);
+}
 function renderIdeaCats() {
   $("idea-cats").innerHTML = IDEA_CATS.map(c =>
-    '<button class="idea-cat' + (ideaCat === c.id ? " on" : "") + '" data-cat="' + c.id + '">' +
-    '<span class="ic-dot c-' + c.id + '"></span>' + c.emoji + " " + c.name + "</button>").join("");
+    '<button class="category-chip cchip c-' + c.id + (ideaCat === c.id ? " is-active" : "") +
+    '" data-cat="' + c.id + '"><span class="category-emoji">' + c.emoji +
+    '</span><span class="category-name">' + c.name + "</span></button>").join("");
 }
 function renderIdeaFilter() {
-  const n = txt => ideaItems.filter(it => it.categoryId === txt).length;
   $("idea-filter").innerHTML =
-    '<button class="ptab' + (ideaFilter === "all" ? " on" : "") + '" data-f="all">全部 ' +
-    ideaItems.length + "</button>" +
-    IDEA_CATS.map(c => '<button class="ptab' + (ideaFilter === c.id ? " on" : "") +
-      '" data-f="' + c.id + '">' + c.emoji + " " + c.name + " " + n(c.id) + "</button>").join("");
+    '<button class="mini-chip all' + (ideaFilter === "all" ? " is-active" : "") +
+    '" data-f="all">全部</button>' +
+    IDEA_CATS.map(c => '<button class="mini-chip mchip c-' + c.id +
+      (ideaFilter === c.id ? " is-active" : "") + '" data-f="' + c.id + '">' +
+      c.emoji + " " + c.name + "</button>").join("");
 }
 function renderIdeaList() {
   const q = ($("idea-search").value || "").trim().toLowerCase();
   const list = ideaItems.filter(it =>
     (ideaFilter === "all" || it.categoryId === ideaFilter) &&
     (!q || String(it.text || "").toLowerCase().includes(q)));
+  setText("idea-count", String(ideaItems.length));
+  setText("idea-count2", list.length + " / " + ideaItems.length);
   const el = $("idea-list");
   if (!list.length) {
-    el.innerHTML = '<div class="idea-empty">' +
-      (ideaItems.length ? "没有匹配的想法" : "还没有想法 — 左侧记录第一条") + "</div>";
+    el.innerHTML = '<div class="empty-state"><div class="empty-emoji">🛣️</div>' +
+      '<p class="empty-title">还没有灵感</p><p class="empty-hint">' +
+      (ideaItems.length ? "当前筛选下没有匹配的灵感" : "点击左侧输入或按下 🎙 开始语音记录") + "</p></div>";
     return;
   }
   let html = "", lastDay = "";
   for (const it of list) {
     const day = ideaDayLabel(it.createdAt);
-    if (day !== lastDay) { html += '<div class="idea-day">' + day + "</div>"; lastDay = day; }
+    if (day !== lastDay) {
+      const n = list.filter(x => ideaDayLabel(x.createdAt) === day).length;
+      if (lastDay !== "") html += "</div></div>";   // 收上一个 day-cards+group
+      html += '<div class="list-day-group"><div class="day-divider">' +
+              '<span class="day-label">' + day + '</span><span class="day-line"></span>' +
+              '<span class="day-count">' + n + " 条</span></div>" +
+              '<div class="day-cards">';
+      lastDay = day;
+    }
     const cat = ideaCatOf(it.categoryId);
+    const catCls = cat ? " c-" + cat.id : " c-none";
     if (ideaEditId === it.id) {
-      html += '<div class="idea-card"><div class="ic-bar c-' + (cat ? cat.id : "idea") + '"></div>' +
-        '<div class="ic-body"><textarea class="idea-edit" id="ie-' + esc(it.id) + '">' +
-        esc(it.text) + "</textarea>" +
-        '<div class="ic-acts"><button data-act="esave" data-id="' + esc(it.id) + '">保存</button>' +
-        '<button data-act="ecancel">取消</button></div></div></div>';
+      html += '<article class="inspiration-card' + (cat ? catCls : "") + '">' +
+        '<header class="card-meta"><span class="card-category' + catCls + '">' +
+        (cat ? '<span>' + cat.emoji + '</span> ' + cat.name : "未分类") + "</span>" +
+        '<span class="card-time">' + ideaFullTime(it.createdAt) + "</span></header>" +
+        '<textarea class="card-edit" id="ie-' + esc(it.id) + '" rows="3">' + esc(it.text) + "</textarea>" +
+        '<footer class="card-footer"><div class="card-category-edit">' +
+        IDEA_CATS.map(c => '<button class="mini-chip mchip c-' + c.id +
+          (it.categoryId === c.id ? " is-active" : "") + '" data-mc="' + c.id +
+          '" data-id="' + esc(it.id) + '">' + c.emoji + " " + c.name + "</button>").join("") +
+        '</div><div class="card-actions">' +
+        '<button class="link-button" data-act="esave" data-id="' + esc(it.id) + '">保存</button>' +
+        '<button class="link-button" data-act="ecancel">取消</button></div></footer></article>';
     } else {
-      html += '<div class="idea-card"><div class="ic-bar c-' + (cat ? cat.id : "idea") + '"></div>' +
-        '<div class="ic-meta"><span>' + (cat ? cat.emoji + " " + cat.name : "未分类") +
-        '</span><span>' + ideaDayLabel(it.createdAt) + " " + ideaHHMM(it.createdAt) + "</span></div>" +
-        '<div class="ic-text">' + esc(it.text) + "</div>" +
-        '<div class="ic-acts"><button data-act="edit" data-id="' + esc(it.id) + '">编辑</button>' +
-        '<button data-act="del" data-id="' + esc(it.id) + '" class="' +
-        (ideaDelArmId === it.id ? "del-arm" : "") + '">' +
-        (ideaDelArmId === it.id ? "确认删除?" : "删除") + "</button></div></div>";
+      html += '<article class="inspiration-card' + catCls + '">' +
+        '<header class="card-meta"><span class="card-category' + catCls + '">' +
+        (cat ? '<span>' + cat.emoji + '</span> ' + cat.name : "未分类") + "</span>" +
+        '<span class="card-time">' + ideaFullTime(it.createdAt) + "</span></header>" +
+        '<p class="card-text">' + esc(it.text) + "</p>" +
+        '<footer class="card-footer"><span></span><div class="card-actions">' +
+        '<button class="link-button" data-act="edit" data-id="' + esc(it.id) + '">编辑</button>' +
+        '<button class="link-button danger" data-act="del" data-id="' + esc(it.id) + '">删除</button>' +
+        "</div></footer></article>";
     }
   }
+  html += "</div></div>";   // 收最后一个 group
   el.innerHTML = html;
-  if (ideaEditId) { const ta = $("ie-" + ideaEditId); if (ta) { ta.focus(); ta.selectionStart = ta.value.length; } }
+  if (ideaEditId) {
+    const ta = $("ie-" + ideaEditId);
+    if (ta) { ta.focus(); ta.selectionStart = ta.value.length; }
+  }
 }
 function ideaRefreshAll() {
-  renderIdeaCats(); renderIdeaFilter(); renderIdeaList();
-  setText("idea-sub", "共 " + ideaItems.length + " 条");
+  renderIdeaCats(); renderIdeaFilter(); renderIdeaList(); ideaMetaTick();
 }
 
-/* ── 语音输入 (Web Speech API; 不支持的浏览器禁用按钮走文字) ── */
+/* ── 语音输入 (Web Speech API; 生产网关 CSP 已放开 Google 语音 connect-src) ── */
 function ideaMicInit() {
-  const mic = $("idea-mic");
+  const mic = $("idea-mic"), micT = $("idea-mic-t");
   const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Ctor) {
     mic.disabled = true;
-    setText("idea-mic-st", "此浏览器不支持语音输入");
+    mic.classList.add("is-disabled");
+    micT.textContent = "语音不可用";
     return;
   }
   recog = new Ctor();
@@ -1480,29 +1508,27 @@ function ideaMicInit() {
   };
   recog.onend = () => {
     recogOn = false;
-    mic.classList.remove("listening");
-    setText("idea-mic-st", "");
+    mic.classList.remove("is-listening");
+    micT.textContent = "按下说话";
     if ($("idea-interim").textContent.indexOf("识别中") === 0) setText("idea-interim", "");
   };
   recog.onerror = ev => {
     const m = { "not-allowed":"麦克风权限被拒", "no-speech":"没有识别到语音",
-                "network":"语音服务网络错误", "audio-capture":"没有麦克风" };
-    setText("idea-mic-st", m[ev.error] || ("语音错误: " + (ev.error || "?")));
+                "network":"语音服务网络错误", "audio-capture":"没有麦克风",
+                "service-not-allowed":"语音服务被禁用" };
+    setText("idea-interim", m[ev.error] || ("语音错误: " + (ev.error || "?")));
   };
 }
 function ideaMicToggle() {
   if (!recog) return;
-  if (recogOn) {
-    try { recog.stop(); } catch (e) {}
-    return;
-  }
+  if (recogOn) { try { recog.stop(); } catch (e) {} return; }
   try {
     recog.start();
     recogOn = true;
-    $("idea-mic").classList.add("listening");
-    setText("idea-mic-st", "聆听中… 再点一次结束");
+    $("idea-mic").classList.add("is-listening");
+    $("idea-mic-t").textContent = "聆听中… 点击结束";
   } catch (e) {
-    setText("idea-mic-st", "启动失败, 重试");
+    setText("idea-interim", "启动失败, 重试");
   }
 }
 function ideaSubmit() {
@@ -1515,32 +1541,38 @@ function ideaSubmit() {
   ideaPersist();
   ta.value = "";
   setText("idea-interim", "");
-  ideaFilter = "all";                        // 新想法立即可见
+  ideaFilter = "all";
   $("idea-search").value = "";
   ideaRefreshAll();
 }
 
 /* ── 想法面板事件绑定 (一次) ── */
 $("idea-cats").addEventListener("click", e => {
-  const b = e.target.closest(".idea-cat");
+  const b = e.target.closest(".category-chip");
   if (b) { ideaCat = b.dataset.cat; renderIdeaCats(); }
 });
 $("idea-save").addEventListener("click", ideaSubmit);
 $("idea-text").addEventListener("keydown", e => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") ideaSubmit();
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); ideaSubmit(); }
 });
 $("idea-mic").addEventListener("click", ideaMicToggle);
 $("idea-filter").addEventListener("click", e => {
-  const b = e.target.closest(".ptab");
+  const b = e.target.closest(".mini-chip");
   if (b) { ideaFilter = b.dataset.f; ideaEditId = null; renderIdeaFilter(); renderIdeaList(); }
 });
 $("idea-search").addEventListener("input", renderIdeaList);
+$("idea-clear").addEventListener("click", () => {
+  if (!ideaItems.length) return;
+  if (confirm("确认清空全部 " + ideaItems.length + " 条灵感？此操作不可恢复。")) {
+    ideaItems = []; ideaEditId = null; ideaPersist(); ideaRefreshAll();
+  }
+});
 $("idea-list").addEventListener("click", e => {
   const b = e.target.closest("button");
   if (!b) return;
   const id = b.dataset.id, act = b.dataset.act;
   if (act === "edit") {
-    ideaEditId = id; ideaDelArmId = null; renderIdeaList();
+    ideaEditId = id; renderIdeaList();
   } else if (act === "esave") {
     const it = ideaItems.find(x => x.id === id), ta = $("ie-" + id);
     if (it && ta && ta.value.trim()) { it.text = ta.value.trim(); ideaPersist(); }
@@ -1548,32 +1580,28 @@ $("idea-list").addEventListener("click", e => {
   } else if (act === "ecancel") {
     ideaEditId = null; renderIdeaList();
   } else if (act === "del") {
-    if (ideaDelArmId !== id) {   // 二次点击确认 (车机防误触), 3s 超时还原
-      ideaDelArmId = id;
-      clearTimeout(ideaDelArmTimer);
-      ideaDelArmTimer = setTimeout(() => { ideaDelArmId = null; renderIdeaList(); }, 3000);
-      renderIdeaList();
-    } else {
-      clearTimeout(ideaDelArmTimer);
-      ideaDelArmId = null;
-      if (ideaEditId === id) ideaEditId = null;
-      ideaItems = ideaItems.filter(x => x.id !== id);
-      ideaPersist(); ideaRefreshAll();
-    }
+    ideaItems = ideaItems.filter(x => x.id !== id);
+    if (ideaEditId === id) ideaEditId = null;
+    ideaPersist(); ideaRefreshAll();
+  } else if (act === "mc") {
+    const it = ideaItems.find(x => x.id === id);
+    if (it) { it.categoryId = b.dataset.mc; ideaPersist(); renderIdeaList(); }
   }
 });
 PANEL_OPENERS.idea = {
   open() {
-    if (!ideaInited) {
-      ideaMicInit();
-      ideaInited = true;
-    }
+    if (!ideaInited) { ideaMicInit(); ideaInited = true; }
     ideaLoad();
-    ideaEditId = null; ideaDelArmId = null;
+    ideaEditId = null;
     ideaRefreshAll();
+    clearInterval(ideaClockTimer);
+    ideaClockTimer = setInterval(ideaMetaTick, 30000);
     $("idea-text").focus();
   },
-  close() { if (recogOn) { try { recog.stop(); } catch (e) {} } }
+  close() {
+    clearInterval(ideaClockTimer); ideaClockTimer = 0;
+    if (recogOn) { try { recog.stop(); } catch (e) {} }
+  }
 };
 
 /* ════ 启动 ════ */
