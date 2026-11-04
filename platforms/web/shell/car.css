@@ -23,8 +23,8 @@ body {
 button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 .app { position:fixed; inset:0; z-index:1; max-width:1600px; margin:0 auto;
-       display:flex; flex-direction:column; overflow:hidden; }
-.main { flex:1; min-height:0; display:flex; gap:12px; padding:12px; align-items:stretch; }
+       display:flex; flex-direction:column; overflow:auto; }
+.main { flex:0 0 auto; display:flex; gap:12px; padding:12px; align-items:flex-start; align-items:stretch; }
 
 /* ── 卡片通用 (设备端: radius18 / 1px 边框 70% / card[i] 平色逐级加深) ── */
 .card {
@@ -46,25 +46,25 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 /* ── Hero 左卡 ── */
 .hero {
-  flex:0 0 640px; min-height:0; width:640px; background:var(--hero);
-  display:flex; flex-direction:column; padding:22px 26px;
+  flex:0 0 640px; width:640px; height:var(--home-h, 705px); background:var(--hero);
+  display:flex; flex-direction:column; padding:14px 24px;
   overflow:hidden; }
 .clock { font-size:clamp(56px,6vw,96px); font-weight:700; line-height:1.05;
          letter-spacing:2px; font-variant-numeric:tabular-nums; }
 .clock .sec { font-size:.38em; font-weight:400; color:var(--dim); }
 .hero-sub { font-size:clamp(32px,2.8vw,40px); color:var(--soft); margin-top:6px; }
-.wx { font-size:clamp(40px,4vw,56px); font-weight:600; margin-top:14px; }
+.wx { font-size:clamp(40px,4vw,56px); font-weight:600; margin-top:10px; }
 .wx .cond { font-size:.72em; font-weight:400; color:var(--soft); margin-left:8px; }
 .rule { border-top:1px solid color-mix(in srgb, var(--border) 70%, transparent);
-        margin:24px 0 18px; }
-.sent { cursor:pointer; min-height:110px; }
-.sent-en { font-size:clamp(30px,2.6vw,36px); line-height:1.45; color:var(--hi); }
+        margin:14px 0 10px; }
+.sent { cursor:pointer; flex-shrink:1; min-height:0; overflow:hidden; }   /* 高度紧张时裁自己, 不叠下方 */
+.sent-en { font-size:clamp(30px,2.6vw,36px); line-height:1.35; color:var(--hi); }
 .sent-cn { font-size:calc(14px * var(--fs)); margin-top:6px; line-height:1.5; }
-.ipo { margin-top:14px; }
+.ipo { margin-top:10px; }
 .ipo-t { font-size:calc(13px * var(--fs)); }
 .ipo-list { font-size:calc(14px * var(--fs)); color:var(--hi); line-height:1.7;
             font-variant-numeric:tabular-nums; white-space:pre-line; }
-.hero-foot { margin-top:auto; padding-top:14px;
+.hero-foot { margin-top:auto; padding-top:10px;
              display:flex; align-items:center; gap:10px; }
 .tbtn { background:var(--track); color:var(--soft); border:1px solid var(--border);
         border-radius:14px; padding:7px 14px; font-size:calc(14px * var(--fs)); }
@@ -72,7 +72,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 #theme-name { font-size:calc(13px * var(--fs)); }
 
 /* ── 右列 6 卡 ── */
-.col { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; gap:12px;
+.col { flex:0 0 auto; width:100%; height:var(--home-h, 705px); display:flex; flex-direction:column; gap:12px;
       overflow-y:auto; scrollbar-width:none; }
 .col::-webkit-scrollbar { display:none; }
 .body { padding:2px 0; }
@@ -140,7 +140,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .rvol { flex:1; touch-action:none; accent-color:var(--accent); height:4px; }
 
 /* ── 底部 6 按钮 (设备主页风格位) ── */
-.nav { position:sticky; bottom:0; display:flex; gap:12px; padding:12px;
+.nav { position:sticky; bottom:12px; display:flex; gap:12px; padding:12px;
        background:var(--page); }
 .nav button { flex:1; height:104px; border-radius:28px; border:1px solid var(--border);
               background:var(--track); color:var(--soft); font-size:calc(16px * var(--fs)); }
