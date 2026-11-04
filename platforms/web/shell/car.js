@@ -595,6 +595,8 @@ function openPanel(name) {
   if (!p) { panelNow = null; return; }
   p.classList.add("open");
   document.body.style.overflow = "hidden";
+  const pos = closeBtnPos();
+  if (pos) closeBtnApply(p, pos);
   if (PANEL_OPENERS[name] && PANEL_OPENERS[name].open) PANEL_OPENERS[name].open();
 }
 function closePanel() {
@@ -607,8 +609,56 @@ function closePanel() {
   panelNow = null;
   hideViewer();
 }
-document.querySelectorAll('.panel .p-close[data-close]').forEach(b =>
-  b.addEventListener("click", closePanel));
+/* 返回钮: 左下角浮置可拖 (点按<8px=关闭, 拖动存 localStorage, resize 自动归位) */
+const CLOSE_POS_KEY = "car_close_pos";
+function closeBtnPos() {
+  try { return JSON.parse(localStorage.getItem(CLOSE_POS_KEY) || "null"); }
+  catch (e) { return null; }
+}
+function closeBtnApply(panel, pos) {
+  const b = panel.querySelector(".p-close");
+  if (!b || !pos) return;
+  b.style.left = pos.x + "px"; b.style.top = pos.y + "px"; b.style.bottom = "auto";
+}
+function closeBtnClampAll() {
+  const pos = closeBtnPos();
+  if (!pos) return;
+  document.querySelectorAll(".panel").forEach(p => {
+    const b = p.querySelector(".p-close");
+    if (!b) return;
+    pos.x = Math.max(8, Math.min(pos.x, p.clientWidth - b.offsetWidth - 8));
+    pos.y = Math.max(8, Math.min(pos.y, p.clientHeight - b.offsetHeight - 8));
+    b.style.left = pos.x + "px"; b.style.top = pos.y + "px"; b.style.bottom = "auto";
+  });
+}
+window.addEventListener("resize", closeBtnClampAll);
+document.querySelectorAll(".panel .p-close[data-close]").forEach(b => {
+  const panel = b.closest(".panel");
+  b.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    try { b.setPointerCapture(e.pointerId); } catch (err) {}
+    const pr = panel.getBoundingClientRect(), br = b.getBoundingClientRect();
+    const offX = e.clientX - br.left, offY = e.clientY - br.top;
+    let moved = false;
+    const move = ev => {
+      const x = Math.max(8, Math.min(ev.clientX - pr.left - offX, pr.width - br.width - 8));
+      const y = Math.max(8, Math.min(ev.clientY - pr.top - offY, pr.height - br.height - 8));
+      if (!moved && Math.abs(ev.clientX - e.clientX) + Math.abs(ev.clientY - e.clientY) > 8) moved = true;
+      if (!moved) return;
+      b.style.left = x + "px"; b.style.top = y + "px"; b.style.bottom = "auto";
+    };
+    const up = () => {
+      b.removeEventListener("pointermove", move);
+      b.removeEventListener("pointerup", up);
+      if (!moved) { closePanel(); return; }
+      const br2 = b.getBoundingClientRect(), pr2 = panel.getBoundingClientRect();
+      try { localStorage.setItem(CLOSE_POS_KEY, JSON.stringify({
+        x: Math.round(br2.left - pr2.left), y: Math.round(br2.top - pr2.top) })); } catch (err) {}
+    };
+    b.addEventListener("pointermove", move);
+    b.addEventListener("pointerup", up);
+  });
+});
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
   if ($("viewer").classList.contains("open")) { hideViewer(); return; }

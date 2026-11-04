@@ -18,12 +18,13 @@ body {
   font-family:-apple-system,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;
   -webkit-tap-highlight-color:transparent;
   user-select:none; -webkit-user-select:none;
+  overflow:hidden;
 }
 button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
-.app { min-height:100vh; max-width:1600px; margin:0 auto;
-       display:flex; flex-direction:column; }
-.main { flex:1; display:flex; gap:12px; padding:12px; align-items:stretch; }
+.app { position:fixed; inset:0; z-index:1; max-width:1600px; margin:0 auto;
+       display:flex; flex-direction:column; overflow:hidden; }
+.main { flex:1; min-height:0; display:flex; gap:12px; padding:12px; align-items:stretch; }
 
 /* ── 卡片通用 (设备端: radius18 / 1px 边框 70% / card[i] 平色逐级加深) ── */
 .card {
@@ -45,9 +46,9 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 /* ── Hero 左卡 ── */
 .hero {
-  flex:0 0 640px; width:640px; background:var(--hero);
+  flex:0 0 640px; min-height:0; width:640px; background:var(--hero);
   display:flex; flex-direction:column; padding:22px 26px;
-}
+  overflow:hidden; }
 .clock { font-size:clamp(56px,6vw,96px); font-weight:700; line-height:1.05;
          letter-spacing:2px; font-variant-numeric:tabular-nums; }
 .clock .sec { font-size:.38em; font-weight:400; color:var(--dim); }
@@ -71,7 +72,9 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 #theme-name { font-size:calc(13px * var(--fs)); }
 
 /* ── 右列 6 卡 ── */
-.col { flex:1; min-width:0; display:flex; flex-direction:column; gap:12px; }
+.col { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; gap:12px;
+      overflow-y:auto; scrollbar-width:none; }
+.col::-webkit-scrollbar { display:none; }
 .body { padding:2px 0; }
 
 /* 01 GLM / DeepSeek */
@@ -145,7 +148,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .nav button.live { color:var(--hi); }
 
 /* ── Toast (v2 提示 / 主题名 / 登录过期, 唯一浮层, 绝不弹错误框) ── */
-#toast { position:fixed; left:50%; bottom:96px; transform:translateX(-50%);
+#toast { position:fixed; left:50%; bottom:160px; transform:translateX(-50%);
          background:rgba(0,0,0,.78); color:#fff; padding:9px 18px; border-radius:22px;
          font-size:calc(14px * var(--fs)); opacity:0; transition:opacity .25s; pointer-events:none; z-index:99;
          max-width:70vw; }
@@ -159,7 +162,8 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .p-title { color:var(--accent); font-size:calc(18px * var(--fs)); font-weight:600; }
 .p-sub   { color:var(--dim); font-size:calc(12px * var(--fs)); min-width:0; overflow:hidden;
            text-overflow:ellipsis; white-space:nowrap; }
-.p-close { margin-left:auto; flex:none; width:80px; height:68px; border-radius:20px;
+.p-close { position:absolute; left:24px; bottom:130px; z-index:60;
+  flex:none; width:80px; height:68px; border-radius:20px; touch-action:none;
            border:1px solid var(--border); background:var(--track); color:var(--soft); font-size:calc(16px * var(--fs)); }
 .p-close:active { background:var(--press); }
 .p-body  { flex:1; overflow-y:auto; padding:24px 30px 44px; scrollbar-width:thin; }
@@ -319,6 +323,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 @media (max-width:999px) {
   .main { flex-direction:column; }
   .hero { flex:none; width:auto; }
+  .col { flex:1 1 auto; }
   .chips { max-height:none; }
 }
 /* 语音 memo 回放条 (主题色) */
@@ -337,6 +342,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 @media (max-width:999px) {
   .main { flex-direction:column; }
   .hero { flex:none; width:auto; }
+  .col { flex:1 1 auto; }
   .chips { max-height:none; }
 }
 
