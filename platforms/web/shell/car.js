@@ -1369,6 +1369,184 @@ $("tool-view").addEventListener("change", e => {
   if (e.target.id === "u-from" || e.target.id === "u-to") cvConvert();
 });
 
+/* ── 健康: 12 指标走势 (设备 app_health 同款数据链 /api/health/history) ── */
+const HEALTH_METRICS = [
+  ["step_count","步数","#FF9500","步",-1],
+  ["walking_running_distance","步行距离","#34C759","km",2],
+  ["heart_rate","心率","#FF3B30","bpm",0],
+  ["resting_heart_rate","静息心率","#FF2D55","bpm",0],
+  ["heart_rate_variability","心率变异","#30B0C7","ms",1],
+  ["blood_oxygen_saturation","血氧","#007AFF","%",0],
+  ["respiratory_rate","呼吸速率","#5AC8FA","次/分",1],
+  ["active_energy_burned","活动能量","#FF9F0A","kcal",0],
+  ["apple_exercise_time","锻炼时间","#30D158","分钟",0],
+  ["flights_climbed","爬楼层","#5856D6","层",-1],
+  ["wrist_temperature","手腕温度","#FF6B00","°C",1],
+  ["sleep_analysis","睡眠","#5E5CE6","小时",-2],
+];
+let hmIdx = 2, hmDays = 30, hmPts = [];
+function hmFmt(v, dec) {
+  if (dec === -2) { const h = Math.floor(v/60), m = Math.round(v%60);
+    return h + ":" + String(m).padStart(2, "0"); }
+  if (dec === -1) return String(Math.round(v));
+  return v.toFixed(dec);
+}
+function hmDayNum(y, m, d) { return Math.floor(Date.UTC(y, m-1, d) / 86400000); }
+function hmDayLabel(day) {
+  const d = new Date(day * 86400000);
+  const p = v => String(v).padStart(2, "0");
+  return p(d.getUTCMonth()+1) + "-" + p(d.getUTCDate());
+}
+async function hmLoad() {
+  const m = HEALTH_METRICS[hmIdx];
+  setText("hm-stats", "加载中…");
+  const j = await getJSON("/gw/8766/api/health/history?type=" + m[0] + "&days=" + hmDays, 15000);
+  let pts = (j && j.ok && Array.isArray(j.points)) ? j.points : null;
+  if (!pts) {
+    setText("hm-stats", "走势数据不可达");
+    $("hm-canvas").getContext("2d").clearRect(0,0,$("hm-canvas").width,$("hm-canvas").height);
+    return;
+  }
+  // 缺日补 0 (设备同款: 首→末连续化, 柱状图日期等距)
+  const parsed = pts.filter(p => typeof p.date === "string" && p.date.length >= 10).map(p => {
+    const day = hmDayNum(+p.date.slice(0,4), +p.date.slice(5,7), +p.date.slice(8,10));
+    const v = typeof p.value === "number" ? p.value : parseFloat(p.value) || 0;
+    return { day, v };
+  }).sort((a,b) => a.day - b.day);
+  const filled = [];
+  if (parsed.length) {
+    let k = 0;
+    for (let day = parsed[0].day; day <= parsed[parsed.length-1].day; day++) {
+      if (k < parsed.length && parsed[k].day === day) filled.push({ ...parsed[k++], fill: false });
+      else filled.push({ day, v: 0, fill: true });
+    }
+  }
+  hmPts = filled;
+  setText("hm-stats", hmPts.length ? "" : "暂无数据");
+  hmDraw(); hmStats();
+}
+function hmStats() {
+  const m = HEALTH_METRICS[hmIdx];
+  const real = hmPts.filter(p => !p.fill);
+  if (!real.length) { setText("hm-stats", ""); return; }
+  const last = real[real.length - 1];
+  const avg7 = (() => { const r = real.slice(-7);
+    return r.reduce((a,p)=>a+p.v,0) / r.length; })();
+  const mx = Math.max(...real.map(p => p.v));
+  setText("hm-stats", "最新 " + hmFmt(last.v, m[4]) + m[3] +
+    " · 7 日均 " + hmFmt(avg7, m[4]) + m[3] +
+    " · 最高 " + hmFmt(mx, m[4]) + m[3]);
+}
+function hmDraw() {
+  const c = $("hm-canvas");
+  if (!c) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth || 800, h = 460;
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  const ctx = c.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (!hmPts.length) return;
+  const m = HEALTH_METRICS[hmIdx];
+  const padL = 56, padR = 14, padT = 30, padB = 26;
+  const pw = w - padL - padR, ph = h - padT - padB;
+  const n = hmPts.length;
+  const realVs = hmPts.filter(p => !p.fill).map(p => p.v);
+  let mx = Math.max(...realVs, 1);
+  mx = mx * 1.15;
+  const bw = Math.max(2, pw / n * 0.7);
+  const X = i => padL + (i + 0.5) / n * pw;
+  const Y = v => padT + (mx - v) / mx * ph;
+  // 网格 + y 轴
+  ctx.font = "20px sans-serif"; ctx.textBaseline = "middle";
+  ctx.strokeStyle = cssv("--border"); ctx.fillStyle = cssv("--dim");
+  for (let k = 0; k <= 3; k++) {
+    const y = padT + ph * k / 3;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    ctx.textAlign = "right";
+    ctx.fillText(hmFmt(mx - mx * k / 3, m[4] === -2 ? -1 : Math.max(m[4],0)), padL - 8, y);
+  }
+  // 柱 (缺日: 底部小点)
+  const col = m[2];
+  hmPts.forEach((p, i) => {
+    if (p.fill) {
+      ctx.fillStyle = cssv("--dim"); ctx.globalAlpha = .5;
+      ctx.fillRect(X(i) - 1, padT + ph - 3, 2, 3);
+      ctx.globalAlpha = 1;
+      return;
+    }
+    const bh = Math.max(2, ph * p.v / mx);
+    ctx.fillStyle = col;
+    ctx.fillRect(X(i) - bw/2, padT + ph - bh, bw, bh);
+  });
+  // 7 日均线 (近 7 个非补日均值, 逐点滑动)
+  ctx.strokeStyle = cssv("--accent"); ctx.lineWidth = 3; ctx.beginPath();
+  let started = false;
+  hmPts.forEach((p, i) => {
+    const win = [];
+    for (let k = i; k >= 0 && win.length < 7; k--) if (!hmPts[k].fill) win.push(hmPts[k].v);
+    if (win.length < 2) return;
+    const avg = win.reduce((a,b)=>a+b,0) / win.length;
+    const x = X(i), y = Y(avg);
+    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+  });
+  ctx.stroke(); ctx.lineWidth = 1;
+  // 图例 + x 轴日期
+  ctx.fillStyle = cssv("--accent"); ctx.textAlign = "left";
+  ctx.fillText("7 日均", padL + 4, padT + 12);
+  ctx.fillStyle = cssv("--dim"); ctx.textAlign = "center";
+  for (let k = 0; k < 5; k++) {
+    const i = Math.min(n - 1, Math.round((n - 1) * k / 4));
+    ctx.fillText(hmDayLabel(hmPts[i].day), Math.max(padL + 30, Math.min(w - padR - 30, X(i))), h - 10);
+  }
+}
+function hmSetMetric(i) {
+  hmIdx = i;
+  document.querySelectorAll("#hm-m .mini-chip").forEach((b, k) =>
+    b.classList.toggle("is-active", k === i));
+  hmLoad();
+}
+function hmSetDays(d) {
+  hmDays = d;
+  document.querySelectorAll("#hm-d .mini-chip").forEach(b =>
+    b.classList.toggle("is-active", +b.dataset.d === d));
+  hmLoad();
+}
+TOOL_INIT.health = function () {
+  setText("tool-title", "健康"); setText("tool-sub", "");
+  if (!$("hm-m")) {
+    $("tool-view").innerHTML =
+      '<div class="hm-m" id="hm-m"></div>' +
+      '<div class="p-tabs" id="hm-d">' +
+      [7,30,90].map(d => '<button class="mini-chip' + (d === hmDays ? " is-active" : "") +
+        '" data-d="' + d + '">' + d + ' 天</button>').join("") + "</div>" +
+      '<canvas id="hm-canvas"></canvas>' +
+      '<div class="hm-stats" id="hm-stats"></div>';
+    $("hm-m").innerHTML = HEALTH_METRICS.map((m, i) =>
+      '<button class="mini-chip" data-hm="' + i + '"><span class="ic-dot" data-c="' + m[2] +
+      '"></span>' + m[1] + "</button>").join("");
+    [...$("hm-m").children].forEach((b, i) => {
+      const col = HEALTH_METRICS[i][2];
+      b.style.borderColor = col; b.style.color = col;
+      const dot = b.querySelector(".ic-dot");
+      dot.style.background = col; dot.style.width = "8px"; dot.style.height = "8px";
+    });
+    $("hm-m").addEventListener("click", e => {
+      const b = e.target.closest("[data-hm]");
+      if (b) hmSetMetric(+b.dataset.hm);
+    });
+    $("hm-d").addEventListener("click", e => {
+      const b = e.target.closest("[data-d]");
+      if (b) hmSetDays(+b.dataset.d);
+    });
+    window.addEventListener("resize", () => {
+      if (toolCurrent === "health" && panelNow === "tools") hmDraw();
+    });
+  }
+  hmLoad();
+};
+
+/* ── 双色球:
 /* ── 双色球: /gw/8766/api/ssq/history (issues[0]=最新, 与 app_lottery 同源) ── */
 let ssqData = null, ssqAt = 0, ssqList = null;
 function ballsHTML(reds, blue, small) {
