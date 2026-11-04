@@ -89,22 +89,13 @@
 
 <!-- ═══ V2 面板 ═══ -->
 <div class="panel" id="p-idea">
-  <div class="idea-shell">
-    <header class="app-header">
-      <div class="brand">
-        <span class="brand-logo">🚗</span>
-        <div class="brand-text">
-          <h1 class="brand-title">车机灵感</h1>
-          <p class="brand-sub">驾驶途中的想法 · 一键语音落库 · v2026110408</p>
-        </div>
-      </div>
-      <div class="header-meta">
-        <div class="meta-item"><span class="meta-label">日期</span><span class="meta-value" id="idea-date">--</span></div>
-        <div class="meta-item"><span class="meta-label">时间</span><span class="meta-value clock" id="idea-clock">--</span></div>
-        <div class="meta-item"><span class="meta-label">灵感总数</span><span class="meta-value highlight" id="idea-count">0</span></div>
-      </div>
-    </header>
-    <main class="idea-main">
+  <div class="p-head"><span class="p-title">想法</span><span class="p-sub" id="idea-sub"></span>
+    <span class="idea-meta" id="idea-date">--</span>
+    <span class="idea-meta" id="idea-clock">--</span>
+    <span class="idea-meta">共 <span id="idea-count">0</span> 条</span>
+    <button class="p-close" data-close="1">✕</button></div>
+  <div class="p-body">
+    <div class="idea-main">
       <section class="record-panel">
         <header class="record-header">
           <h2 class="record-title">记录灵感</h2>
@@ -137,9 +128,8 @@
         </header>
         <div class="list-body" id="idea-list"></div>
       </section>
-    </main>
+    </div>
   </div>
-  <button class="p-close idea-close" data-close="1">✕</button>
 </div>
 
 <div class="panel" id="p-ha">
