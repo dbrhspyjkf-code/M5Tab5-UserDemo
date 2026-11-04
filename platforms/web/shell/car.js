@@ -372,7 +372,7 @@ async function refreshWeather() {
   const at = j.attributes || {};
   if (at.temperature != null) {
     const t = typeof at.temperature === "number" ? at.temperature : parseFloat(at.temperature);
-    if (!isNaN(t)) setText("wx-t", Math.round(t) + "°C");
+    if (!isNaN(t)) setText("wx-t", Math.round(t) + "°");
   }
   setText("wx-c", condZh(j.state));
 }
@@ -1867,6 +1867,18 @@ PANEL_OPENERS.idea = {
   }
 };
 
+/* ── 右列前 4 卡等高 = 最高内容卡 (硬性规定: 等高且每张完整; 超出列高
+   走列内滚, 第 4 张滚一下即完整可见) ── */
+function equalizeCards() {
+  const cards = [...document.querySelectorAll(".col > .card")].slice(0, 4);
+  if (cards.length < 4) return;
+  const maxH = Math.max(...cards.map(c => c.scrollHeight));
+  if (!maxH) return;
+  cards.forEach(c => { c.style.height = maxH + "px"; c.style.flex = "0 0 auto"; });
+}
+setInterval(equalizeCards, 1000);
+window.addEventListener("resize", equalizeCards);
+
 /* ════ 启动 ════ */
 applyTheme(themeIdx);
 buildHealthGrid();
@@ -1877,6 +1889,7 @@ refreshGlm();      refreshAgenda();
 refreshNews();     refreshHealth();
 refreshOpi();      refreshSentence();
 refreshIpo();      refreshWeather();
+equalizeCards();
 buildVU();
 loadStations();
 setInterval(() => { refreshGlm(); refreshAgenda(); refreshNews(); refreshHealth(); refreshOpi(); }, 60000);

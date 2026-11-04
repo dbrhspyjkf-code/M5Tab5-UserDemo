@@ -48,7 +48,8 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 /* ── Hero 左卡 ── */
 .hero {
   flex:0 0 min(640px, 44%); min-height:0; min-width:0; background:var(--hero);
-  display:flex; flex-direction:column; padding:14px 24px;
+  display:flex; flex-direction:column; justify-content:center;
+  padding:14px 24px; gap:10px;
   overflow:hidden; }
 .clock { font-size:clamp(56px,6vw,96px); font-weight:700; line-height:1.05;
          letter-spacing:2px; font-variant-numeric:tabular-nums; }
@@ -65,7 +66,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .ipo-t { font-size:calc(13px * var(--fs)); }
 .ipo-list { font-size:calc(14px * var(--fs)); color:var(--hi); line-height:1.7;
             font-variant-numeric:tabular-nums; white-space:pre-line; }
-.hero-foot { margin-top:auto; padding-top:10px;
+.hero-foot { margin-top:calc(14px * var(--fs)); padding-top:10px;
              display:flex; align-items:center; gap:10px; }
 .tbtn { background:var(--track); color:var(--soft); border:1px solid var(--border);
         border-radius:14px; padding:7px 14px; font-size:calc(14px * var(--fs)); }
@@ -77,7 +78,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
       overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
 .col > .card { flex:0 0 auto; min-height:0; overflow:hidden; }
 /* 前 4 卡弹性撑满可视区 (正好 4 张完整, 第 5 张起内部滚); 窗口矮时收缩到内容高后走列内滚 */
-.col > .card:nth-child(-n+4) { flex:1 1 auto; min-height:min-content; }
+.col > .card:nth-child(-n+4) { flex:0 0 auto; }   /* 高度由 JS 等高化 = 最高内容卡 */
 .col::-webkit-scrollbar { display:none; }
 .body { padding:2px 0; }
 
