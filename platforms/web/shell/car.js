@@ -153,7 +153,7 @@ function tickClock() {
   const n = new Date();
   const p2 = v => String(v).padStart(2, "0");
   $("clock").innerHTML = p2(n.getHours()) + ":" + p2(n.getMinutes()) +
-                         '<span class="sec">:' + p2(n.getSeconds()) + "</span>";
+                         '<span class="sec">' + p2(n.getSeconds()) + "</span>";
   setText("date", n.getFullYear() + "年" + (n.getMonth() + 1) + "月" + n.getDate() + "日 星期" + WEEK[n.getDay()]);
   setText("lunar", "农历 " + (lunarText(n.getFullYear(), n.getMonth() + 1, n.getDate()) || "--"));
 }
@@ -891,7 +891,7 @@ async function openChart(code, name) {
 }
 function chartCtx() {
   const c = $("chart"), dpr = window.devicePixelRatio || 1;
-  const w = c.clientWidth || 800, h = 420;
+  const w = c.clientWidth || 800, h = 640;
   c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
   const ctx = c.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -911,7 +911,7 @@ function drawChart() {
 function chartEmpty(msg) {
   const { ctx, w, h } = chartCtx();
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = cssv("--dim"); ctx.font = "14px sans-serif";
+  ctx.fillStyle = cssv("--dim"); ctx.font = "28px sans-serif";
   ctx.textAlign = "center"; ctx.fillText(msg, w / 2, h / 2);
 }
 function drawMinute() {
@@ -927,7 +927,7 @@ function drawMinute() {
   const X = i => padL + (n <= 1 ? pw / 2 : i / (n - 1) * pw);
   const Y = p => padT + (hi - p) / (hi - lo) * ph;
   ctx.clearRect(0, 0, w, h);
-  ctx.font = "11px sans-serif"; ctx.textBaseline = "middle";
+  ctx.font = "22px sans-serif"; ctx.textBaseline = "middle";
   // 网格 + 左轴价签
   ctx.strokeStyle = cssv("--border"); ctx.fillStyle = cssv("--dim");
   for (let k = 0; k <= 4; k++) {
@@ -979,7 +979,7 @@ function drawDayK() {
   const Y = p => padT + (hi - p) / (hi - lo) * priceH;
   const bw = Math.max(1.2, pw / n * 0.62);
   ctx.clearRect(0, 0, w, h);
-  ctx.font = "11px sans-serif"; ctx.textBaseline = "middle";
+  ctx.font = "22px sans-serif"; ctx.textBaseline = "middle";
   ctx.strokeStyle = cssv("--border"); ctx.fillStyle = cssv("--dim");
   for (let k = 0; k <= 4; k++) {
     const y = padT + priceH * k / 4;
