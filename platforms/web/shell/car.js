@@ -203,7 +203,7 @@ async function refreshNews() {
     const its = Array.isArray(sec.items) ? sec.items : [];
     for (const it of its) {
       if (typeof it !== "string" || !it) continue;
-      items.push({ t: "【" + label + "】" + it, s: "AI 新闻 · " + (j.date || "") });
+      items.push({ t: it, s: "AI 新闻 · " + (j.date || "") });
       if (items.length >= 12) break;
     }
     if (items.length >= 12) break;

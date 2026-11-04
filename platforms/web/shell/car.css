@@ -37,7 +37,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .head { display:flex; align-items:baseline; gap:10px; margin-bottom:8px; }
 .idx  { color:var(--dim); font-size:calc(12px * var(--fs)); font-variant-numeric:tabular-nums; }
 .nm   { color:var(--soft); font-size:calc(14px * var(--fs)); }
-.val  { color:var(--hi); font-size:clamp(32px,3vw,40px); font-weight:600;
+.val  { color:var(--hi); font-size:clamp(32px,3vw,40px); font-weight:400;
         font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sub  { font-size:calc(12px * var(--fs)); margin-top:4px; }
 .dim  { color:var(--dim); } .soft { color:var(--soft); }
@@ -48,8 +48,8 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 /* ── Hero 左卡 ── */
 .hero {
   flex:0 0 min(640px, 44%); min-height:0; min-width:0; background:var(--hero);
-  display:flex; flex-direction:column; justify-content:center;
-  padding:14px 24px; gap:10px;
+  display:flex; flex-direction:column; justify-content:center; align-items:center;
+  text-align:center; padding:14px 24px; gap:10px;
   overflow:hidden; }
 .clock { font-size:clamp(56px,6vw,96px); font-weight:700; line-height:1.05;
          letter-spacing:2px; font-variant-numeric:tabular-nums; }
@@ -57,7 +57,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .hero-sub { font-size:clamp(32px,2.8vw,40px); color:var(--soft); margin-top:6px; }
 .wx { font-size:clamp(40px,4vw,56px); font-weight:600; margin-top:10px; }
 .wx .cond { font-size:.72em; font-weight:400; color:var(--soft); margin-left:8px; }
-.rule { border-top:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+.rule { width:100%; border-top:1px solid color-mix(in srgb, var(--border) 70%, transparent);
         margin:14px 0 10px; }
 .sent { cursor:pointer; flex-shrink:1; min-height:0; overflow:hidden; }   /* 高度紧张时裁自己, 不叠下方 */
 .sent-en { font-size:clamp(30px,2.6vw,36px); line-height:1.35; color:var(--hi); }
@@ -66,7 +66,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .ipo-t { font-size:calc(13px * var(--fs)); }
 .ipo-list { font-size:calc(14px * var(--fs)); color:var(--hi); line-height:1.7;
             font-variant-numeric:tabular-nums; white-space:pre-line; }
-.hero-foot { margin-top:calc(14px * var(--fs)); padding-top:10px;
+.hero-foot { margin-top:calc(14px * var(--fs)); justify-content:center; padding-top:10px;
              display:flex; align-items:center; gap:10px; }
 .tbtn { background:var(--track); color:var(--soft); border:1px solid var(--border);
         border-radius:14px; padding:7px 14px; font-size:calc(14px * var(--fs)); }
@@ -83,7 +83,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .body { padding:2px 0; }
 
 /* 01 GLM / DeepSeek */
-.glm-grid { display:flex; align-items:center; gap:18px; }
+.glm-grid { display:flex; align-items:flex-start; gap:18px; }
 .glm-grid .grow { flex:1; min-width:0; }
 #ds { flex:none; text-align:right; }   /* 推到右缘, 与 head 行「DeepSeek 余额」标签对齐 */
 
