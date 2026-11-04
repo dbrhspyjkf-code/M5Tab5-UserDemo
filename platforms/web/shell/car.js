@@ -101,6 +101,12 @@ const THEMES = [
     track:"#E4ECE6", page:"#EEF3EF",
     hi:"#1A2B22", soft:"#4A5D52", dim:"#8AA094",
     ok:"#18A05E", warn:"#D99A12", danger:"#DC4444" },
+  /* 车机灰: 取色自理想 L9 车机系统 UI (浅灰底/白灰卡片), 与车机一体 */
+  { name:"车机灰", hero:"#F0F1F4", accent:"#5F7FB8", press:"#D5DCE8",
+    cards:["#FAFBFC","#F4F5F8","#EEF0F3","#E8EAEF"], border:"#D3D8E0",
+    track:"#DDE0E6", page:"#E4E6EA",
+    hi:"#262B33", soft:"#555D6B", dim:"#8A93A3",
+    ok:"#2FA26E", warn:"#E8A23D", danger:"#E05252" },
 ];
 let themeIdx = 0;
 try { themeIdx = (parseInt(localStorage.getItem("car_theme_idx"), 10) || 0) % THEMES.length; } catch (e) {}
