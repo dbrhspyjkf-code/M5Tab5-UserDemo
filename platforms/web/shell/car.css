@@ -249,7 +249,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .tool-card:active { background:var(--press); }
 .tool-card .ticon { font-size:calc(28px * var(--fs)); margin-bottom:8px; }
 .tool-card .ticon-img { width:72px; height:72px; object-fit:contain;
-                margin-bottom:8px; display:block; }
+                margin:0 auto 8px; display:block; }   /* block 元素居中靠 margin auto */
 
 /* ── 图库 ── */
 .ggrid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
