@@ -1564,20 +1564,20 @@ function fmtPrize(g) {
 TOOL_INIT.ssq = function () {
   setText("tool-title", "双色球");
   const render = () => {
-    const it = ssqData;
-    const g1 = it.grades ? it.grades.find(g => g.level === 1) : null;
-    const g2 = it.grades ? it.grades.find(g => g.level === 2) : null;
-    let html = '<div class="ssq-latest"><div class="ssq-h"><span class="code">第 ' +
-      esc(it.code) + " 期</span><span class='dt'>" + esc(it.date) + " 周" + esc(it.week || "") + "</span></div>" +
-      ballsHTML(it.reds || [], it.blue) +
-      '<div class="ssq-meta">销售额 ' + fmtYi(it.sales || 0) + " · 奖池 " + fmtYi(it.pool || 0) +
-      "<br>一等奖 " + ((g1 && g1.num) || 0) + " 注 单注 " + fmtPrize(g1) +
-      " · 二等奖 " + ((g2 && g2.num) || 0) + " 注 单注 " + fmtPrize(g2) + "</div></div>" +
-      '<div class="sec">近 10 期</div>';
-    (ssqList || []).slice(1, 11).forEach(x => {
-      html += '<div class="ssq-row"><span class="icode">' + esc(x.code) + " 期 · " +
-        esc((x.date || "").slice(5)) + "</span>" + ballsHTML(x.reds || [], x.blue, true) + "</div>";
+    const list = (ssqList || []).slice(0, 10);   // 最新 + 近 9 期, 双列卡片
+    let html = '<div class="ssq-grid">';
+    list.forEach(it => {
+      const g1 = it.grades ? it.grades.find(g => g.level === 1) : null;
+      const g2 = it.grades ? it.grades.find(g => g.level === 2) : null;
+      html += '<div class="ssq-latest"><div class="ssq-h"><span class="code">第 ' +
+        esc(it.code) + ' 期</span><span class="dt">' + esc(it.date) + " 周" +
+        esc(it.week || "") + "</span></div>" +
+        ballsHTML(it.reds || [], it.blue) +
+        '<div class="ssq-meta">销售额 ' + fmtYi(it.sales || 0) + " · 奖池 " + fmtYi(it.pool || 0) +
+        "<br>一等奖 " + ((g1 && g1.num) || 0) + " 注 单注 " + fmtPrize(g1) +
+        " · 二等奖 " + ((g2 && g2.num) || 0) + " 注 单注 " + fmtPrize(g2) + "</div></div>";
     });
+    html += "</div>";
     $("tool-view").innerHTML = html;
   };
   if (ssqData && Date.now() - ssqAt < 10 * 60000) { render(); return; }

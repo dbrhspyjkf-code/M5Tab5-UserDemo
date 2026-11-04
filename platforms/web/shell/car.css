@@ -301,8 +301,8 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .ssq-h { display:flex; align-items:baseline; gap:10px; margin-bottom:10px; }
 .ssq-h .code { color:var(--hi); font-size:calc(17px * var(--fs)); font-weight:600; }
 .ssq-h .dt   { color:var(--dim); font-size:calc(12px * var(--fs)); }
-.ball { display:inline-flex; width:34px; height:34px; border-radius:50%; align-items:center;
-        justify-content:center; font-size:calc(15px * var(--fs)); font-weight:700; margin:0 5px 5px 0;
+.ball { display:inline-flex; width:44px; height:44px; border-radius:50%; align-items:center;
+        justify-content:center; font-size:calc(18px * var(--fs)); font-weight:700; margin:0 6px 6px 0;
         color:#fff; font-variant-numeric:tabular-nums; }
 .ball.r { background:#D6362B; } .ball.b { background:#1F6BB0; }
 .ssq-meta { color:var(--soft); font-size:calc(13px * var(--fs)); margin-top:8px; line-height:1.7; }
@@ -515,3 +515,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .hm-m .mini-chip { width:100%; justify-content:center; }
 #hm-d { margin:16px 0 0; }
 @media (max-width:900px) { .hm-wrap { grid-template-columns:1fr; } }
+
+/* 双色球: 开奖记录卡片双列 (全部与最新一期同款) */
+.ssq-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+.ssq-grid .ssq-latest { margin-bottom:0; }
