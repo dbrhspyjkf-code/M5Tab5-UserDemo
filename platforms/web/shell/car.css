@@ -360,7 +360,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 /* ═══ 想法面板 (主题化排版, 与其他面板一致; 数据存 Pi) ═══ */
 .idea-main { flex:1 1 auto; min-height:0; display:grid;
-             grid-template-columns:minmax(560px,42%) 1fr; gap:24px; }
+             grid-template-columns:1fr 1fr; gap:24px; }   /* 两卡等宽 */
 .record-panel, #p-idea .inspiration-list {
   display:flex; flex-direction:column; min-height:0; min-width:0;
   background:var(--card1);
