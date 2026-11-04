@@ -1867,14 +1867,39 @@ PANEL_OPENERS.idea = {
   }
 };
 
-/* ── 右列前 4 卡等高 = 最高内容卡 (硬性规定: 等高且每张完整; 超出列高
-   走列内滚, 第 4 张滚一下即完整可见) ── */
+/* ── 右列前 4 卡: 等高 = 列可视高÷4 (硬性规定), 内容超出卡片时按比例
+   缩小字体适配 (transform scale, 不裁切) ── */
 function equalizeCards() {
-  const cards = [...document.querySelectorAll(".col > .card")].slice(0, 4);
+  const col = document.querySelector(".col");
+  const cards = [...col.querySelectorAll(":scope > .card")].slice(0, 4);
   if (cards.length < 4) return;
-  const maxH = Math.max(...cards.map(c => c.scrollHeight));
-  if (!maxH) return;
-  cards.forEach(c => { c.style.height = maxH + "px"; c.style.flex = "0 0 auto"; });
+  const gap = parseFloat(getComputedStyle(col).rowGap) || 12;
+  const h = Math.max(120, Math.floor((col.clientHeight - gap * 3) / 4));
+  cards.forEach(card => {
+    card.style.height = h + "px";
+    card.style.flex = "0 0 auto";
+    // 内容包一层 (一次性), 超出时整体 scale 适配
+    let wrap = card.querySelector(".cwrap");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "cwrap";
+      while (card.firstChild) wrap.appendChild(card.firstChild);
+      card.appendChild(wrap);
+    }
+    const pt = parseFloat(getComputedStyle(card).paddingTop) || 0;
+    const pb = parseFloat(getComputedStyle(card).paddingBottom) || 0;
+    const avail = card.clientHeight - pt - pb;
+    wrap.style.transform = "none";
+    wrap.style.width = "100%";
+    const natural = wrap.scrollHeight;
+    if (!natural) return;
+    const z = Math.min(1, avail / natural);
+    if (z < 1) {
+      wrap.style.transformOrigin = "top left";
+      wrap.style.transform = "scale(" + z.toFixed(3) + ")";
+      wrap.style.width = (100 / z).toFixed(2) + "%";
+    }
+  });
 }
 setInterval(equalizeCards, 1000);
 window.addEventListener("resize", equalizeCards);

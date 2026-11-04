@@ -485,3 +485,6 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .link-button.danger:active { background:color-mix(in srgb, var(--danger) 14%, transparent); }
 .idea-meta { color:var(--dim); font-size:calc(12px * var(--fs));
   font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+/* 卡内容缩放包裹层 (字超出卡片时整体 scale 适配) */
+.cwrap { display:block; }
