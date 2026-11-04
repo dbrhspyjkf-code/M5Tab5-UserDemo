@@ -94,7 +94,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 #chart-wrap .p-tabs { margin-top:18px; }
 #r-cur { display:block; text-align:center; font-size:calc(15px * var(--fs)); color:var(--soft); margin-bottom:14px; }
 #p-radio .rctrl { justify-content:center; margin-top:0; }
-#p-radio .rvol { flex:none; width:540px; }
+#p-radio .rvol { flex:1 1 auto; min-width:180px; max-width:560px; }
 /* (#p-radio .chips 布局在收音机面板段统一定义) */
 #gal-msg { text-align:center; padding:20px 0; }
 .ph { color:var(--dim); text-align:center; padding:40px 0; }
@@ -200,14 +200,20 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 /* ── 收音机面板: 内容限宽居中, VU 20 条 (与设备 app_radio 同款: 单色
    accent、钟形频段权重、峰值帽; C_AMBER=主题 accent) ── */
-#p-radio .p-body { max-width:1400px; margin:0 auto; width:100%; }
-#p-radio .chips { max-height:none; grid-template-columns:repeat(auto-fill,minmax(262px,1fr)); }
+#p-radio .p-body { width:100%; display:flex; flex-direction:column;
+                   overflow:hidden; padding-bottom:24px; }   /* 自适应浏览器宽高 */
+.chips { flex:none; }
+#p-radio .chips { display:flex; gap:10px; height:150px; overflow-x:auto;
+                 overflow-y:hidden; scrollbar-width:none; }
+#p-radio .chips::-webkit-scrollbar { display:none; }
+#p-radio .chip { flex:0 0 calc((100% - 40px) / 5); display:flex; flex-direction:column;
+                align-items:center; justify-content:center; }   /* 一行恰好 5 个, 左右拉 */
 #p-radio .chip { padding:28px 10px; min-height:150px; font-size:calc(15px * var(--fs)); border-radius:14px;
                  display:flex; flex-direction:column; align-items:center; justify-content:center; }
 #p-radio .chip .fq { font-size:calc(12px * var(--fs)); margin-top:4px; }
-.vu20 { display:flex; gap:7px; justify-content:center; align-items:flex-end;
-        height:300px; margin:6px auto 28px; max-width:1120px; }
-.vbar { position:relative; flex:none; width:38px; height:100%;
+.vu20 { display:flex; gap:10px; justify-content:center; align-items:flex-end;
+        flex:1 1 auto; min-height:140px; margin:6px 0 24px; width:100%; }
+.vbar { position:relative; flex:1 1 0; min-width:10px; height:100%;
         border-radius:2px; background:var(--track); overflow:hidden; }
 .vbar .vfill { position:absolute; bottom:0; left:0; width:100%; height:2%;
                background:var(--accent); opacity:.9; border-radius:2px; }
