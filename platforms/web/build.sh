@@ -30,11 +30,6 @@ cp "$ROOT/platforms/web/shell/shell.js" "$BIN/shell-$TS.js"
 cp "$STAGE/tab5web.js"   "$BIN/tab5web-$TS.js"
 cp "$STAGE/tab5web.wasm" "$BIN/tab5web-$TS.wasm"
 cp "$BUILD/assets.img"   "$BIN/assets-$TS.img"
-# car.html 轻量车机页 (纯 HTML 零构建, L9/iPad/Mac 通用; 方案见项目 memory/car-html-plan.md)
-# css/js 必须外置: 生产网关 CSP default-src 'self' 禁内联 <style>/<script> (2026-11-03 实锤)
-cp "$ROOT/platforms/web/shell/car.html" "$BIN/"
-cp "$ROOT/platforms/web/shell/car.css"  "$BIN/"
-cp "$ROOT/platforms/web/shell/car.js"   "$BIN/"
 rm -rf "$STAGE"
 # glue 内裸名 wasm 字面量自版本化: blob 上下文的 worker (scriptDir 失效)
 # 会按字面量拉 "tab5web.wasm" —— 网关裸名 302 永远指最新版, glue 一旦
