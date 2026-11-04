@@ -475,7 +475,8 @@ void AppHome::onOpen()
         lv_obj_set_style_text_align(_dash_ag2, LV_TEXT_ALIGN_CENTER, 0);
     }
     {   // 04 AI 新闻轮播宽卡 (hermes /news/ai; 每日一句已移 hero 主卡, 2026-10-30)
-        // 长按/每 10s 自动推进下一条; 30 分钟节流拉取
+        // 短按/每 10s 自动推进下一条; 长按 500ms 开当前条目详情弹窗 (car-dash
+        // 同款, 2026-11-04); 30 分钟节流拉取
         // 加高 110→140 容纳 1.25x 文字; OPi 卡相应 240→212, 右列仍填满 608
         // 2026-10-30 内容改水平居中: cross=CENTER + 中心 pivot + text CENTER
         // (换行宽 636→560: 视觉 700 恰在卡内容区 708 内, 放大不越界)
@@ -500,11 +501,16 @@ void AppHome::onOpen()
         lv_obj_set_style_text_line_space(_dash_sent_en, 10, 0);
         lv_label_set_long_mode(_dash_sent_en, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(_dash_sent_en, 560);
-        // 长按 (与股票卡片同款 500ms): outline 闪一下 → 换下一句
+        // 短按: outline 闪一下推进下一条 (原长按行为); 长按 500ms (与股票卡片
+        // 同款全局 indev 设置): 开当前条目详情弹窗。SHORT_CLICKED 只在未长按的
+        // 抬起时发送 (lv_indev.c: long_pr_sent==0 才发), 与长按天然互斥
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))
                 ->_carouselNext(lv_event_get_current_target_obj(e));
+        }, LV_EVENT_SHORT_CLICKED, this);
+        lv_obj_add_event_cb(card, [](lv_event_t* e) {
+            static_cast<AppHome*>(lv_event_get_user_data(e))->_openNewsDialog();
         }, LV_EVENT_LONG_PRESSED, this);
     }
     {   // 05 健康卡 (hermes /api/health, iPhone 快捷指令推送; 2026-10-31 用户
@@ -844,7 +850,8 @@ void AppHome::_applyCarousel()
     std::lock_guard<std::mutex> lk(_dash_mutex);
     if (_carousel.empty()) return;
     if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
-    _dash_sent_en_txt = _carousel[_car_idx].l1;   // l2 日期副行已移除 (2026-10-31)
+    const CarItem& it = _carousel[_car_idx];
+    _dash_sent_en_txt = "【" + it.cat + "】" + it.title;   // 日期副行已移除 (2026-10-31)
 }
 
 void AppHome::_sentenceNext()
@@ -901,6 +908,58 @@ void AppHome::_carouselNext(lv_obj_t* card)
         _car_idx = (_car_idx + 1) % (int)_carousel.size();
     }
     _applyCarousel();
+}
+
+void AppHome::_openNewsDialog()
+{
+    // 新闻详情弹窗 (car-dash 同款, 2026-11-04): 分区 · 日期 / 标题 / 简介。
+    // 固定卡 620x500 (与天气详情弹窗同家族); meta+标题+简介装在一个竖向
+    // 滚动容器里 — 长简介不丢内容。内容开窗即定格 (数据早已在 _carousel),
+    // 无异步填充, 标签全部局部变量。配色对齐 car-dash: meta=dim/标题=hi/简介=soft
+    std::string cat, title, desc, date;
+    {
+        std::lock_guard<std::mutex> lk(_dash_mutex);
+        if (_carousel.empty()) return;
+        if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
+        const CarItem& it = _carousel[_car_idx];
+        cat = it.cat; title = it.title; desc = it.desc;
+        date = _news_date;
+    }
+
+    lv_obj_t* card = _openModal(620, 500, "AI 新闻");
+
+    lv_obj_t* body = lv_obj_create(card);
+    lv_obj_set_pos(body, 24, 64);
+    lv_obj_set_size(body, 620 - 48, 500 - 64 - 18);
+    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(body, 0, 0);
+    lv_obj_set_style_pad_all(body, 10, 0);
+    lv_obj_set_style_pad_row(body, 14, 0);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
+
+    lv_obj_t* meta = lv_label_create(body);
+    lv_label_set_text(meta, (date.empty() ? cat : cat + " · " + date).c_str());
+    lv_obj_set_width(meta, LV_PCT(100));
+    lv_obj_set_style_text_font(meta, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(meta, lv_color_hex(theme::cur().text_dim), 0);
+
+    lv_obj_t* tl = lv_label_create(body);
+    lv_label_set_text(tl, title.c_str());
+    lv_obj_set_width(tl, LV_PCT(100));
+    lv_label_set_long_mode(tl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(tl, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_hi), 0);
+    lv_obj_set_style_text_line_space(tl, 8, 0);
+
+    lv_obj_t* dl = lv_label_create(body);
+    lv_label_set_text(dl, desc.empty() ? "（这条新闻没有简介）" : desc.c_str());
+    lv_obj_set_width(dl, LV_PCT(100));
+    lv_label_set_long_mode(dl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(dl, zh_font_md(), 0);
+    lv_obj_set_style_text_color(dl, lv_color_hex(theme::cur().text_soft), 0);
+    lv_obj_set_style_text_line_space(dl, 8, 0);
 }
 
 void AppHome::_fetch_dashboard()
@@ -987,28 +1046,36 @@ void AppHome::_fetch_dashboard()
             std::string cn = j.value("cn", std::string());
             if (!en.empty()) { sent_en = en; sent_cn = cn; }
         }
-        // AI 新闻 (hermes /news/ai, 同 AI Passport 数据契约; 30 分钟节流)
-        // 条目并入每日一句卡轮播: 每条一行 "【分区】标题", 副行日期
+        // AI 新闻 (hermes /news/ai; 30 分钟节流)。2026-11-04 数据源改版:
+        // secs[].items 从标题字符串变为 {t 标题, d 简介} 对象, 条目上限
+        // 12→48 (与 car-dash 同步), 简介 d 供长按详情弹窗显示; 旧版纯标题
+        // 字符串保留兜底 (服务端回滚时卡片不至于空转)
         static std::atomic<uint32_t> s_news_ms{0};
         std::vector<CarItem> news;
+        std::string news_date;
         uint32_t wnow = GetHAL()->millis();
         if (s_news_ms.load() == 0 || wnow - s_news_ms.load() >= 30u * 60 * 1000) {
             // 节流只在拿到非空数据时生效 (2026-10-30 修): 请求前先标记会把
             // 一次瞬时失败放大成 30 分钟无新闻
             if (auto j = pick(GetHAL()->httpGet(base + "/news/ai").body); !j.is_null()) {
-                std::string ndate = j.value("date", std::string());
+                news_date = j.value("date", std::string());
                 if (j.contains("secs") && j["secs"].is_array())
                     for (auto& sec : j["secs"]) {
                         std::string label = sec.value("label", std::string("新闻"));
                         if (!sec.contains("items") || !sec["items"].is_array()) continue;
                         for (auto& it : sec["items"]) {
-                            if (!it.is_string()) continue;
-                            std::string t = it.get<std::string>();
+                            std::string t, d;
+                            if (it.is_object()) {           // 新版 {t, d}
+                                t = it.value("t", std::string());
+                                d = it.value("d", std::string());
+                            } else if (it.is_string()) {    // 旧版纯标题
+                                t = it.get<std::string>();
+                            }
                             if (t.empty()) continue;
-                            news.push_back({"【" + label + "】" + t, "AI 新闻 · " + ndate});
-                            if (news.size() >= 12) break;
+                            news.push_back({label, t, d});
+                            if (news.size() >= 48) break;
                         }
-                        if (news.size() >= 12) break;
+                        if (news.size() >= 48) break;
                     }
                 if (!news.empty()) s_news_ms.store(wnow);
             }
@@ -1090,7 +1157,7 @@ void AppHome::_fetch_dashboard()
         _dash_glm_txt = glm_txt;
         _dash_glm2_txt = glm_sub;
         if (!sent_en.empty()) { _hero_sent_en_txt = sent_en; _hero_sent_cn_txt = sent_cn; }
-        if (!news.empty()) _news_items = news;
+        if (!news.empty()) { _news_items = news; _news_date = news_date; }
         // 轮播 = 纯 AI 新闻 (每日一句移 hero 主卡, 2026-10-30); 越界索引归零
         _carousel = _news_items;
         if (_car_idx >= (int)_carousel.size()) _car_idx = 0;

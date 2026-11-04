@@ -122,8 +122,11 @@ private:
     std::string _dash_sent_en_txt;
     std::string _hero_sent_en_txt, _hero_sent_cn_txt;  // hero 每日一句 (独立于轮播数据源)
     // 轮播: AI 新闻条目 (每日一句已移 hero 主卡, 2026-10-30; guarded by _dash_mutex)
-    struct CarItem { std::string l1, l2; };
+    // 2026-11-04 数据源改版: secs[].items 从标题字符串变 {t 标题, d 简介} 对象,
+    // cat/title/desc 三字段供轮播行与长按详情弹窗共用
+    struct CarItem { std::string cat, title, desc; };
     std::vector<CarItem> _carousel, _news_items;
+    std::string _news_date;              // 数据源 date ("MM-DD HH:MM", 弹窗 meta 行)
     int      _car_idx = 0;
     uint32_t _car_ms  = 0;
     std::string _ipo_txt = "\x01";     // \x01=未拉取哨兵 (空串=确认无新股)
@@ -148,8 +151,9 @@ private:
     OpiData    _opi;                  // guarded by _dash_mutex
     std::mutex  _dash_mutex;
     void _fetch_dashboard();
-    void _carouselNext(lv_obj_t* card);   // 轮播: 闪环 + 推进下一条 (长按/定时)
+    void _carouselNext(lv_obj_t* card);   // 轮播: 闪环 + 推进下一条 (短按/定时)
     void _applyCarousel();                // 当前轮播条目 → 卡片标签 (LVGL 线程)
+    void _openNewsDialog();               // 新闻卡长按: 当前条目详情弹窗 (car-dash 同款)
     void _sentenceNext();                 // hero 每日一句: offset+1 轻量重拉 (长按)
     void _updateOpiWidgets();  // 把 _opi 刷进右缘 OPi 卡; 调用方需已持有 _dash_mutex
 
