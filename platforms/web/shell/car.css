@@ -76,7 +76,8 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .col { flex:1 1 auto; min-width:0; min-height:0; display:flex; flex-direction:column; gap:12px;
       overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
 .col > .card { flex:0 0 auto; min-height:0; overflow:hidden; }
-.col > .card:nth-child(-n+3) { flex:1 0 170px; min-height:150px; }   /* 前3卡只放大不压缩(保可读), 装不下走列内滚 */
+/* 前 4 卡弹性撑满可视区 (正好 4 张完整, 第 5 张起内部滚); 窗口矮时收缩到内容高后走列内滚 */
+.col > .card:nth-child(-n+4) { flex:1 1 auto; min-height:min-content; }
 .col::-webkit-scrollbar { display:none; }
 .body { padding:2px 0; }
 
