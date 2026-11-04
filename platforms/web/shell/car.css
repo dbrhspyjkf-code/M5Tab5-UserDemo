@@ -509,8 +509,9 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 /* 健康工具: 双栏 — 左指标按钮(双列多行)/右柱状图 */
 .hm-wrap { display:grid; grid-template-columns:minmax(320px,360px) 1fr;
-           gap:24px; align-items:start; min-height:0; }
-.hm-m { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
-.hm-m .mini-chip { width:100%; justify-content:flex-start; }
+           gap:24px; align-items:center; min-height:0;
+           height:100%; }
+.hm-m { display:grid; grid-template-columns:repeat(2,1fr); gap:14px 10px; }
+.hm-m .mini-chip { width:100%; justify-content:center; }
 #hm-d { margin:16px 0 0; }
 @media (max-width:900px) { .hm-wrap { grid-template-columns:1fr; } }
