@@ -1169,16 +1169,13 @@ let toolCurrent = null;
 function toolHome() {
   toolCurrent = null;
   $("tool-menu").hidden = false; $("tool-view").hidden = true;
-  $("tool-back").hidden = true;
   setText("tool-title", "工具"); setText("tool-sub", "");
 }
 function showTool(name) {
   toolCurrent = name;
   $("tool-menu").hidden = true; $("tool-view").hidden = false;
-  $("tool-back").hidden = false;
   TOOL_INIT[name]();
 }
-$("tool-back").addEventListener("click", toolHome);
 document.querySelectorAll(".tool-card").forEach(c =>
   c.addEventListener("click", () => showTool(c.dataset.tool)));
 
@@ -1516,12 +1513,18 @@ TOOL_INIT.health = function () {
   setText("tool-title", "健康"); setText("tool-sub", "");
   if (!$("hm-m")) {
     $("tool-view").innerHTML =
-      '<div class="hm-m" id="hm-m"></div>' +
-      '<div class="p-tabs" id="hm-d">' +
-      [7,30,90].map(d => '<button class="mini-chip' + (d === hmDays ? " is-active" : "") +
-        '" data-d="' + d + '">' + d + ' 天</button>').join("") + "</div>" +
-      '<canvas id="hm-canvas"></canvas>' +
-      '<div class="hm-stats" id="hm-stats"></div>';
+      '<div class="hm-wrap">' +
+        '<div class="hm-left">' +
+          '<div class="hm-m" id="hm-m"></div>' +
+          '<div class="p-tabs" id="hm-d">' +
+          [7,30,90].map(d => '<button class="mini-chip' + (d === hmDays ? " is-active" : "") +
+            '" data-d="' + d + '">' + d + ' 天</button>').join("") + "</div>" +
+        "</div>" +
+        '<div class="hm-right">' +
+          '<canvas id="hm-canvas"></canvas>' +
+          '<div class="hm-stats" id="hm-stats"></div>' +
+        "</div>" +
+      "</div>";
     $("hm-m").innerHTML = HEALTH_METRICS.map((m, i) =>
       '<button class="mini-chip" data-hm="' + i + '"><span class="ic-dot" data-c="' + m[2] +
       '"></span>' + m[1] + "</button>").join("");

@@ -90,7 +90,6 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 /* ═══ CSP 补丁: style-src 'self' 连 HTML style="..." 属性也拦 ——
    一切原内联样式全部挪到这里 (CSSOM el.style.x= 不受拦, 可继续用) ═══ */
 #lunar { font-size:calc(15px * var(--fs)); }
-#tool-back { margin-left:0; }
 #chart-wrap .p-tabs { margin-top:18px; }
 #r-cur { display:block; text-align:center; font-size:calc(15px * var(--fs)); color:var(--soft); margin-bottom:14px; }
 #p-radio .rctrl { justify-content:center; margin-top:0; }
@@ -507,3 +506,11 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .hm-stats { color:var(--soft); font-size:calc(14px * var(--fs)); margin-top:10px;
   font-variant-numeric:tabular-nums; }
 #hm-d { margin:14px 0; }
+
+/* 健康工具: 双栏 — 左指标按钮(双列多行)/右柱状图 */
+.hm-wrap { display:grid; grid-template-columns:minmax(320px,360px) 1fr;
+           gap:24px; align-items:start; min-height:0; }
+.hm-m { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+.hm-m .mini-chip { width:100%; justify-content:flex-start; }
+#hm-d { margin:16px 0 0; }
+@media (max-width:900px) { .hm-wrap { grid-template-columns:1fr; } }
