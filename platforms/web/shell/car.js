@@ -1379,15 +1379,54 @@ let recStream = null, recRecorder = null, recChunks = [], recMime = "";
 let recSec = 0, recTimer = 0, recStartAt = 0, recActive = false;
 
 
-function ideaLoad() {
+async function ideaLoad() {
+  const j = await getJSON("/gw/8766/api/idea/all", 15000);
+  ideaItems = (j && j.ok && Array.isArray(j.texts)) ? j.texts : [];
+  voiceItems = (j && j.ok && Array.isArray(j.voices)) ? j.voices : [];
+  ideaItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  voiceItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+async function postRaw(url, body, timeoutMs) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs || 30000);
+  try {
+    const r = await fetch(url, { method:"POST", signal:ctl.signal,
+      credentials:"same-origin",
+      headers:{ "Content-Type":"application/octet-stream", "X-Tab5-Web":"1" },
+      body });
+    if (!r.ok) { note401(r.status); return null; }
+    try { return await r.json(); } catch (e) { return { ok:true }; }
+  } catch (e) { return null; }
+  finally { clearTimeout(t); }
+}
+/* 一次性迁移: 旧 localStorage 文字 + 旧 IndexedDB 语音 → Pi 服务端 */
+async function ideaMigrate() {
+  if (localStorage.getItem("idea_migrated_v2")) return;
   try {
     const raw = localStorage.getItem(IDEA_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    ideaItems = Array.isArray(parsed) ? parsed : [];
-  } catch (e) { ideaItems = []; }
-  ideaItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));   // 时间倒序兜底
+    const arr = raw ? JSON.parse(raw) : [];
+    for (const it of Array.isArray(arr) ? arr : [])
+      await postJSON("/gw/8766/api/idea/text", it);
+  } catch (e) {}
+  try {
+    const memos = await idbAll();
+    for (const m of memos) {
+      const blob = m.blob;
+      const q = "?id=" + encodeURIComponent(m.id) + "&dur=" + (m.dur || 0) +
+        "&mime=" + encodeURIComponent(m.mime || "audio/webm") +
+        "&cat=" + encodeURIComponent(m.categoryId || "work") +
+        "&ts=" + (m.createdAt || 0);
+      const extra = m.text ? "&note=1" : "";
+      await postRaw("/gw/8766/api/idea/voice-upload" + q, blob);
+      if (m.text) await postJSON("/gw/8766/api/idea/voice-meta",
+        { id: m.id, text: m.text });
+      void extra;
+    }
+    indexedDB.deleteDatabase("car-inspiration-audio");
+  } catch (e) {}
+  localStorage.setItem("idea_migrated_v2", "1");
 }
-function ideaPersist() {
+function ideaPersist() {   // v9 遗留: 持久层已切服务端, 保留仅为兼容 (不再调用)
   try { localStorage.setItem(IDEA_KEY, JSON.stringify(ideaItems)); } catch (e) {}
 }
 function ideaCatOf(id) { return IDEA_CATS.find(c => c.id === id) || null; }
@@ -1507,9 +1546,7 @@ function ideaRefreshAll() {
 }
 /* 文字+语音全量刷新 (IDB 异步) — 所有增删改后调用 */
 async function ideaRefreshData() {
-  ideaLoad();
-  voiceItems = await idbAll();
-  voiceItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  await ideaLoad();
   ideaRefreshAll();
 }
 function ideaRefreshAll() {
@@ -1600,11 +1637,14 @@ async function ideaRecToggle() {
       setText("idea-interim", "录音太短, 已丢弃");
       return;
     }
-    await idbPut({
-      id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
-      blob, mime: type, dur: recSec,
-      categoryId: ideaCat, text: "", createdAt: Date.now(),
-    });
+    const vid = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+    const up = await postRaw("/gw/8766/api/idea/voice-upload?id=" +
+      encodeURIComponent(vid) + "&dur=" + recSec + "&mime=" + encodeURIComponent(type) +
+      "&cat=" + encodeURIComponent(ideaCat) + "&ts=" + Date.now(), blob);
+    if (!up || !up.ok) {
+      setText("idea-interim", "语音上传失败, 稍后重试");
+      return;
+    }
     setText("idea-interim", "语音已保存 (" + recSec + "s · " + ideaCatOf(ideaCat).name + ")");
     await ideaRefreshData();
   };
@@ -1644,7 +1684,10 @@ async function ideaVoiceToggle(id) {
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
     if (actx.state === "suspended") await actx.resume();
-    const ab = await memo.blob.arrayBuffer();
+    const r = await fetch("/gw/8766/api/idea/audio/" + encodeURIComponent(id),
+                          { credentials: "same-origin" });
+    if (!r.ok) throw new Error("audio " + r.status);
+    const ab = await r.arrayBuffer();
     const buf = await new Promise((res, rej) => {
       const p = actx.decodeAudioData(ab, res, rej);
       if (p && p.then) p.then(res, rej);           // 新版返回 promise
@@ -1675,14 +1718,13 @@ function ideaRecTeardown() {   // 离开面板: 录音中停止保存, 播放停
   if (recActive) ideaRecStop();
   ideaPlayStop();
 }
-function ideaSubmit() {
+async function ideaSubmit() {
   const ta = $("idea-text"), txt = ta.value.trim();
   if (!txt) return;
-  ideaItems.unshift({
+  await postJSON("/gw/8766/api/idea/text", {
     id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
     text: txt, categoryId: ideaCat, createdAt: Date.now(),
   });
-  ideaPersist();
   ta.value = "";
   setText("idea-interim", "");
   ideaFilter = "all";
@@ -1705,15 +1747,16 @@ $("idea-filter").addEventListener("click", e => {
   if (b) { ideaFilter = b.dataset.f; ideaEditId = null; renderIdeaFilter(); renderIdeaList(); }
 });
 $("idea-search").addEventListener("input", renderIdeaList);
-$("idea-clear").addEventListener("click", () => {
+$("idea-clear").addEventListener("click", async () => {
   const total = ideaItems.length + voiceItems.length;
   if (!total) return;
   if (confirm("确认清空全部 " + total + " 条灵感（含语音）？此操作不可恢复。")) {
-    ideaItems = []; ideaEditId = null; ideaPersist();
-    Promise.all(voiceItems.map(m => idbDel(m.id))).then(() => ideaRefreshData());
+    ideaItems = []; ideaEditId = null;
+    await postJSON("/gw/8766/api/idea/clear-all", { texts: true, voices: true });
+    ideaRefreshData();
   }
 });
-$("idea-list").addEventListener("click", e => {
+$("idea-list").addEventListener("click", async e => {
   const b = e.target.closest("button");
   if (!b) return;
   const id = b.dataset.id, act = b.dataset.act, kind = b.dataset.kind || "text";
@@ -1724,37 +1767,37 @@ $("idea-list").addEventListener("click", e => {
   } else if (act === "esave") {
     const ta = $("ie-" + id), txt = ta ? ta.value.trim() : "";
     if (kind === "audio") {
-      const m = voiceItems.find(x => x.id === id);
-      if (m && ta) { m.text = txt; idbPut(m); }   // 语音备注可空
+      await postJSON("/gw/8766/api/idea/voice-meta", { id, text: txt });   // 备注可空
     } else {
       const it = ideaItems.find(x => x.id === id);
-      if (it && ta && txt) { it.text = txt; ideaPersist(); }
+      if (it && ta && txt) await postJSON("/gw/8766/api/idea/text",
+        { ...it, text: txt });
     }
-    ideaEditId = null; ideaRefreshAll();
+    ideaEditId = null; ideaRefreshData();
   } else if (act === "ecancel") {
     ideaEditId = null; renderIdeaList();
   } else if (act === "del") {
     if (kind === "audio") {
-      idbDel(id).then(() => ideaRefreshData());
+      await postJSON("/gw/8766/api/idea/voice-del", { id });
     } else {
-      ideaItems = ideaItems.filter(x => x.id !== id);
-      if (ideaEditId === id) ideaEditId = null;
-      ideaPersist(); ideaRefreshData();
+      await postJSON("/gw/8766/api/idea/text-del", { id });
     }
+    ideaRefreshData();
   } else if (act === "mc") {
     if (kind === "audio") {
-      const m = voiceItems.find(x => x.id === id);
-      if (m) { m.categoryId = b.dataset.mc; idbPut(m).then(() => ideaRefreshData()); }
+      await postJSON("/gw/8766/api/idea/voice-meta", { id, categoryId: b.dataset.mc });
     } else {
       const it = ideaItems.find(x => x.id === id);
-      if (it) { it.categoryId = b.dataset.mc; ideaPersist(); ideaRefreshAll(); }
+      if (it) { it.categoryId = b.dataset.mc;
+        await postJSON("/gw/8766/api/idea/text", it); }
     }
+    ideaRefreshData();
   }
 });
 PANEL_OPENERS.idea = {
   open() {
     ideaEditId = null;
-    ideaRefreshData();
+    ideaMigrate().then(() => ideaRefreshData());
     if (!ideaInited) {
       if (!navigator.mediaDevices || !window.MediaRecorder) {
         $("idea-mic").disabled = true;

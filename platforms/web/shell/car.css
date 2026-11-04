@@ -504,8 +504,8 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 #p-idea .voice-fill { height:100%; width:0%; border-radius:4px; background:var(--iaccent); }
 #p-idea .voice-dur { flex:none; color:var(--itext-2); font-size:13px;
   font-variant-numeric:tabular-nums; }
-#p-idea .idea-close { position:absolute; right:16px; top:50%;
-  transform:translateY(-50%); z-index:5; }
+#p-idea .idea-close { position:absolute; right:16px; top:42px;
+  transform:translateY(-50%); z-index:5; }   /* header 半高, 始终显眼 */
 #p-idea .app-header { padding-right:72px; }   /* 关闭钮让位, 不压「灵感总数」 */
 @media (max-width:900px) {
   #p-idea .idea-main { grid-template-columns:1fr; overflow-y:auto; }
