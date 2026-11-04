@@ -1867,21 +1867,6 @@ PANEL_OPENERS.idea = {
   }
 };
 
-/* ── 主页高度: 右列前 3 卡 + 行距 → --home-h (主卡同高, 1s 兜底重算) ── */
-function layoutHome() {
-  const col = document.querySelector(".col");
-  const cards = col.querySelectorAll(":scope > .card");
-  if (!cards.length) return;
-  const n = Math.min(3, cards.length);
-  const gap = parseFloat(getComputedStyle(col).rowGap) || 12;
-  let total = 0;
-  for (let i = 0; i < n; i++) total += cards[i].getBoundingClientRect().height;
-  total += gap * (n - 1);
-  document.documentElement.style.setProperty("--home-h", total.toFixed(0) + "px");
-}
-setInterval(layoutHome, 1000);
-window.addEventListener("resize", layoutHome);
-
 /* ════ 启动 ════ */
 applyTheme(themeIdx);
 buildHealthGrid();
@@ -1892,7 +1877,6 @@ refreshGlm();      refreshAgenda();
 refreshNews();     refreshHealth();
 refreshOpi();      refreshSentence();
 refreshIpo();      refreshWeather();
-layoutHome();
 buildVU();
 loadStations();
 setInterval(() => { refreshGlm(); refreshAgenda(); refreshNews(); refreshHealth(); refreshOpi(); }, 60000);

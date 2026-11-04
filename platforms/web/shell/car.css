@@ -24,7 +24,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 .app { position:fixed; inset:0; z-index:1; max-width:1600px; margin:0 auto;
        display:flex; flex-direction:column; overflow-x:hidden; overflow-y:auto; }
-.main { flex:0 0 auto; display:flex; gap:12px; padding:12px; align-items:flex-start;
+.main { flex:1 1 auto; min-height:0; display:flex; gap:12px; padding:12px; align-items:stretch;
        min-width:0; max-width:100%; overflow-x:hidden; align-items:stretch; }
 
 /* ── 卡片通用 (设备端: radius18 / 1px 边框 70% / card[i] 平色逐级加深) ── */
@@ -47,7 +47,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 /* ── Hero 左卡 ── */
 .hero {
-  flex:0 0 640px; width:640px; height:var(--home-h, 705px); background:var(--hero);
+  flex:0 0 min(640px, 44%); min-height:0; min-width:0; background:var(--hero);
   display:flex; flex-direction:column; padding:14px 24px;
   overflow:hidden; }
 .clock { font-size:clamp(56px,6vw,96px); font-weight:700; line-height:1.05;
@@ -73,8 +73,10 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 #theme-name { font-size:calc(13px * var(--fs)); }
 
 /* ── 右列 6 卡 ── */
-.col { flex:0 0 auto; width:100%; height:var(--home-h, 705px); display:flex; flex-direction:column; gap:12px;
+.col { flex:1 1 auto; min-width:0; min-height:0; display:flex; flex-direction:column; gap:12px;
       overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
+.col > .card { flex:0 0 auto; min-height:0; overflow:hidden; }
+.col > .card:nth-child(-n+3) { flex:1 0 170px; min-height:150px; }   /* 前3卡只放大不压缩(保可读), 装不下走列内滚 */
 .col::-webkit-scrollbar { display:none; }
 .body { padding:2px 0; }
 
