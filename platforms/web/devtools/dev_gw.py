@@ -198,6 +198,9 @@ class Handler(BaseHTTPRequestHandler):
             ".html": "text/html; charset=utf-8",
             ".js": "text/javascript",
             ".css": "text/css",   # Chromium 对非 text/css 的 <link> 样式表直接拒载
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".jpg": "image/jpeg",
             ".wasm": "application/wasm",
             ".json": "application/json",
             ".data": "application/octet-stream",
