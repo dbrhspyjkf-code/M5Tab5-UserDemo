@@ -23,8 +23,9 @@ body {
 button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 .app { position:fixed; inset:0; z-index:1; max-width:1600px; margin:0 auto;
-       display:flex; flex-direction:column; overflow:auto; }
-.main { flex:0 0 auto; display:flex; gap:12px; padding:12px; align-items:flex-start; align-items:stretch; }
+       display:flex; flex-direction:column; overflow-x:hidden; overflow-y:auto; }
+.main { flex:0 0 auto; display:flex; gap:12px; padding:12px; align-items:flex-start;
+       min-width:0; max-width:100%; overflow-x:hidden; align-items:stretch; }
 
 /* ── 卡片通用 (设备端: radius18 / 1px 边框 70% / card[i] 平色逐级加深) ── */
 .card {
@@ -73,7 +74,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 
 /* ── 右列 6 卡 ── */
 .col { flex:0 0 auto; width:100%; height:var(--home-h, 705px); display:flex; flex-direction:column; gap:12px;
-      overflow-y:auto; scrollbar-width:none; }
+      overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
 .col::-webkit-scrollbar { display:none; }
 .body { padding:2px 0; }
 
@@ -140,7 +141,7 @@ button { font-family:inherit; touch-action:manipulation; cursor:pointer; }
 .rvol { flex:1; touch-action:none; accent-color:var(--accent); height:4px; }
 
 /* ── 底部 6 按钮 (设备主页风格位) ── */
-.nav { position:sticky; bottom:12px; display:flex; gap:12px; padding:12px;
+.nav { position:sticky; bottom:0; margin-top:auto; display:flex; gap:16px; padding:14px;
        background:var(--page); }
 .nav button { flex:1; height:104px; border-radius:28px; border:1px solid var(--border);
               background:var(--track); color:var(--soft); font-size:calc(16px * var(--fs)); }
