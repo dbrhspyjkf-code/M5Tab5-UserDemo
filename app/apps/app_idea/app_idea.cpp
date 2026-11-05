@@ -438,11 +438,12 @@ void AppIdea::_buildUi()
     }, LV_EVENT_CLICKED, this);
 
     // 分类 chips (单选; card 子序: 0=textarea, 1..4=chips) — 2×2:
-    // 工作生活一行 / 创意待办一行 (2026-11-05 用户指定), 与下方按钮留行距
+    // 工作生活一行 / 创意待办一行, 宽 178 占满卡内宽 (368=178*2+12);
+    // 行步进 64 (52 高 + 12 行距), 底部 318
     for (int i = 0; i < N_CATS; i++) {
         lv_obj_t* chip = lv_button_create(card);
-        lv_obj_set_size(chip, 82, 52);
-        lv_obj_align(chip, LV_ALIGN_TOP_LEFT, (i % 2) * 94, 202 + (i / 2) * 66);
+        lv_obj_set_size(chip, 178, 52);
+        lv_obj_align(chip, LV_ALIGN_TOP_LEFT, (i % 2) * 190, 202 + (i / 2) * 64);
         lv_obj_set_style_radius(chip, 26, 0);
         lv_obj_set_style_bg_color(chip, lv_color_hex(i == _sel_cat ? CATS[i].color : C_TRACK), 0);
         lv_obj_set_user_data(chip, (void*)(intptr_t)i);
@@ -464,12 +465,14 @@ void AppIdea::_buildUi()
         lv_obj_center(cl);
     }
 
-    // 录音大按钮 + 底部两钮的 y (设备才有录音行; chips 2×2 后底部 320)
-    int btn_y = 336;
+    // 录音大按钮 + 底部两钮的 y (设备才有录音行)。
+    // 设备纵排: chips 底 318 → mic 338..430 → 保存/转写 446..512 (各留 16-20
+    // 行距, 2026-11-05 修 mic 与保存钮重叠); 无 mic 平台: 保存 338 起。
+    int btn_y = 338;
 #ifndef PLATFORM_BUILD_DESKTOP
     lv_obj_t* mic = lv_button_create(card);
     lv_obj_set_size(mic, LW - 32, 92);
-    lv_obj_align(mic, LV_ALIGN_TOP_LEFT, 0, 372);
+    lv_obj_align(mic, LV_ALIGN_TOP_LEFT, 0, 338);
     lv_obj_set_style_bg_color(mic, lv_color_hex(C_DANGER), 0);
     lv_obj_set_style_bg_color(mic, lv_color_mix(lv_color_hex(0), lv_color_hex(C_DANGER), 178), LV_STATE_PRESSED);
     lv_obj_set_style_radius(mic, 46, 0);
@@ -483,7 +486,7 @@ void AppIdea::_buildUi()
     lv_obj_set_style_text_font(_mic_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_mic_lbl, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(_mic_lbl);
-    btn_y = 372;
+    btn_y = 446;   // mic 底 430 + 16
 #endif
 
     // 保存 + 语音转写
