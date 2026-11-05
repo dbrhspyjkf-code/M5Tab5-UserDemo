@@ -1195,8 +1195,18 @@ void AppIdea::s_recWorker()
         size_t bytes = chunk.size() * 2;
         size_t space = REC_CAP - s_pcm_len;
         size_t take = bytes < space ? bytes : space;
-        memcpy(s_pcm + s_pcm_len, chunk.data(), take);
-        s_pcm_len += take;
+        // tap 给的是 AFE 增益前的裸 PCM, 幅度极低 (2026-11-05 实测设备录音
+        // mean -43.5dB/max -26.4dB, 正常语音 ≈-25/-6) → 写盘时 ×8(+18dB)
+        // 软件增益 + 饱和裁剪; 只影响本 app 录音文件, 唤醒词/STT 链路不动。
+        int16_t* dst = (int16_t*)(s_pcm + s_pcm_len);
+        size_t n_samples = take / 2;
+        for (size_t i = 0; i < n_samples; i++) {
+            int32_t v = (int32_t)chunk[i] * 8;
+            if (v > 32767) v = 32767;
+            else if (v < -32768) v = -32768;
+            dst[i] = (int16_t)v;
+        }
+        s_pcm_len += n_samples * 2;
         if (s_pcm_len >= REC_CAP) s_rec_full = true;
     }
     // 收尾: tap 已 detach。≥1s 上传 (car 版同款误触判定), 不足即弃。
