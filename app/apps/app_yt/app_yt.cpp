@@ -498,11 +498,16 @@ void AppYt::_buildUi()
         lv_obj_set_size(_ta, 640, 56);
         lv_obj_set_pos(_ta, 24, 12);
         lv_obj_set_style_text_font(_ta, gmu::zh20(), 0);
+        // 字色必须显式给: 默认主题字色≈黑, 暗卡底上看不见 (晨间实测)
+        lv_obj_set_style_text_color(_ta, lv_color_hex(C_TEXT()), 0);
+        lv_obj_set_style_text_color(_ta, lv_color_hex(C_DIM()),
+                                    LV_PART_TEXTAREA_PLACEHOLDER);
         lv_obj_set_style_bg_color(_ta, lv_color_hex(C_CARD()), 0);
         lv_obj_set_style_border_color(_ta, lv_color_hex(C_TRACK()), 0);
         lv_obj_set_style_border_width(_ta, 2, 0);
         lv_obj_set_style_radius(_ta, 14, 0);
         lv_obj_set_style_pad_hor(_ta, 16, 0);
+        lv_obj_set_style_bg_color(_ta, lv_color_hex(C_TRACK()), LV_STATE_FOCUSED);
         lv_textarea_set_placeholder_text(_ta, "搜索 YouTube… (点按弹键盘/语音)");
         lv_textarea_set_one_line(_ta, true);
         lv_obj_clear_flag(_ta, LV_OBJ_FLAG_SCROLLABLE);
