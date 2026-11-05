@@ -261,14 +261,16 @@ void AppNews::_renderList()
             self->_openDetail((int)(intptr_t)lv_obj_get_user_data(lv_event_get_current_target_obj(e)));
         }, LV_EVENT_CLICKED, this);
 
-        // 标题 (30px, 最多 ~2 行; 首行给时间戳让位 → 宽度收窄)
+        // 标题 (30px, 居中 — 2026-11-05 用户要求; 宽给满卡, 极长首行与
+        // 右上时间戳同层的重叠概率仅 >33 字标题, 接受)
         lv_obj_t* tl = lv_label_create(card);
         lv_label_set_text(tl, it.t.c_str());
         lv_obj_set_pos(tl, 24, 16);
-        lv_obj_set_width(tl, it.ts.empty() ? 1184 : 960);
+        lv_obj_set_width(tl, 1184);
         lv_label_set_long_mode(tl, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_font(tl, zh30(), 0);
         lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_hi), 0);
+        lv_obj_set_style_text_align(tl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_line_space(tl, 6, 0);
 
         // 时间 (右上; rss ts 如 "11-05 09:30")
@@ -280,7 +282,7 @@ void AppNews::_renderList()
             lv_obj_set_style_text_color(tsl, lv_color_hex(theme::cur().text_dim), 0);
         }
 
-        // 简介 (24px 暗色, y=106 容 2 行标题后接排; 超出裁剪 — 详情弹窗看全文)
+        // 简介 (24px 暗色, 居中, y=106 容 2 行标题后接排; 超出裁剪 — 详情弹窗看全文)
         if (!it.d.empty()) {
             lv_obj_t* dl = lv_label_create(card);
             lv_label_set_text(dl, it.d.c_str());
@@ -288,8 +290,9 @@ void AppNews::_renderList()
             lv_obj_set_width(dl, 1184);
             lv_obj_set_height(dl, 64);
             lv_label_set_long_mode(dl, LV_LABEL_LONG_WRAP);
-            lv_obj_set_style_text_font(dl, zh20(), 0);
+            lv_obj_set_style_text_font(dl, zh24(), 0);
             lv_obj_set_style_text_color(dl, lv_color_hex(theme::cur().text_dim), 0);
+            lv_obj_set_style_text_align(dl, LV_TEXT_ALIGN_CENTER, 0);
             lv_obj_set_style_text_line_space(dl, 4, 0);
         }
     }
