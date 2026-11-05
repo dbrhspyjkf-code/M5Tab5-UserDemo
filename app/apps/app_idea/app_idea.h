@@ -86,7 +86,9 @@ private:
     std::atomic<bool> _refresh_needed{false};
     std::atomic<int> _saved_sec{-1};    // >=0: 刚保存完成 (语音 Ns / 文字 0), UI 消费后置回 -1
     std::atomic<bool> _op_failed{false};
+    std::atomic<bool> _op_done{false};  // 删除/清空完成 → 状态标签恢复默认
     uint32_t _retry_ms = 0;             // 拉取失败后的自动重试时点 (UINT32_MAX=停)
+    uint32_t _status_reset_ms = 0;      // 非 0: 该时点把状态标签恢复默认 (临时提示自动消失)
 
     // 回放进行中的进度条/按钮 label (单实例, 只在 UI 线程读写)
     std::string _play_id;
@@ -126,6 +128,7 @@ private:
     static std::atomic<int> s_up_part, s_up_parts;
     static std::atomic<bool> s_up_failed;
     static std::atomic<bool> s_play_failed;
+    static std::atomic<bool> s_rec_discarded;           // 录音 <1s 被丢弃 → UI 提示
     static std::atomic<int> s_saved_sec;                // >=0 刚保存完成 (语音 Ns), UI 消费后置 -1
     static std::atomic<bool> s_need_refresh;
     static uint32_t s_rec_start;

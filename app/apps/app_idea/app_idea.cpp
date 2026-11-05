@@ -212,6 +212,7 @@ std::atomic<int> AppIdea::s_up_part{0};
 std::atomic<int> AppIdea::s_up_parts{0};
 std::atomic<bool> AppIdea::s_up_failed{false};
 std::atomic<bool> AppIdea::s_play_failed{false};
+std::atomic<bool> AppIdea::s_rec_discarded{false};
 std::atomic<int> AppIdea::s_saved_sec{-1};
 std::atomic<bool> AppIdea::s_need_refresh{false};
 uint32_t AppIdea::s_rec_start = 0;
@@ -251,6 +252,16 @@ void AppIdea::onRunning()
     }
     if (!_scr) return;
 
+    // 临时状态提示超时 → 恢复默认 (2026-11-05: 修「播放中/删除中」等挂留不消失)
+    if (_status_reset_ms && (int32_t)(GetHAL()->millis() - _status_reset_ms) >= 0) {
+        _status_reset_ms = 0;
+        _setStatus("上拨退出", C_TEXT2);
+    }
+    if (_op_done.exchange(false)) {
+        _setStatus("上拨退出", C_TEXT2);   // 删除/清空完成立即恢复
+        _status_reset_ms = 0;
+    }
+
 #ifndef PLATFORM_BUILD_DESKTOP
     // 管线结果 → 统一 instance 提示位
     int s2 = s_saved_sec.exchange(-1);
@@ -274,9 +285,11 @@ void AppIdea::onRunning()
         if (saved > 0) snprintf(buf, sizeof buf, "语音已保存 (%ds)", saved);
         else           snprintf(buf, sizeof buf, "灵感已保存");
         _setStatus(buf, theme::cur().ok);
+        _status_reset_ms = GetHAL()->millis() + 3000;   // 结果提示 3s 后自动消失
     }
     if (_op_failed.exchange(false)) {
         _setStatus("操作失败, 请重试", C_DANGER);
+        _status_reset_ms = GetHAL()->millis() + 3000;
     }
 
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -306,6 +319,10 @@ void AppIdea::onRunning()
     if (s_need_refresh.exchange(false)) {
         _fetch();
     }
+    if (s_rec_discarded.exchange(false)) {
+        _setStatus("太短, 已丢弃", C_TEXT2);
+        _status_reset_ms = GetHAL()->millis() + 3000;
+    }
 
     // ── 回放进度 (单实例; 播完/停止后自动复位) ──
     if (_play_fill) {
@@ -319,6 +336,8 @@ void AppIdea::onRunning()
             _play_fill = nullptr;
             _play_btn_lbl = nullptr;
             _play_id.clear();
+            _setStatus("上拨退出", C_TEXT2);   // 播放结束, 「播放中…」不挂留
+            _status_reset_ms = 0;
         }
     }
 #endif
@@ -937,7 +956,10 @@ void AppIdea::_deleteItem(const std::string& id, bool voice)
     GetHAL()->tryRunDetached([this, alive, url, body]() {
         auto resp = GetHAL()->httpPost(url, body, {{"Content-Type", "application/json"}});
         if (resp.status == 200) {
-            if (*alive) _refresh_needed = true;
+            if (*alive) {
+                _refresh_needed = true;
+                _op_done = true;        // 「删除中…」完成, 状态标签恢复默认
+            }
         } else if (*alive) {
             _op_failed = true;
         }
@@ -953,7 +975,10 @@ void AppIdea::_clearAll()
         auto resp = GetHAL()->httpPost(_base() + "/api/idea/clear-all", body,
                                        {{"Content-Type", "application/json"}});
         if (resp.status == 200) {
-            if (*alive) _refresh_needed = true;
+            if (*alive) {
+                _refresh_needed = true;
+                _op_done = true;        // 「清空中…」完成, 状态标签恢复默认
+            }
         } else if (*alive) {
             _op_failed = true;
         }
@@ -1221,6 +1246,7 @@ void AppIdea::s_recWorker()
     } else {
         std::lock_guard<std::mutex> lk(s_rec_mu);
         s_pcm_len = 0;
+        s_rec_discarded = true;   // 太短丢弃, UI 提示 (状态标签别停在「录音中」)
     }
 }
 
