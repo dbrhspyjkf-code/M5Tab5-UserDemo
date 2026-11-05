@@ -3,6 +3,7 @@
 #include <mooncake_log.h>
 #include <esp_log.h>
 #include <algorithm>
+#include <cbin_font.h>
 
 #ifdef PLATFORM_BUILD_DESKTOP
 // Voice input is a no-op on desktop simulator (no audio codec).
@@ -13,6 +14,26 @@
 #include "xiaozhi_ctl.h"
 #include "boards/common/board.h"
 #endif
+
+#if defined(PLATFORM_BUILD_WEB)
+#include "web_fonts.h"   // web: cbin 资产镜像 (真机逐字节一致)
+#endif
+
+// 中文状态提示字体 (app_timer 同款三平台分支; montserrat 无中文字形)
+static const lv_font_t* vi_zh_font()
+{
+#if defined(PLATFORM_BUILD_WEB)
+    return webui::font_24();
+#elif !defined(PLATFORM_BUILD_DESKTOP)
+    extern const uint8_t font_puhui_common_30_4_bin_start[]
+        asm("_binary_font_puhui_common_30_4_bin_start");
+    static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
+    return f;
+#else
+    extern "C" const lv_font_t font_puhui_20_4;
+    return &font_puhui_20_4;
+#endif
+}
 
 namespace {
 
@@ -265,7 +286,7 @@ void AppVoiceInput::_createMicButton(lv_obj_t* ta, int keyboard_h) {
     // Status label just above the mic button
     _status_label = lv_label_create(lv_layer_top());
     lv_obj_set_style_text_color(_status_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(_status_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(_status_label, vi_zh_font(), 0);
     lv_label_set_text(_status_label, "");
     lv_obj_align(_status_label, LV_ALIGN_BOTTOM_MID, 0, -lift - MIC_BTN_SIZE - 4);
 
@@ -286,7 +307,7 @@ void AppVoiceInput::_createMicButton(lv_obj_t* ta, int keyboard_h) {
             cfg.stt_response_timeout_ms = self->_config.stt_response_timeout_ms;
             cfg.opus_frame_duration_ms = self->_config.opus_frame_duration_ms;
             self->_service->start(cfg, stt_callback_wrapper);
-            if (self->_status_label) lv_label_set_text(self->_status_label, "Recording...");
+            if (self->_status_label) lv_label_set_text(self->_status_label, "录音中…");
         }
 #else
         (void)self;
@@ -305,8 +326,8 @@ void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
     // Hint label above the wave — placed first so the wave sits above it visually.
     _status_label = lv_label_create(lv_layer_top());
     lv_obj_set_style_text_color(_status_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(_status_label, &lv_font_montserrat_20, 0);
-    lv_label_set_text(_status_label, "Recording... tap anywhere to stop");
+    lv_obj_set_style_text_font(_status_label, vi_zh_font(), 0);
+    lv_label_set_text(_status_label, "正在说话… 点按任意处停止");
     lv_obj_align(_status_label, LV_ALIGN_BOTTOM_MID, 0, -260);
 
     // Audio visualizer: 5 vertical bars that pulse in height via lv_anim.
@@ -373,7 +394,7 @@ void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
             ESP_LOGI("AppVoiceInput", "capture tap: stopping recording");
             self->_service->stop();
             if (self->_status_label) {
-                lv_label_set_text(self->_status_label, "Recognizing...");
+                lv_label_set_text(self->_status_label, "识别中…");
             }
         }
 #else
@@ -416,7 +437,7 @@ void AppVoiceInput::_updateMicButton() {
         break;
     case voice_input::State::Processing:
         lv_obj_set_style_bg_color(_mic_btn, lv_color_hex(0xFF9800), 0);
-        if (_status_label) lv_label_set_text(_status_label, "Recognizing...");
+        if (_status_label) lv_label_set_text(_status_label, "识别中…");
         break;
     case voice_input::State::Done:
         if (label) lv_label_set_text(label, MIC_ICON_DONE);
