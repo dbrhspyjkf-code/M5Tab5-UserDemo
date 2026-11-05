@@ -243,7 +243,8 @@ void AppNews::_renderList()
     for (int i = 0; i < (int)fd.items.size(); i++) {
         const NItem& it = fd.items[i];
         lv_obj_t* card = lv_obj_create(_scroll);
-        lv_obj_set_size(card, 1232, 146);
+        // 卡高 170 (2026-11-05 用户要求字号加大): 标题 30px 2 行区 + 简介 24px 2 行
+        lv_obj_set_size(card, 1232, 170);
         lv_obj_set_style_bg_color(card, lv_color_hex(theme::cur().card[3]), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(card, 18, 0);
@@ -260,13 +261,13 @@ void AppNews::_renderList()
             self->_openDetail((int)(intptr_t)lv_obj_get_user_data(lv_event_get_current_target_obj(e)));
         }, LV_EVENT_CLICKED, this);
 
-        // 标题 (md 24px, 最多 ~3 行; 首行给时间戳让位 → 宽度收窄)
+        // 标题 (30px, 最多 ~2 行; 首行给时间戳让位 → 宽度收窄)
         lv_obj_t* tl = lv_label_create(card);
         lv_label_set_text(tl, it.t.c_str());
-        lv_obj_set_pos(tl, 24, 18);
+        lv_obj_set_pos(tl, 24, 16);
         lv_obj_set_width(tl, it.ts.empty() ? 1184 : 960);
         lv_label_set_long_mode(tl, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_text_font(tl, zh24(), 0);
+        lv_obj_set_style_text_font(tl, zh30(), 0);
         lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_hi), 0);
         lv_obj_set_style_text_line_space(tl, 6, 0);
 
@@ -275,17 +276,17 @@ void AppNews::_renderList()
             lv_obj_t* tsl = lv_label_create(card);
             lv_label_set_text(tsl, it.ts.c_str());
             lv_obj_align(tsl, LV_ALIGN_TOP_RIGHT, -24, 20);
-            lv_obj_set_style_text_font(tsl, zh20(), 0);
+            lv_obj_set_style_text_font(tsl, zh24(), 0);
             lv_obj_set_style_text_color(tsl, lv_color_hex(theme::cur().text_dim), 0);
         }
 
-        // 简介 (sm 20px 暗色, y=90 容 2 行标题后接排; 超出裁剪 — 详情弹窗看全文)
+        // 简介 (24px 暗色, y=106 容 2 行标题后接排; 超出裁剪 — 详情弹窗看全文)
         if (!it.d.empty()) {
             lv_obj_t* dl = lv_label_create(card);
             lv_label_set_text(dl, it.d.c_str());
-            lv_obj_set_pos(dl, 24, 90);
+            lv_obj_set_pos(dl, 24, 106);
             lv_obj_set_width(dl, 1184);
-            lv_obj_set_height(dl, 44);
+            lv_obj_set_height(dl, 64);
             lv_label_set_long_mode(dl, LV_LABEL_LONG_WRAP);
             lv_obj_set_style_text_font(dl, zh20(), 0);
             lv_obj_set_style_text_color(dl, lv_color_hex(theme::cur().text_dim), 0);
@@ -310,7 +311,8 @@ void AppNews::_openDetail(int idx)
         fetched = _fetched;
     }
 
-    // 全屏遮罩 (layer_top; 点外关) + 卡片 720x560 (app_home 新闻弹窗同骨架)
+    // 全屏遮罩 (layer_top; 点外关) + 卡片 800x620 (2026-11-05 用户要求字号
+    // 加大: 标题 30/正文 30/meta 24; 装不下 → body 竖向滚动查看)
     _detail_modal = lv_obj_create(lv_layer_top());
     lv_obj_set_size(_detail_modal, 1280, 720);
     lv_obj_set_pos(_detail_modal, 0, 0);
@@ -326,7 +328,7 @@ void AppNews::_openDetail(int idx)
     }, LV_EVENT_CLICKED, this);
 
     lv_obj_t* card = lv_obj_create(_detail_modal);
-    lv_obj_set_size(card, 720, 560);
+    lv_obj_set_size(card, 800, 620);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, lv_color_hex(theme::cur().card[0]), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
@@ -338,17 +340,17 @@ void AppNews::_openDetail(int idx)
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
 
-    // 竖向滚动 body (meta/标题/简介; 长简介不丢内容, app_home 同款)
+    // 竖向滚动 body (meta/标题/简介; 长简介滚动查看, scrollbar 常显提示可滚)
     lv_obj_t* body = lv_obj_create(card);
     lv_obj_set_pos(body, 24, 20);
-    lv_obj_set_size(body, 720 - 48, 560 - 40);
+    lv_obj_set_size(body, 800 - 48, 620 - 40);
     lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(body, 0, 0);
     lv_obj_set_style_pad_all(body, 10, 0);
     lv_obj_set_style_pad_row(body, 14, 0);
     lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_ACTIVE);
 
     std::string meta = cat;
     if (!ts.empty()) meta += " · " + ts;
@@ -356,7 +358,7 @@ void AppNews::_openDetail(int idx)
     lv_obj_t* ml = lv_label_create(body);
     lv_label_set_text(ml, meta.c_str());
     lv_obj_set_width(ml, LV_PCT(100));
-    lv_obj_set_style_text_font(ml, zh20(), 0);
+    lv_obj_set_style_text_font(ml, zh24(), 0);
     lv_obj_set_style_text_color(ml, lv_color_hex(theme::cur().text_dim), 0);
 
     lv_obj_t* tl = lv_label_create(body);
@@ -371,7 +373,7 @@ void AppNews::_openDetail(int idx)
     lv_label_set_text(dl, desc.empty() ? "（这条新闻没有简介）" : desc.c_str());
     lv_obj_set_width(dl, LV_PCT(100));
     lv_label_set_long_mode(dl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(dl, zh24(), 0);
+    lv_obj_set_style_text_font(dl, zh30(), 0);
     lv_obj_set_style_text_color(dl, lv_color_hex(theme::cur().text_soft), 0);
     lv_obj_set_style_text_line_space(dl, 8, 0);
 }
