@@ -437,11 +437,12 @@ void AppIdea::_buildUi()
         static_cast<AppIdea*>(lv_event_get_user_data(e))->_showKeyboard();
     }, LV_EVENT_CLICKED, this);
 
-    // 分类 chips (单选; card 子序: 0=textarea, 1..4=chips)
+    // 分类 chips (单选; card 子序: 0=textarea, 1..4=chips) — 2×2:
+    // 工作生活一行 / 创意待办一行 (2026-11-05 用户指定), 与下方按钮留行距
     for (int i = 0; i < N_CATS; i++) {
         lv_obj_t* chip = lv_button_create(card);
         lv_obj_set_size(chip, 82, 52);
-        lv_obj_align(chip, LV_ALIGN_TOP_LEFT, i * 94, 202);
+        lv_obj_align(chip, LV_ALIGN_TOP_LEFT, (i % 2) * 94, 202 + (i / 2) * 66);
         lv_obj_set_style_radius(chip, 26, 0);
         lv_obj_set_style_bg_color(chip, lv_color_hex(i == _sel_cat ? CATS[i].color : C_TRACK), 0);
         lv_obj_set_user_data(chip, (void*)(intptr_t)i);
@@ -463,12 +464,12 @@ void AppIdea::_buildUi()
         lv_obj_center(cl);
     }
 
-    // 录音大按钮 + 底部两钮的 y (设备才有录音行)
-    int btn_y = 266;
+    // 录音大按钮 + 底部两钮的 y (设备才有录音行; chips 2×2 后底部 320)
+    int btn_y = 336;
 #ifndef PLATFORM_BUILD_DESKTOP
     lv_obj_t* mic = lv_button_create(card);
     lv_obj_set_size(mic, LW - 32, 92);
-    lv_obj_align(mic, LV_ALIGN_TOP_LEFT, 0, 266);
+    lv_obj_align(mic, LV_ALIGN_TOP_LEFT, 0, 372);
     lv_obj_set_style_bg_color(mic, lv_color_hex(C_DANGER), 0);
     lv_obj_set_style_bg_color(mic, lv_color_mix(lv_color_hex(0), lv_color_hex(C_DANGER), 178), LV_STATE_PRESSED);
     lv_obj_set_style_radius(mic, 46, 0);
