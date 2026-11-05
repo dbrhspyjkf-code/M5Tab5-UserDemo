@@ -14,6 +14,7 @@
 #include "../app_settings/app_settings.h"
 #include "../utils/datetime/lunar_calendar.h"
 #include "../utils/theme/theme.h"
+#include "../utils/news/news_feeds.h"
 #include "../utils/power_scheduler.h"
 #ifndef PLATFORM_BUILD_DESKTOP
 #include "../utils/assets/assets_partition.h"
@@ -926,7 +927,7 @@ void AppHome::_openNewsDialog()
         date = _news_date;
     }
 
-    lv_obj_t* card = _openModal(620, 500, "AI 新闻");
+    lv_obj_t* card = _openModal(620, 500, cat.c_str());
 
     lv_obj_t* body = lv_obj_create(card);
     lv_obj_set_pos(body, 24, 64);
@@ -940,7 +941,7 @@ void AppHome::_openNewsDialog()
     lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
 
     lv_obj_t* meta = lv_label_create(body);
-    lv_label_set_text(meta, (date.empty() ? cat : cat + " · " + date).c_str());
+    lv_label_set_text(meta, date.c_str());
     lv_obj_set_width(meta, LV_PCT(100));
     lv_obj_set_style_text_font(meta, zh_font_sm(), 0);
     lv_obj_set_style_text_color(meta, lv_color_hex(theme::cur().text_dim), 0);
@@ -1046,37 +1047,23 @@ void AppHome::_fetch_dashboard()
             std::string cn = j.value("cn", std::string());
             if (!en.empty()) { sent_en = en; sent_cn = cn; }
         }
-        // AI 新闻 (hermes /news/ai; 30 分钟节流)。2026-11-04 数据源改版:
-        // secs[].items 从标题字符串变为 {t 标题, d 简介} 对象, 条目上限
-        // 12→48 (与 car-dash 同步), 简介 d 供长按详情弹窗显示; 旧版纯标题
-        // 字符串保留兜底 (服务端回滚时卡片不至于空转)
+        // 新闻多源轮播 (hermes /news/feeds, car-dash 同款; 2026-11-05 起):
+        // 设置弹窗按 NVS news_feeds 选源, 这里按选择轮转交错合并 (默认 {"ai"},
+        // 与旧版 /news/ai 纯 AI 新闻行为一致)。30 分钟节流; _news_dirty=
+        // 设置弹窗改源后置位, 下一次 60s 仪表轮询立即重拉。
+        // 节流只在拿到非空数据时生效 (2026-10-30 修): 请求前先标记会把
+        // 一次瞬时失败放大成 30 分钟无新闻
         static std::atomic<uint32_t> s_news_ms{0};
         std::vector<CarItem> news;
         std::string news_date;
         uint32_t wnow = GetHAL()->millis();
-        if (s_news_ms.load() == 0 || wnow - s_news_ms.load() >= 30u * 60 * 1000) {
-            // 节流只在拿到非空数据时生效 (2026-10-30 修): 请求前先标记会把
-            // 一次瞬时失败放大成 30 分钟无新闻
-            if (auto j = pick(GetHAL()->httpGet(base + "/news/ai").body); !j.is_null()) {
-                news_date = j.value("date", std::string());
-                if (j.contains("secs") && j["secs"].is_array())
-                    for (auto& sec : j["secs"]) {
-                        std::string label = sec.value("label", std::string("新闻"));
-                        if (!sec.contains("items") || !sec["items"].is_array()) continue;
-                        for (auto& it : sec["items"]) {
-                            std::string t, d;
-                            if (it.is_object()) {           // 新版 {t, d}
-                                t = it.value("t", std::string());
-                                d = it.value("d", std::string());
-                            } else if (it.is_string()) {    // 旧版纯标题
-                                t = it.get<std::string>();
-                            }
-                            if (t.empty()) continue;
-                            news.push_back({label, t, d});
-                            if (news.size() >= 48) break;
-                        }
-                        if (news.size() >= 48) break;
-                    }
+        if (s_news_ms.load() == 0 || wnow - s_news_ms.load() >= 30u * 60 * 1000u
+            || _news_dirty.exchange(false)) {
+            if (auto j = pick(GetHAL()->httpGet(base + "/news/feeds").body); !j.is_null()
+                && j.contains("feeds") && j["feeds"].is_object()) {
+                for (auto& it : newsfeed::interleave(j["feeds"], newsfeed::loadSel(), 48))
+                    news.push_back({it.cat, it.title, it.desc});
+                news_date = j.value("fetched", std::string());
                 if (!news.empty()) s_news_ms.store(wnow);
             }
         }
@@ -1501,13 +1488,18 @@ void AppHome::_openPowerDialog()
 // ─── Quick-settings dialog (gear tap): volume + brightness + screensaver + theme ──
 void AppHome::_openQuickSettings()
 {
-    lv_obj_t* card = _openModal(680, 540, "设置");
+    lv_obj_t* card = _openModal(680, 640, "设置");
 
 #ifdef PLATFORM_BUILD_WEB
-    // web 版: 音量/亮度/屏保/定时开关机全部是 Tab5 硬件专属, 只留主题切换
-    _qs_theme_lbl = mk_btn(card, "", T_BTN(), 300, 60, _qsTheme_cb, this);
-    _refreshThemeBtn();
-    lv_obj_align(_qs_theme_lbl, LV_ALIGN_TOP_MID, 0, 120);
+    // web 版: 音量/亮度/屏保/定时开关机全部是 Tab5 硬件专属, 只留新闻源;
+    // 主题按钮由下方公共区创建 (曾在此重复建过一枚, 2026-11-05 去重)
+    // 新闻源多选 (2026-11-05): 主页新闻轮播卡轮哪些源 (与设备同款)
+    lv_obj_t* nw_l = lv_label_create(card);
+    lv_label_set_text(nw_l, "新闻");
+    lv_obj_set_pos(nw_l, 40, 150);
+    lv_obj_set_style_text_color(nw_l, lv_color_hex(T_LBL()), 0);
+    lv_obj_set_style_text_font(nw_l, zh_font_lg(), 0);
+    _buildNewsChips(card, 40, 192, 680 - 80);
 #else
     const int LBL_X = 40, SLD_X = 180, SLD_W = 380, SLD_H = 44;
     const int VAL_X = SLD_X + SLD_W + 18;
@@ -1653,6 +1645,15 @@ void AppHome::_openQuickSettings()
     _qs_ps_off_dd = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOff, "00:00").c_str(), "关", 240);
     _qs_ps_on_dd  = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOn, "06:30").c_str(), "开", 444);
 
+    // 新闻源多选 (2026-11-05, car-dash 设置同款): 主页新闻轮播卡轮哪些源;
+    // 新闻 app 恒显全部源页签。NVS news_feeds (JSON 数组, 默认 {"ai"})。
+    lv_obj_t* nw_l = lv_label_create(card);
+    lv_label_set_text(nw_l, "新闻");
+    lv_obj_set_pos(nw_l, LBL_X, 434);
+    lv_obj_set_style_text_color(nw_l, lv_color_hex(T_LBL()), 0);
+    lv_obj_set_style_text_font(nw_l, zh_font_lg(), 0);
+    _buildNewsChips(card, SLD_X - 8, 426, 680 - (SLD_X - 8) - 24);
+
 #endif  // !PLATFORM_BUILD_WEB
 
     // 主题循环切换（松绿→暖橙→海蓝→岩紫…）：立即重建主页，其他 app 下次
@@ -1757,6 +1758,79 @@ void AppHome::_qsPs_dd_cb(lv_event_t* e)
     } else if (dd == self->_qs_ps_on_dd) {
         hal->setConfig(power_scheduler::kKeyOn, power_scheduler::fmtHHMM(total_min / 60, total_min % 60));
     }
+}
+
+// ─── 新闻源多选 chips (设置弹窗; NVS news_feeds, car-dash 同款) ───────────────
+// 主页新闻轮播卡轮哪些源; 新闻 app 恒显全部源页签。至少保留一个来源。
+void AppHome::_buildNewsChips(lv_obj_t* card, int x, int y, int w)
+{
+    auto sel = newsfeed::loadSel();
+    auto has = [&sel](const char* id) {
+        for (auto& s : sel)
+            if (s == id) return true;
+        return false;
+    };
+
+    // 容器: flex ROW + wrap, chip 宽随内容自适应 (名称长短不一, 两行排开)
+    lv_obj_t* box = lv_obj_create(card);
+    lv_obj_set_pos(box, x, y);
+    lv_obj_set_size(box, w, 112);
+    lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(box, 0, 0);
+    lv_obj_set_style_pad_all(box, 0, 0);
+    lv_obj_set_style_pad_row(box, 8, 0);
+    lv_obj_set_style_pad_column(box, 8, 0);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+    lv_obj_set_scrollbar_mode(box, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (int i = 0; i < newsfeed::kSourceCount; i++) {
+        lv_obj_t* chip = lv_button_create(box);
+        lv_obj_set_size(chip, LV_SIZE_CONTENT, 44);
+        lv_obj_set_style_pad_left(chip, 18, 0);
+        lv_obj_set_style_pad_right(chip, 18, 0);
+        lv_obj_set_style_bg_color(chip, lv_color_hex(theme::cur().track), 0);
+        lv_obj_set_style_bg_color(chip, lv_color_hex(T_ACCENT()), LV_STATE_CHECKED);
+        lv_obj_set_style_bg_color(chip, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
+        lv_obj_set_style_radius(chip, 22, 0);
+        lv_obj_set_style_shadow_width(chip, 0, 0);
+        lv_obj_add_flag(chip, LV_OBJ_FLAG_CHECKABLE);
+        lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
+        if (has(newsfeed::kSources[i].id)) lv_obj_add_state(chip, LV_STATE_CHECKED);
+        lv_obj_set_user_data(chip, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(chip, _qsNews_cb, LV_EVENT_VALUE_CHANGED, this);
+        lv_obj_t* l = lv_label_create(chip);
+        lv_label_set_text(l, newsfeed::kSources[i].name);
+        lv_obj_set_style_text_font(l, zh_font_sm(), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(T_LBL()), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), LV_STATE_CHECKED);
+        lv_obj_center(l);
+    }
+}
+
+void AppHome::_qsNews_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    lv_obj_t* chip = lv_event_get_current_target_obj(e);
+    lv_obj_t* box  = lv_obj_get_parent(chip);
+
+    // 从 UI 状态重建选择 (单一事实源 = chips 的 CHECKED 态; 切换已完成)
+    std::vector<std::string> sel;
+    uint32_t n = lv_obj_get_child_count(box);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t* c = lv_obj_get_child(box, i);
+        if (lv_obj_has_state(c, LV_STATE_CHECKED))
+            sel.push_back(newsfeed::kSources[(intptr_t)lv_obj_get_user_data(c)].id);
+    }
+    if (sel.empty()) {
+        // 至少保留一个来源 (car-dash 同款): 回拨这次切换
+        lv_obj_add_state(chip, LV_STATE_CHECKED);
+        sel.push_back(newsfeed::kSources[(intptr_t)lv_obj_get_user_data(chip)].id);
+    }
+    newsfeed::saveSel(sel);
+    self->_news_dirty = true;
+    self->_last_dash_ms = 0;   // 下一个 onRunning tick (≤1s) 立即重拉仪表盘(含新闻)
 }
 
 // ─── Network dialog (WiFi tap): WiFi + HA server ────────────────────────────

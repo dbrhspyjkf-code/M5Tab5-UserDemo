@@ -121,14 +121,15 @@ private:
     std::string _dash_h_time_txt;            // "HH:MM" / "--:--"
     std::string _dash_sent_en_txt;
     std::string _hero_sent_en_txt, _hero_sent_cn_txt;  // hero 每日一句 (独立于轮播数据源)
-    // 轮播: AI 新闻条目 (每日一句已移 hero 主卡, 2026-10-30; guarded by _dash_mutex)
-    // 2026-11-04 数据源改版: secs[].items 从标题字符串变 {t 标题, d 简介} 对象,
+    // 轮播: 新闻多源条目 (2026-11-05 起 /news/feeds 按设置选源轮转交错,
+    // 默认 {"ai"} 与旧 /news/ai 纯 AI 行为一致; guarded by _dash_mutex)
     // cat/title/desc 三字段供轮播行与长按详情弹窗共用
     struct CarItem { std::string cat, title, desc; };
     std::vector<CarItem> _carousel, _news_items;
-    std::string _news_date;              // 数据源 date ("MM-DD HH:MM", 弹窗 meta 行)
+    std::string _news_date;              // 数据源 fetched ("MM-DD HH:MM", 弹窗 meta 行)
     int      _car_idx = 0;
     uint32_t _car_ms  = 0;
+    std::atomic<bool> _news_dirty{false};   // 设置弹窗改源 → 轮播立即重拉
     std::string _ipo_txt = "\x01";     // \x01=未拉取哨兵 (空串=确认无新股)
     int _sent_offset = 0;   // 每日一句偏移 (点击换句累计, 轮询沿用)
 
@@ -193,6 +194,7 @@ private:
     lv_obj_t* _openModal(int card_w, int card_h, const char* title);
     void _openPowerDialog();
     void _openQuickSettings();
+    void _buildNewsChips(lv_obj_t* card, int x, int y, int w);  // 新闻源多选 (NVS news_feeds)
     void _openNetworkDialog();
     void _doNetworkScan();
     void _doNetworkSave();
@@ -206,6 +208,7 @@ private:
     static void _qsSs_dd_cb(lv_event_t* e);   // 闲置超时下拉 → NVS screensaver_min
     static void _qsPs_chk_cb(lv_event_t* e);  // 定时开关机 → NVS psched_en
     static void _qsPs_dd_cb(lv_event_t* e);   // 关机/开机时间下拉 → NVS psched_off / psched_on
+    static void _qsNews_cb(lv_event_t* e);    // 新闻源 chip 切换 → NVS news_feeds + 轮播重拉
     void _refreshThemeBtn();                   // 按钮文字 ← 当前主题名
     static void _netTa_cb(lv_event_t* e);
     static void _netKb_cb(lv_event_t* e);

@@ -216,7 +216,15 @@ void HalWeb::setConfig(const std::string& key, const std::string& value)
         std::lock_guard<std::mutex> lk(prefs_mutex());
         prefs_cache()[key] = value;
     }
-    std::string body = "{\"key\":\"" + key + "\",\"value\":\"" + value + "\"}";
+    // value 手拼 JSON 必须转义反斜杠/引号, 否则含引号的值(如 JSON 数组串)
+    // 拼出非法 JSON, 网关 json.loads 抛错且静默丢存 (2026-11-05 实锤)
+    std::string esc;
+    esc.reserve(value.size() + 8);
+    for (char c : value) {
+        if (c == '\\' || c == '"') esc += '\\';
+        esc += c;
+    }
+    std::string body = "{\"key\":\"" + key + "\",\"value\":\"" + esc + "\"}";
     int p = 0, len = 0;
     web_xhr("POST", "/gw/prefs", "Content-Type: application/json\n",
             body.c_str(), (int)body.size(), 5000, &p, &len);

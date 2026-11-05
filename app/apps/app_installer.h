@@ -28,6 +28,7 @@
 #include "app_health/app_health.h"
 #include "app_lottery/app_lottery.h"
 #include "app_gallery/app_gallery.h"
+#include "app_news/app_news.h"
 #include <cstdlib>
 #include <cstring>
 #include "app_idle_screen/app_idle_screen.h"
@@ -121,6 +122,9 @@ inline void on_install_apps()
     auto ga_uptr = std::make_unique<AppGallery>();
     AppGallery* gallery = ga_uptr.get();     // 图库: 工具页入口
 
+    auto nw_uptr = std::make_unique<AppNews>();
+    AppNews* news = nw_uptr.get();           // 新闻: 主页入口 (2026-11-05 替换小智按钮)
+
 #ifndef PLATFORM_BUILD_WEB
     auto is_uptr = std::make_unique<AppIdleScreen>();
     AppIdleScreen* idle = is_uptr.get();
@@ -149,6 +153,7 @@ inline void on_install_apps()
     int hl_id  = mooncake::GetMooncake().installApp(std::move(hl_uptr));
     int lo_id  = mooncake::GetMooncake().installApp(std::move(lo_uptr));
     int ga_id  = mooncake::GetMooncake().installApp(std::move(ga_uptr));
+    int nw_id  = mooncake::GetMooncake().installApp(std::move(nw_uptr));
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
@@ -196,12 +201,15 @@ inline void on_install_apps()
     });
     // 收音机是主页入口(非工具页), 关闭直接回主屏
     radio->setCloseCallback([home]() { home->restoreScreen(); });
+    // 新闻同为主页入口, 关闭直接回主屏 (2026-11-05 替换小智按钮)
 #ifndef PLATFORM_BUILD_WEB
     // 播放器(Sonos/HomePod)同为主页入口
     player->setCloseCallback([home]() { home->restoreScreen(); });
 #endif
     // 计时器同为主页入口
     timer->setCloseCallback([home]() { home->restoreScreen(); });
+    // 新闻同为主页入口
+    news->setCloseCallback([home]() { home->restoreScreen(); });
 #ifndef PLATFORM_BUILD_WEB
     // 独占模式: 收音机打开期间抑制屏保(流媒体 app, 不被时钟遮盖/省轮询)
     radio->setSuppressor([idle](bool s) { idle->setSuppressed(s); });
@@ -257,6 +265,7 @@ inline void on_install_apps()
         else if (strcmp(want, "player") == 0) mooncake::GetMooncake().openApp(pl_id);
 #endif
         else if (strcmp(want, "gallery") == 0) mooncake::GetMooncake().openApp(ga_id);
+        else if (strcmp(want, "news") == 0) mooncake::GetMooncake().openApp(nw_id);
     }
 #endif
 
@@ -285,7 +294,8 @@ inline void on_install_apps()
 
     // ── Register apps in the home screen ──
     home->addApp("智能家居", ha_id);
-    home->addApp("小  智", xz_id);
+    // 2026-11-05: 「小智」按钮 →「新闻」(xiaozhi 仍在装, 唤醒词"你好小智"照常进入)
+    home->addApp("新闻", nw_id);
     home->addApp("金融", st_id);   // 2026-10-28: 入口从工具页移到主页底部
     home->addApp("收音机", ra_id);
 #ifndef PLATFORM_BUILD_WEB
