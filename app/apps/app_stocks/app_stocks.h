@@ -64,7 +64,7 @@ private:
     lv_obj_t* _index_pct[9]     {nullptr};
     lv_obj_t* _index_page       {nullptr};  // 指数页容器
     lv_obj_t* _stocks_page      {nullptr};  // 自选股页容器
-    int        _page            = 0;        // 0=自选股 1=指数
+    int        _page            = 0;        // 0=自选股 1=指数 2=大宗商品·加密货币
     uint32_t   _last_index_ms   = 0;
     int64_t    _last_flip_ms    = 0;    // 上次切页时刻: 双轨判据去重 (GESTURE+RELEASED)
     int64_t    _last_exit_ms    = 0;    // 上次退出请求时刻: 同上 (上拨双轨去重)
@@ -73,6 +73,47 @@ private:
     void _applyIndices();
     void _indexFetchWorker();
     void _setPage(int page);
+
+    // ── 大宗商品·加密货币页 (2026-11-05): 第三页, 左右拨循环切换 ──
+    // 外盘贵金属/原油/汇率 = 设备直连腾讯 qt.gtimg (hf_ 逗号分隔 / wh 波浪号,
+    // 只取数字字段, 名字本地写死 — GBK 无需解码, 指数页同做法);
+    // 比特币 = hermes /api/market/overview (服务端 gate.io 60s 缓存 + 兜底).
+    struct CommodDef { const char* name; const char* unit; const char* tencent; int dec; };
+    static constexpr CommodDef kCommods[10] = {
+        {"黄金",        "美元/盎司", "hf_XAU",    2},
+        {"白银",        "美元/盎司", "hf_XAG",    2},
+        {"比特币",      "USDT",      nullptr,     1},   // nullptr → hermes market
+        {"美元/人民币", "在岸",      "whUSDCNY",  4},
+        {"WTI 原油",    "美元/桶",   "hf_CL",     2},
+        {"布伦特原油",  "美元/桶",   "hf_OIL",    2},
+        {"伦铜",        "美元/吨",   "hf_CAD",    2},
+        {"伦铝",        "美元/吨",   "hf_AHD",    2},
+        {"伦镍",        "美元/吨",   "hf_NID",    2},
+        {"伦锡",        "美元/吨",   "hf_SND",    2},
+    };
+    struct CommodQuote {
+        bool ok = false;
+        std::string value;      // 已按 dec 精度格式化的价格串
+        float chg_pct{0};
+        std::string hilo;       // 「高 x · 低 y · t」(wh/比特币无则空)
+    };
+    CommodQuote _commod_quotes[10] = {};   // guarded by _commod_mu
+    std::mutex _commod_mu;
+    std::atomic<bool> _commod_ready{false};
+    std::atomic<bool> _commod_in_flight{false};
+    uint32_t   _last_commod_ms = 0;
+    lv_obj_t*  _commod_page   {nullptr};   // 商品页容器
+    lv_obj_t*  _commod_scroll {nullptr};   // 纵向滚动 (10 卡 4 行超一屏)
+    lv_obj_t*  _commod_cards[10] {nullptr};
+    lv_obj_t*  _commod_name[10]  {nullptr};
+    lv_obj_t*  _commod_unit[10]  {nullptr};
+    lv_obj_t*  _commod_price[10] {nullptr};
+    lv_obj_t*  _commod_pct[10]   {nullptr};
+    lv_obj_t*  _commod_hilo[10]  {nullptr};
+    void _buildCommodPage();
+    void _fetchCommodAsync();
+    void _commodFetchWorker();
+    void _applyCommods();
 
     // 卡片网格 4 列 (2026-10-27, 参考工具页卡片风格); 行数随持仓数动态
     // 扩展, 纵向滚动容器承载. 超过一屏的持仓上下拨滚动查看 (2026-10-27

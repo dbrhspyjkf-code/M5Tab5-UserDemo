@@ -133,11 +133,21 @@ void AppStocks::onRunning()
     if (_index_ready.exchange(false)) {
         _applyIndices();
     }
+    if (_commod_ready.exchange(false)) {
+        _applyCommods();
+    }
     // 指数页在前台时 60s 刷新
     if (_page == 1 && _scr && lv_screen_active() == _scr) {
         if (_last_index_ms == 0 || mono_ms() - _last_index_ms >= 60000) {
             _last_index_ms = mono_ms();
             _fetchIndicesAsync();
+        }
+    }
+    // 商品页在前台时 60s 刷新 (外盘全天交易, 无需交易时段判断)
+    if (_page == 2 && _scr && lv_screen_active() == _scr) {
+        if (_last_commod_ms == 0 || mono_ms() - _last_commod_ms >= 60000) {
+            _last_commod_ms = mono_ms();
+            _fetchCommodAsync();
         }
     }
     // mooncake 给每个已装 app 每轮都调 onRunning, 且 openApp(其他) 不会把本 app
@@ -350,7 +360,7 @@ void AppStocks::_buildUi()
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG()), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 两页容器: 0=自选股 1=指数看板 (左右拨切换, _setPage)
+    // 三页容器: 0=自选股 1=指数看板 2=大宗商品·加密货币 (左右拨切换, _setPage)
     _stocks_page = lv_obj_create(_scr);
     lv_obj_set_size(_stocks_page, SCREEN_W, SCREEN_H);
     lv_obj_set_pos(_stocks_page, 0, 0);
@@ -374,6 +384,7 @@ void AppStocks::_buildUi()
     // 卡位在 _refreshUiFromItems 里按持仓数动态创建 (_ensureCards)
 
     _buildIndexPage();
+    _buildCommodPage();
     {
         // 桌面调试: TAB5_PAGE=1 直接落在指数页 (设备忽略, 恒 0)
         int page0 = 0;
@@ -474,11 +485,15 @@ void AppStocks::_setPage(int page)
         _last_flip_ms = now;
         _page = page;
     }
-    if (!_scr || !_stocks_page || !_index_page) return;
-    lv_obj_set_pos(_stocks_page, page == 0 ? 0 : -SCREEN_W, 0);
-    lv_obj_set_pos(_index_page, page == 1 ? 0 : SCREEN_W, 0);
+    if (!_scr || !_stocks_page || !_index_page || !_commod_page) return;
+    // 三页通用摆位: 每页 x = (页序 - 当前页) * SCREEN_W
+    lv_obj_set_pos(_stocks_page, (0 - page) * SCREEN_W, 0);
+    lv_obj_set_pos(_index_page,  (1 - page) * SCREEN_W, 0);
+    lv_obj_set_pos(_commod_page, (2 - page) * SCREEN_W, 0);
     // 指数页第一次进入时拉一次
     if (page == 1 && _last_index_ms == 0) _fetchIndicesAsync();
+    // 商品页第一次进入时拉一次
+    if (page == 2 && _last_commod_ms == 0) _fetchCommodAsync();
 }
 
 // GBK → UTF-8 这里不需要: qt.gtimg 返回的字段只取数字, 名字用本地 kIndices 表
@@ -589,6 +604,238 @@ void AppStocks::_fetchIndicesAsync()
     GetHAL()->tryRunDetached([this]() { _indexFetchWorker(); });
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  大宗商品 · 加密货币页 (2026-11-05): 10 卡 3×4, 腾讯外盘一次拉 9 代码 +
+//  hermes market overview 拿比特币; 涨跌渐变上色与指数卡同款
+// ════════════════════════════════════════════════════════════════════════════
+void AppStocks::_buildCommodPage()
+{
+    _commod_page = lv_obj_create(_scr);
+    lv_obj_set_size(_commod_page, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_commod_page, 2 * SCREEN_W, 0);   // 更右侧待命
+    lv_obj_set_style_bg_opa(_commod_page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_commod_page, 0, 0);
+    lv_obj_set_style_pad_all(_commod_page, 0, 0);
+    lv_obj_clear_flag(_commod_page, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 4 行卡片超一屏 → 纵向滚动容器承载 (切页/退出走全局 indev 手势, 互不冲突;
+    // 清 SCROLL_ELASTIC 防底缘上拨被误判为滚动 — gallery/idea 同款铁律)
+    _commod_scroll = lv_obj_create(_commod_page);
+    lv_obj_set_size(_commod_scroll, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_commod_scroll, 0, 0);
+    lv_obj_set_style_bg_opa(_commod_scroll, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_commod_scroll, 0, 0);
+    lv_obj_set_style_pad_all(_commod_scroll, 0, 0);
+    lv_obj_set_scroll_dir(_commod_scroll, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(_commod_scroll, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_clear_flag(_commod_scroll, LV_OBJ_FLAG_SCROLL_ELASTIC);
+
+    constexpr int IC_W = 392, IC_H = 214, IG_X = 20, IG_Y = 18, IG_M = 32;
+    for (int i = 0; i < 10; i++) {
+        const int col = i % 3, row = i / 3;
+        lv_obj_t* card = lv_obj_create(_commod_scroll);
+        lv_obj_set_size(card, IC_W, IC_H);
+        lv_obj_set_pos(card, IG_M + col * (IC_W + IG_X), 20 + row * (IC_H + IG_Y));
+        lv_obj_set_style_bg_color(card, lv_color_hex(C_HEADER()), 0);
+        lv_obj_set_style_radius(card, 18, 0);
+        lv_obj_set_style_border_width(card, 0, 0);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_set_style_shadow_width(card, 0, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE);   // 无二级页 (纯行情卡)
+
+        // 名称 (左上) + 单位 (右上小字)
+        lv_obj_t* name = lv_label_create(card);
+        lv_label_set_text(name, kCommods[i].name);
+        lv_obj_set_style_text_font(name, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(name, lv_color_hex(theme::cur().text_soft), 0);
+        lv_obj_align(name, LV_ALIGN_TOP_LEFT, 20, 18);
+
+        lv_obj_t* unit = lv_label_create(card);
+        lv_label_set_text(unit, kCommods[i].unit);
+        lv_obj_set_style_text_font(unit, zh_font_sm(), 0);   // 中文单位 (montserrat 无汉字)
+        lv_obj_set_style_text_color(unit, lv_color_hex(C_DIM()), 0);
+        lv_obj_align(unit, LV_ALIGN_TOP_RIGHT, -20, 24);
+
+        lv_obj_t* price = lv_label_create(card);
+        lv_label_set_text(price, "--");
+        lv_obj_set_style_text_font(price, &lv_font_montserrat_38, 0);
+        lv_obj_set_style_text_color(price, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(price, LV_ALIGN_TOP_MID, 0, 66);
+
+        lv_obj_t* pct = lv_label_create(card);
+        lv_label_set_text(pct, "");
+        lv_obj_set_style_text_font(pct, &lv_font_montserrat_30, 0);
+        lv_obj_set_style_text_color(pct, lv_color_hex(C_TEXT()), 0);
+        lv_obj_align(pct, LV_ALIGN_TOP_MID, 0, 118);
+
+        lv_obj_t* hilo = lv_label_create(card);
+        lv_label_set_text(hilo, "");
+        lv_obj_set_style_text_font(hilo, zh_font_sm(), 0);   // 「高/低/·」需中文字形
+        lv_obj_set_style_text_color(hilo, lv_color_hex(C_DIM()), 0);
+        lv_obj_align(hilo, LV_ALIGN_TOP_MID, 0, 170);
+
+        _commod_cards[i] = card;
+        _commod_name[i]  = name;
+        _commod_unit[i]  = unit;
+        _commod_price[i] = price;
+        _commod_pct[i]   = pct;
+        _commod_hilo[i]  = hilo;
+    }
+}
+
+void AppStocks::_fetchCommodAsync()
+{
+    bool expected = false;
+    if (!_commod_in_flight.compare_exchange_strong(expected, true)) return;
+    auto alive = _alive;
+    // 腾讯 GBK 响应体较大 (9 代码) + nlohmann 解析 → 32KB 栈 (PSRAM)
+    if (!GetHAL()->tryRunDetached([this, alive]() {
+        if (!*alive) { _commod_in_flight = false; return; }
+        _commodFetchWorker();
+        _commod_in_flight = false;
+    }, 32 * 1024)) {
+        _commod_in_flight = false;
+    }
+}
+
+void AppStocks::_commodFetchWorker()
+{
+    CommodQuote q[10];
+    bool any = false;
+
+    // 1) 腾讯外盘 9 代码 (hf_ 逗号分隔, wh 波浪号 — 只取数字字段, GBK 不解码)
+    auto resp = GetHAL()->httpGet(
+        "https://qt.gtimg.cn/q=hf_XAU,hf_XAG,hf_CAD,hf_NID,hf_SND,hf_AHD,"
+        "hf_CL,hf_OIL,whUSDCNY");
+    if (resp.ok) {
+        for (int i = 0; i < 10; i++) {
+            if (!kCommods[i].tencent) continue;   // 比特币走 hermes
+            const std::string code = kCommods[i].tencent;
+            const std::string key = "v_" + code + "=\"";
+            const size_t p = resp.body.find(key);
+            if (p == std::string::npos) continue;
+            const size_t v0 = p + key.size();
+            const size_t v1 = resp.body.find('"', v0);
+            if (v1 == std::string::npos) continue;
+            const char sep = code.rfind("wh", 0) == 0 ? '~' : ',';
+            // 按分隔符取第 n 个字段 (hf: [0]价 [1]% [4]高 [5]低 [6]时间;
+            //  wh: [3]价 [13]%)
+            auto field = [&](int n) -> std::string {
+                size_t f = v0;
+                for (int k = 0; k < n; k++) {
+                    f = resp.body.find(sep, f);
+                    if (f == std::string::npos || f >= v1) return "";
+                    f++;
+                }
+                size_t e = resp.body.find(sep, f);
+                if (e == std::string::npos || e > v1) e = v1;
+                return resp.body.substr(f, e - f);
+            };
+            try {
+                const bool wh = sep == '~';
+                const float price = std::stof(field(wh ? 3 : 0));
+                q[i].chg_pct      = std::stof(field(wh ? 13 : 1));
+                if (price > 0) {
+                    char buf[80];   // UTF-8 中文「高/低/·」各 2-3 字节, 32 曾截断时间
+                    snprintf(buf, sizeof buf, "%.*f", kCommods[i].dec, price);
+                    q[i].value = buf;
+                    if (!wh) {
+                        const float hi = std::stof(field(4));
+                        const float lo = std::stof(field(5));
+                        std::string tm = field(6);
+                        if (tm.size() > 5) tm = tm.substr(0, 5);   // HH:MM
+                        snprintf(buf, sizeof buf, "高 %.*f · 低 %.*f · %s",
+                                 kCommods[i].dec, hi, kCommods[i].dec, lo, tm.c_str());
+                        q[i].hilo = buf;
+                    }
+                    q[i].ok = true;
+                    any = true;
+                }
+            } catch (...) {}
+        }
+    }
+
+    // 2) 比特币 — hermes /api/market/overview (gate.io 服务端缓存 + 兜底)
+    {
+        const std::string svc = GetHAL()->getConfig("svc_host", "192.168.1.200");
+        auto mresp = GetHAL()->httpGet("http://" + svc + ":8766/api/market/overview");
+        if (mresp.ok) {
+            try {
+                auto j = nlohmann::json::parse(mresp.body, nullptr, false);
+                if (!j.is_discarded() && j.contains("items")) {
+                    for (const auto& it : j["items"]) {
+                        if (it.value("name", "") != "比特币") continue;
+                        q[2].value   = it.value("value", "");
+                        q[2].chg_pct = static_cast<float>(it.value("chg", 0.0));
+                        // gate 无日内高低 — hilo 留空
+                        q[2].ok = !q[2].value.empty();
+                        any = any || q[2].ok;
+                        break;
+                    }
+                }
+            } catch (...) {}
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(_commod_mu);
+        for (int i = 0; i < 10; i++) _commod_quotes[i] = q[i];
+    }
+    _commod_ready.store(any);
+}
+
+void AppStocks::_applyCommods()
+{
+    LvglLockGuard lock;
+    CommodQuote c[10];
+    {
+        std::lock_guard<std::mutex> lk(_commod_mu);
+        for (int i = 0; i < 10; i++) c[i] = _commod_quotes[i];
+    }
+    // 渐变端点: 本页可见行情中的最大涨幅/最大跌幅 (指数卡/自选股卡同款)
+    float max_chg = 0, min_chg = 0;
+    for (int i = 0; i < 10; i++) {
+        if (!c[i].ok) continue;
+        max_chg = c[i].chg_pct > max_chg ? c[i].chg_pct : max_chg;
+        min_chg = c[i].chg_pct < min_chg ? c[i].chg_pct : min_chg;
+    }
+    for (int i = 0; i < 10; i++) {
+        if (!_commod_cards[i]) continue;
+        if (!c[i].ok) {
+            lv_obj_set_style_text_color(_commod_price[i], lv_color_hex(C_DIM()), 0);
+            lv_label_set_text(_commod_price[i], "--");
+            lv_label_set_text(_commod_pct[i], "");
+            lv_label_set_text(_commod_hilo[i], "");
+            continue;
+        }
+        const bool up = c[i].chg_pct > 0.005f, down = c[i].chg_pct < -0.005f;
+        constexpr uint32_t UP_DARK   = 0x8A2B20;
+        constexpr uint32_t DOWN_DARK = 0x1F6B4E;
+        uint32_t bg = C_HEADER();
+        if (up || down) {
+            const float max_up   = max_chg > 0 ? max_chg : 0;
+            const float max_down = min_chg < 0 ? -min_chg : 0;
+            const float t = up ? (max_up > 0 ? 1 - c[i].chg_pct / max_up : 1)
+                               : (max_down > 0 ? 1 - (-c[i].chg_pct / max_down) : 1);
+            bg = lerp_color(up ? UP_DARK : DOWN_DARK, up ? C_UP() : C_DOWN(), t);
+        }
+        const uint32_t fg  = (up || down) ? 0xFFFFFF : C_TEXT();
+        const uint32_t fg2 = (up || down) ? 0xFFFFFF : C_DIM();
+        lv_obj_set_style_bg_color(_commod_cards[i], lv_color_hex(bg), 0);
+        lv_obj_set_style_text_color(_commod_name[i],  lv_color_hex(fg2), 0);
+        lv_obj_set_style_text_color(_commod_unit[i],  lv_color_hex(fg2), 0);
+        lv_obj_set_style_text_color(_commod_price[i], lv_color_hex(fg), 0);
+        lv_label_set_text(_commod_price[i], c[i].value.c_str());
+        char buf[32];
+        snprintf(buf, sizeof buf, "%+.2f%%", c[i].chg_pct);
+        lv_label_set_text(_commod_pct[i], buf);
+        lv_obj_set_style_text_color(_commod_pct[i], lv_color_hex(fg2), 0);
+        lv_label_set_text(_commod_hilo[i], c[i].hilo.c_str());
+        lv_obj_set_style_text_color(_commod_hilo[i], lv_color_hex(fg2), 0);
+    }
+}
+
 void AppStocks::_destroyUi()
 {
     LvglLockGuard lock;
@@ -606,9 +853,13 @@ void AppStocks::_destroyUi()
     for (int i = 0; i < 9; i++)
         _index_cards[i] = _index_name[i] = _index_price[i] =
         _index_amt[i] = _index_pct[i] = nullptr;
-    _stocks_page = _index_page = nullptr;
+    for (int i = 0; i < 10; i++)
+        _commod_cards[i] = _commod_name[i] = _commod_unit[i] = _commod_price[i] =
+        _commod_pct[i] = _commod_hilo[i] = nullptr;
+    _stocks_page = _index_page = _commod_page = _commod_scroll = nullptr;
     _page = 0;
     _last_index_ms = 0;
+    _last_commod_ms = 0;
     if (_poll_timer) { lv_timer_delete(_poll_timer); _poll_timer = nullptr; }
     _alive = std::make_shared<bool>(true);  // fresh flag for the next _buildUi/_installSwipeGesture
 }
@@ -626,6 +877,7 @@ struct SwipeCtx {
     AppStocks* app;
     std::weak_ptr<bool> alive;
     int press_x = -1, press_y = -1;   // 横向切页位移判定起点
+    int target_page = -1;             // 切页目标 (lv_async_call 不能带捕获 lambda)
 };
 }  // namespace
 
@@ -662,13 +914,16 @@ void AppStocks::_installSwipeGesture()
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
                     const int dx = p.x - ctx->press_x, dy = p.y - ctx->press_y;
-                    // 横向位移 > 90px 且明显大于纵向 → 切页
+                    // 横向位移 > 90px 且明显大于纵向 → 切页 (方向感知:
+                    // 左拨 dx<0 = 看右边页, 右拨 dx>0 = 看左边页; 三页循环)
                     if (abs(dx) > 90 && abs(dx) > abs(dy) * 2) {
-                        auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
+                        const int target = dx < 0 ? (ctx->app->_page + 1) % 3
+                                                  : (ctx->app->_page + 2) % 3;
+                        auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive, -1, -1, target};
                         lv_async_call([](void* u) {
                             auto* c = static_cast<SwipeCtx*>(u);
                             auto a = c->alive.lock();
-                            if (a && *a) c->app->_setPage(c->app->_page == 0 ? 1 : 0);
+                            if (a && *a) c->app->_setPage(c->target_page);
                             delete c;
                         }, app_ctx);
                         return;
@@ -711,12 +966,14 @@ void AppStocks::_installSwipeGesture()
                         delete c;
                     }, app_ctx);
                 } else if (dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT) {
-                    // 左拨 → 指数看板, 右拨 → 自选股 (两页横向切换)
-                    auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive};
+                    // 左拨 → 下一页, 右拨 → 上一页 (三页循环, 与 RELEASED 轨同语义)
+                    const int target = dir == LV_DIR_LEFT ? (ctx->app->_page + 1) % 3
+                                                          : (ctx->app->_page + 2) % 3;
+                    auto* app_ctx = new SwipeCtx{ctx->app, ctx->alive, -1, -1, target};
                     lv_async_call([](void* u) {
                         auto* c = static_cast<SwipeCtx*>(u);
                         auto a = c->alive.lock();
-                        if (a && *a) c->app->_setPage(c->app->_page == 0 ? 1 : 0);
+                        if (a && *a) c->app->_setPage(c->target_page);
                         delete c;
                     }, app_ctx);
                 }
