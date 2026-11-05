@@ -171,9 +171,10 @@ inline void on_install_apps()
     });
 #endif
     // 自选股也从「工具」页打开, 返回 (← / 上拨) 回到工具页.
-    stocks->setCloseCallback([set_id]() {
-        mooncake::GetMooncake().openApp(set_id);
-    });
+    // 金融是主页入口 (2026-10-28 从工具页移到主页底部), 上拨退出回主页。
+    // 2026-11-05 修: 此前仍是 openApp(set_id) 遗留 → 金融退出落到工具页,
+    // 且金融残留的手势钩子在工具页上拨时反复 openApp(工具页), 工具页无法退出。
+    stocks->setCloseCallback([home]() { home->restoreScreen(); });
     // 万年历同样从「工具」页打开, 上拨返回工具页.
     calendar->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);

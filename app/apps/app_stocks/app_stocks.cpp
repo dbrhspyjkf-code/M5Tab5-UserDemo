@@ -179,30 +179,23 @@ void AppStocks::onRunning()
 
 void AppStocks::onClose()
 {
-    // 安全网: 即便 onClose 没被 mooncake 触发 (见 _requestClose 注释), 这里也做一遍.
+    // 主页入口型关闭 (app_timer 同款顺序): 先 _close_cb 切回主页屏, 再拆
+    // 钩子/删屏 —— 删的 _scr 已不是活动屏, 无 "active screen deleted" 悬垂。
     mclog::tagInfo(TAG, "closed");
     _teardownHardware();
+    if (_close_cb) _close_cb();
     _destroyUi();
 }
 
-// 退出唯一出口. mooncake openApp(工具页) 不会关闭当前 app, onClose 不一定触发,
-// 所以收尾 (停 ticker / 释放 strip / 交还 PORT A) 必须在这里显式做.
+// 退出唯一出口 (上拨). 2026-11-05 起金融是主页入口: 走 mooncake close() →
+// onClose (收尾 + 回主页 + 拆 UI/手势钩子)。旧版这里只 _teardownHardware +
+// openApp(工具页), 不拆 UI —— 而 _teardownHardware 先把 _app_open 置 false,
+// onRunning 的失焦收尾分支因此也跳过 _destroyUi, 手势钩子永久残留, 在工具页
+// 上拨时反复 openApp(工具页) 致工具页无法退出 (用户实锤)。
 void AppStocks::_requestClose()
 {
     _teardownHardware();
-    // Do NOT _destroyUi()/delete _scr here. _close_cb is
-    // mooncake::GetMooncake().openApp(tools_id) — that's async (just flags
-    // StateGoOpen; the tools app's onOpen()/lv_screen_load() doesn't run
-    // until the next mooncake tick), so _scr would still be the *active*
-    // screen at the moment of deletion — LVGL warns "the active screen was
-    // deleted" and a later layout pass on the dangling pointer panics
-    // (Guru Meditation, lv_obj_align_to/lv_obj_update_layout). Matches
-    // AppUnitPuzzle::_requestClose(), which has the same openApp()-based
-    // close_cb and the same reasoning. Leave _scr in place — harmless, gets
-    // covered by the tools screen once it loads — and let the existing
-    // idempotent `if (_scr) _destroyUi();` guard at the top of onOpen()
-    // reap it next time this app is reopened.
-    if (_close_cb) _close_cb();
+    close();
 }
 
 // 上拨退出去重: GESTURE (拨动中途) 与 RELEASED 位移 (抬起) 双轨都会对同一次
@@ -897,6 +890,10 @@ void AppStocks::_installSwipeGesture()
                 auto* ctx = static_cast<SwipeCtx*>(lv_event_get_user_data(e));
                 auto alive = ctx->alive.lock();
                 if (!alive || !*alive) return;
+                // 前台守卫 (全 app 双守卫铁律): indev 手势广播给所有钩子, 本 app
+                // 不在前台时绝不切页/退出 (2026-11-05 残留钩子在工具页上拨反复
+                // openApp(工具页) 实锤)
+                if (!ctx->app->_scr || lv_screen_active() != ctx->app->_scr) return;
                 if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
                     // 起点只在按下瞬间记一次: PRESSING 每个 tick 都发, 若在
                     // PRESSING 里刷新起点, 到抬起时起点已被刷成释放前最后位置,
@@ -950,6 +947,7 @@ void AppStocks::_installSwipeGesture()
                 auto* ctx = static_cast<SwipeCtx*>(lv_event_get_user_data(e));
                 auto alive = ctx->alive.lock();
                 if (!alive || !*alive) return;
+                if (!ctx->app->_scr || lv_screen_active() != ctx->app->_scr) return;   // 前台守卫
                 if (ctx->app->_detail_modal) return;   // 弹窗期间手势全屏蔽
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 const lv_dir_t dir = lv_indev_get_gesture_dir(dev);
