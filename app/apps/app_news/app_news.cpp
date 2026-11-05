@@ -128,12 +128,17 @@ void AppNews::_buildUi()
     lv_obj_set_style_bg_opa(_scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 顶部 8 源页签 (car-dash 恒显全部源; CHECKABLE 按钮, lottery 同款)
-    constexpr int TAB_W = 147, TAB_H = 44, TAB_GAP = 8, TAB_X = 16, TAB_Y = 10;
+    // 顶部 8 源页签 (car-dash 恒显全部源; CHECKABLE 按钮, lottery 同款)。
+    // 两行 4+4: 单行 8 个每签仅 ~147 宽太小 (2026-11-05 用户反馈), 加大后
+    // 点击目标 ~302x56、字号 24px; 列表区相应从 y=136 起
+    constexpr int TAB_W = 302, TAB_H = 56, TAB_GAP = 8, TAB_X = 24, TAB_Y = 8;
+    constexpr int TAB_COLS = 4;   // 每行 4 个
     for (int i = 0; i < kTabs && i < newsfeed::kSourceCount; i++) {
+        const int col = i % TAB_COLS, row = i / TAB_COLS;
         lv_obj_t* btn = lv_button_create(_scr);
         lv_obj_set_size(btn, TAB_W, TAB_H);
-        lv_obj_set_pos(btn, TAB_X + i * (TAB_W + TAB_GAP), TAB_Y);
+        lv_obj_set_pos(btn, TAB_X + col * (TAB_W + TAB_GAP),
+                       TAB_Y + row * (TAB_H + TAB_GAP));
         lv_obj_set_style_bg_color(btn, lv_color_hex(theme::cur().card[3]), 0);
         lv_obj_set_style_bg_color(btn, lv_color_hex(theme::cur().accent), LV_STATE_CHECKED);
         lv_obj_set_style_bg_color(btn, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
@@ -151,7 +156,7 @@ void AppNews::_buildUi()
         }, LV_EVENT_CLICKED, this);
         lv_obj_t* l = lv_label_create(btn);
         lv_label_set_text(l, newsfeed::kSources[i].name);
-        lv_obj_set_style_text_font(l, zh20(), 0);
+        lv_obj_set_style_text_font(l, zh24(), 0);
         lv_obj_set_style_text_color(l, lv_color_hex(theme::cur().text_dim), 0);
         lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), LV_STATE_CHECKED);
         lv_obj_center(l);
@@ -165,10 +170,10 @@ void AppNews::_buildUi()
     lv_obj_set_style_text_color(_status_lbl, lv_color_hex(theme::cur().text_dim), 0);
     lv_obj_align(_status_lbl, LV_ALIGN_BOTTOM_RIGHT, -16, -8);
 
-    // 滚动列表 (app_health 写法): y=64 起铺到屏底
+    // 滚动列表 (app_health 写法): 页签两行占 128, y=136 起铺到屏底
     _scroll = lv_obj_create(_scr);
-    lv_obj_set_size(_scroll, 1280, 720 - 64);
-    lv_obj_set_pos(_scroll, 0, 64);
+    lv_obj_set_size(_scroll, 1280, 720 - 136);
+    lv_obj_set_pos(_scroll, 0, 136);
     lv_obj_set_style_bg_opa(_scroll, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_scroll, 0, 0);
     lv_obj_set_style_pad_all(_scroll, 0, 0);
