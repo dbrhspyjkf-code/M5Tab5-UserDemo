@@ -95,10 +95,13 @@ private:
     void _nullUiPtrs();
     void _showView(bool play);
     void _buildRows();
+    void _showKeyboard();
+    void _hideKeyboard();
     lv_obj_t* _scr = nullptr;
     lv_obj_t* _home_view = nullptr;
     lv_obj_t* _play_view = nullptr;
-    lv_obj_t* _ta = nullptr;           // 搜索输入 (硬键盘 lvKbGroup + 语音)
+    lv_obj_t* _ta = nullptr;           // 搜索输入 (点按弹软键盘 / 硬键盘 / 语音)
+    lv_obj_t* _keyboard = nullptr;     // 屏幕虚拟键盘 (idea 同款, 默认隐藏)
     lv_obj_t* _hist_row = nullptr;
     lv_obj_t* _grid = nullptr;         // 结果列表 (纵向滚动)
     lv_obj_t* _status_lbl = nullptr;   // 搜索中/失败提示
@@ -127,6 +130,10 @@ private:
     void _removeSwipeGesture();
     void _requestClose() { if (_close_cb) _close_cb(); }
     void _requestExitOnce();
+
+    // ── 硬键盘/语音会话收尾 (失焦 + 关闭 共用; 防 lvKbGroup 悬垂已删 textarea) ──
+    void _detachInput();
+    int _voice_retry = 0;              // 语音空结果自动重试一次
 
     std::function<void()> _close_cb;
 };

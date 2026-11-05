@@ -125,6 +125,7 @@ void AppYt::onRunning()
         mclog::tagInfo(TAG, "lost foreground, tearing down screen");
         _want.store(-1);
         _removeSwipeGesture();
+        _detachInput();   // 防悬垂: lvKbGroup/语音回调指向即将删除的 textarea
         lv_obj_t* scr = _scr;
         _nullUiPtrs();
         _scr = nullptr;
@@ -502,13 +503,46 @@ void AppYt::_buildUi()
         lv_obj_set_style_border_width(_ta, 2, 0);
         lv_obj_set_style_radius(_ta, 14, 0);
         lv_obj_set_style_pad_hor(_ta, 16, 0);
-        lv_textarea_set_placeholder_text(_ta, "搜索 YouTube… (语音/硬键盘)");
+        lv_textarea_set_placeholder_text(_ta, "搜索 YouTube… (点按弹键盘/语音)");
         lv_textarea_set_one_line(_ta, true);
         lv_obj_clear_flag(_ta, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(_ta, [](lv_event_t* e) {
+            static_cast<AppYt*>(lv_event_get_user_data(e))->_showKeyboard();
+        }, LV_EVENT_CLICKED, this);
     }
     gmu::action_btn(_home_view, "语音", 676, 12, 84, 56, [](lv_event_t* e) {
         auto* self = static_cast<AppYt*>(lv_event_get_user_data(e));
-        if (self && self->_ta) AppVoiceInput::requestMicInput(self->_ta);
+        if (!self || !self->_scr) return;
+        // 大麦克风模式: 识别文本经回调交付 → 自动填入 + 自动搜索 (一次性回调)
+        self->_voice_retry = 0;
+        if (self->_status_lbl) lv_label_set_text(self->_status_lbl, "请说话… (说完停 2 秒)");
+        AppVoiceInput::requestVoiceText([self](const std::string& text) {
+            if (!self || !self->_scr) return;
+            if (text.empty()) {
+                // 服务端 stt 瞬时失败常见 (首录太短/太轻): 自动重试一次
+                if (self->_voice_retry++ < 1 && self->_status_lbl) {
+                    lv_label_set_text(self->_status_lbl, "没听清, 自动再试一次…");
+                    AppVoiceInput::requestVoiceText([self](const std::string& t2) {
+                        if (!self || !self->_scr) return;
+                        if (!t2.empty() && self->_ta) {
+                            lv_textarea_set_text(self->_ta, t2.c_str());
+                            self->_hideKeyboard();
+                            self->_searchAsync(t2);
+                        } else if (self->_status_lbl) {
+                            lv_label_set_text(self->_status_lbl, "没听清, 点麦克风再试");
+                        }
+                    });
+                    return;
+                }
+                if (self->_status_lbl) lv_label_set_text(self->_status_lbl, "没听清, 点麦克风再试");
+                return;
+            }
+            if (self->_ta) {
+                lv_textarea_set_text(self->_ta, text.c_str());
+                self->_hideKeyboard();
+                self->_searchAsync(text);   // 识别成功直接搜 (免手点)
+            }
+        });
     }, this);
     gmu::action_btn(_home_view, "搜索", 772, 12, 120, 56, [](lv_event_t* e) {
         auto* self = static_cast<AppYt*>(lv_event_get_user_data(e));
@@ -590,6 +624,52 @@ void AppYt::_buildUi()
     gmu::action_btn(_play_view, "停 止", 24, 460, 220, 72, [](lv_event_t* e) {
         static_cast<AppYt*>(lv_event_get_user_data(e))->_stop();
     }, this, gmu::zh30());
+
+    // ── 屏幕虚拟键盘 (idea 同款: 点 textarea 弹出, READY=回车收起+搜索,
+    //    CANCEL=收起; 实体键盘在位时不弹) ──
+    _keyboard = lv_keyboard_create(_scr);
+    if (_keyboard) {
+        lv_obj_set_size(_keyboard, SCREEN_W, 340);
+        lv_obj_align(_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_keyboard_set_textarea(_keyboard, _ta);
+        lv_obj_add_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(_keyboard, [](lv_event_t* e) {
+            auto* self = static_cast<AppYt*>(lv_event_get_user_data(e));
+            self->_hideKeyboard();
+            if (self && self->_ta) {
+                std::string q = lv_textarea_get_text(self->_ta);
+                if (!q.empty()) self->_searchAsync(q);   // 键盘回车=搜索
+            }
+        }, LV_EVENT_READY, this);
+        lv_obj_add_event_cb(_keyboard, [](lv_event_t* e) {
+            static_cast<AppYt*>(lv_event_get_user_data(e))->_hideKeyboard();
+        }, LV_EVENT_CANCEL, this);
+    }
+}
+
+void AppYt::_showKeyboard()
+{
+    if (!_keyboard || !_ta) return;
+    if (GetHAL()->usbKeyboardDetect()) return;   // 实体键盘直打, 不弹屏 (idea/lora 同款)
+    lv_obj_clear_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_keyboard);
+}
+
+void AppYt::_hideKeyboard()
+{
+    if (!_keyboard) return;
+    lv_obj_add_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+void AppYt::_detachInput()
+{
+    // 硬键盘 group / 语音回调都指向本屏 textarea, 拆屏前必须摘干净
+    // (否则 group 里悬垂已删对象, 下次按键必炸)
+#ifndef PLATFORM_BUILD_DESKTOP
+    if (GetHAL()->lvKbGroup && _ta) lv_group_remove_obj(_ta);
+    GetHAL()->onEnterPressed = nullptr;
+#endif
+    AppVoiceInput::cancelVoiceText();   // 防悬挂回调 (一次性模式主动撤)
 }
 
 void AppYt::_buildRows()
@@ -736,7 +816,7 @@ void AppYt::_removeSwipeGesture()
 // ════════════════════════════════════════════════════════════════════════════
 void AppYt::_nullUiPtrs()
 {
-    _home_view = _play_view = _ta = _hist_row = _grid = _status_lbl = nullptr;
+    _home_view = _play_view = _ta = _keyboard = _hist_row = _grid = _status_lbl = nullptr;
     for (auto& r : _rows) r = nullptr;
     _rows.clear();
     _play_thumb = _play_title = _play_sub = _play_bar = _play_time = _play_status = nullptr;
@@ -745,14 +825,11 @@ void AppYt::_nullUiPtrs()
 void AppYt::_destroyUi()
 {
     _removeSwipeGesture();
+    _detachInput();   // 硬键盘 group / 语音回调摘除 (lvKbGroup 悬垂铁律)
     // 停播 + 作废在途 worker (关 app = 停播, car 同语义)
     _app_closing.store(true);
     _want.store(-1);
     _thumb_gen.fetch_add(1);
-#ifndef PLATFORM_BUILD_DESKTOP
-    if (GetHAL()->lvKbGroup && _ta) lv_group_remove_obj(_ta);
-    GetHAL()->onEnterPressed = nullptr;
-#endif
     // 释放 UI 持有的缩略图缓冲 (在途那块归 worker 自己释放, 见 worker gen 检查)
     for (void* b : _thumb_bufs) rgb565::release(b);
     _thumb_bufs.clear();
