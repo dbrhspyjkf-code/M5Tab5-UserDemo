@@ -50,7 +50,6 @@ public:
     State state() const { return state_.load(); }
 
 private:
-    static void task_fn(void* self);
     void run();
 
     bool init_tap();
@@ -71,7 +70,6 @@ private:
     std::atomic<bool> stop_requested_{false};
     Config config_;
     Callback callback_ = nullptr;
-    TaskHandle_t task_ = nullptr;
 
     // Opus
     void* opus_encoder_ = nullptr;

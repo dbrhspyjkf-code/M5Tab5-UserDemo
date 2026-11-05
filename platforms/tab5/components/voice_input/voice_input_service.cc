@@ -5,6 +5,8 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <esp_pthread.h>
+#include <pthread.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -39,11 +41,9 @@ static voice_input::VoiceInputService* s_active_tap_session = nullptr;
 static voice_input::VoiceInputService* s_active_stt_session = nullptr;
 
 VoiceInputService::~VoiceInputService() {
+    // 会话线程是 detached pthread (栈放 PSRAM), 只能经 cancel() 设标志 +
+    // give 信号量优雅退出, 不能强杀; 服务随 AppVoiceInput 常驻, 实际不析构。
     cancel();
-    if (task_) {
-        vTaskDelete(task_);
-        task_ = nullptr;
-    }
     deinit_opus();
     if (stt_sem_) {
         vSemaphoreDelete(stt_sem_);
@@ -118,31 +118,51 @@ void VoiceInputService::start(const Config& config, Callback cb) {
     opus_packets_.clear();
 
     ESP_LOGI(TAG, "starting voice input session");
-    // 32 KB stack: send_listen_session() schedules many lambdas into
-    // xiaozhi's main task via std::function, and the local pcm_buf/
-    // mono_buf/opus_out vectors add up. 8 KB blew the stack (Guru
-    // Meditation Stack protection fault on Core 1).
-    BaseType_t ok = xTaskCreate(task_fn, "vi_task", 32768, this, 3, &task_);
-    if (ok != pdPASS) {
-        ESP_LOGE(TAG, "xTaskCreate failed (likely OOM in internal SRAM)");
+    // 32 KB 栈: opus 编码 + send_listen_session 大量 lambda 调度, 8KB 打穿
+    // 栈 (Guru Meditation Stack protection fault)。2026-11-05: 固件内部 RAM
+    // 只剩 ~40-47KB 且碎片化, xTaskCreate 的连续 32KB 内部块分配失败
+    // (xTaskCreate failed likely OOM, STT 每次点按立即失败) → 栈放 PSRAM
+    // (CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y; hal spawn_detached_worker
+    // 同款先例)。pthread detach 自清理无泄漏; PSRAM 失败回退内部栈。
+    auto entry = [](void* arg) -> void* {
+        static_cast<VoiceInputService*>(arg)->run();
+        return (void*)nullptr;
+    };
+    bool started = false;
+    pthread_t tid;
+    {
+        esp_pthread_cfg_t pc = esp_pthread_get_default_config();
+        pc.stack_size       = 32768;
+        pc.stack_alloc_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+        pc.inherit_cfg      = false;
+        esp_pthread_set_cfg(&pc);   // set_cfg 是线程局部, 用后恢复默认
+        started = pthread_create(&tid, nullptr, entry, this) == 0;
+        esp_pthread_cfg_t def = esp_pthread_get_default_config();
+        esp_pthread_set_cfg(&def);
+        if (started) pthread_detach(tid);
+    }
+    if (!started) {
+        // 回退: 内部栈建线程 (碎片化下大概率同样失败, 但保持原语义)
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        started = pthread_create(&tid, &attr, entry, this) == 0;
+        pthread_attr_destroy(&attr);
+    }
+    if (!started) {
+        ESP_LOGE(TAG, "pthread_create failed (likely OOM)");
         state_.store(State::Error);
         if (callback_) {
             Result r; r.success = false; r.error = "task create failed";
             callback_(r);
         }
         callback_ = nullptr;
-        task_ = nullptr;
     }
 }
 
 // ────────────────────────────────────────────────────────────────────
 // FreeRTOS task
 // ────────────────────────────────────────────────────────────────────
-
-void VoiceInputService::task_fn(void* self) {
-    static_cast<VoiceInputService*>(self)->run();
-    vTaskDelete(nullptr);
-}
 
 void VoiceInputService::run() {
     Result result;
@@ -259,7 +279,6 @@ done:
     state_ = result.success ? State::Done : State::Error;
     if (callback_) callback_(result);
     callback_ = nullptr;
-    task_ = nullptr;
     // Don't reset state_ here — caller reads it in onRunning
 }
 

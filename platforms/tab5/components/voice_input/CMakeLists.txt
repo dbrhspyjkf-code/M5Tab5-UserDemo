@@ -10,4 +10,5 @@ idf_component_register(
     PRIV_REQUIRES
         xiaozhi_core
         freertos
+        pthread
 )
