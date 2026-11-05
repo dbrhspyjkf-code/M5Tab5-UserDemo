@@ -376,16 +376,17 @@ void AppSettings::_buildToolsPage()
     lv_obj_set_style_bg_opa(_tools_page, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_tools_page, 0, 0);
     lv_obj_set_style_pad_all(_tools_page, 0, 0);
-    // 4 行 tile (10 个工具) 超出一屏: 纵向可滚 (2026-10-27 加万年历第 4 行)
-    lv_obj_set_scroll_dir(_tools_page, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(_tools_page, LV_SCROLLBAR_MODE_AUTO);
+    // 2026-11-05: 加计时器第 4 行后内容超一屏 → 页面可滚, 底缘上拨退出被
+    // 滚动吞掉 (用户实锤「上拨变成拨动里面的 app」). 根治 = 4 行 tile 全部
+    // 装进一屏 (TH 206→160, GAP_Y 16→12, 末行底 696 < 720), 页面不再滚动.
+    lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_SCROLLABLE);
 
     // Tool card — same style as the HA "灯光" device cards: rounded card with a
     // soft shadow, icon on the left, name on the right. 3×3 网格铺满整屏
     // (2026-10-27 用户要求参考智能家居布局、少留白、上下对齐).
     // img==nullptr 走图形分支 (不依赖字体): kind==0 LED 点阵 (灯阵) /
     // kind==1 信封 (邮件) / kind==2 NFC 圆环 (RFID).
-    constexpr int TW = 296, TH = 206, GAP_X = 16, GAP_Y = 16, MARGIN = 24;  // 4 列 × 3 行 (2026-10-27 用户指定一行 4 个)
+    constexpr int TW = 296, TH = 160, GAP_X = 16, GAP_Y = 12, MARGIN = 24;  // 4 列 × 4 行一屏装下 (2026-11-05 TH 206→160 防滚动吞上拨)
     auto make_tile = [&](int col, int row, const lv_image_dsc_t* img, int img_w,
                          const char* label, lv_event_cb_t cb,
                          int img_scale = 256, int icon_x = 12,
