@@ -28,7 +28,9 @@ static bool _is_claude_gateway_url(const std::string& url)
 static bool _is_slow_hermes_url(const std::string& url)
 {
     return url.find(":8768/api/email/status") != std::string::npos
-        || url.find(":8766/api/ssq/") != std::string::npos;
+        || url.find(":8766/api/ssq/") != std::string::npos
+        // /yt/search: yt-dlp 冷搜 ~10-25s (服务端缓存 10min, 热搜毫秒级)
+        || url.find(":8766/yt/search") != std::string::npos;
 }
 
 static esp_err_t _http_event_handler(esp_http_client_event_t* evt)

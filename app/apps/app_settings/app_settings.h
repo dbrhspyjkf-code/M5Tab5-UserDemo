@@ -76,6 +76,10 @@ public:
     void setGamesAppId(int id) { _games_id = id; }
     void openGames();    // 工具页 tile → 打开游戏 app
 
+    // AppYt (油管: Pi 中继音频版) 的 mooncake app id.
+    void setYtAppId(int id) { _yt_id = id; }
+    void openYt();       // 工具页 tile → 打开油管 app
+
     // ── Shared email cache (status-bar poll + sub-page both read these) ──
     // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
     // and reads email_unread_total to decide whether to show the icon.
@@ -111,6 +115,7 @@ private:
     int _gallery_id   = -1;
     int _timer_id     = -1;
     int _games_id     = -1;
+    int _yt_id        = -1;
 
     lv_indev_t* _gesture_indev = nullptr;
     lv_obj_t*   _scr        = nullptr;
@@ -209,4 +214,5 @@ private:
     static void _toolGallery_cb(lv_event_t* e); // tools tile → open 图库
     static void _toolTimer_cb(lv_event_t* e);   // tools tile → open 计时器 (2026-11-05 自主页迁入)
     static void _toolGames_cb(lv_event_t* e);   // tools tile → open 游戏合集 (2026-11-06)
+    static void _toolYt_cb(lv_event_t* e);      // tools tile → open 油管 (2026-11-06)
 };

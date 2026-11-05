@@ -660,6 +660,17 @@ void AppSettings::_buildToolsPage()
                 tool_accent_rect(tile, C_ACCENT, start + 58, top + 38, 12, 12, 6);
                 tool_accent_rect(tile, C_ACCENT, start + 74, top + 50, 12, 12, 6);
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 16) {
+                // 油管 — 圆角横框 + 播放三角 (2026-11-06 油管 tile: Pi 中继音频版)
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                tool_accent_frame(tile, C_ACCENT, start + 4, top + 24, 88, 52, 14, 6);   // 框
+                static const lv_point_precise_t tri[] = {
+                    {0, 0}, {0, 20}, {17, 10}, {0, 0}
+                };
+                tool_accent_line(tile, C_ACCENT, start + 40, top + 40, tri, 4, 5);   // ▷
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -709,6 +720,8 @@ void AppSettings::_buildToolsPage()
     make_tile(1, 2, nullptr, 130, "计时器", _toolTimer_cb, 256, 12, -1, 14);
     // (2026-11-06: 游戏合集入口, 与设备端同款)
     make_tile(2, 2, nullptr, 130, "游 戏", _toolGames_cb, 256, 12, -1, 15);
+    // (2026-11-06: 油管入口, 与设备端同款)
+    make_tile(3, 2, nullptr, 130, "油 管", _toolYt_cb, 256, 12, -1, 16);
 #else
     // 行 0: 计算器 / 汇率 / 单位换算 — 图标全部走 make_tile 图形分支
     // (kind 5/6/7), 线条随主题强调色, 原静态图 calc_icon/fx_icon/unit_icon 已弃用.
@@ -760,6 +773,10 @@ void AppSettings::_buildToolsPage()
     // 第 4 行第 2 列: 游戏合集 (car-dash 4 个触屏小游戏移植: 翻牌/星星/扫雷/数独,
     //   2026-11-06) 图标走 kind=15 手柄分支
     make_tile(1, 3, nullptr, 130, "游 戏", _toolGames_cb, 256, 12, -1, 15);
+
+    // 第 4 行第 3 列: 油管 (car-dash 油管面板移植, Pi 中继音频版, 2026-11-06)
+    //   图标走 kind=16 播放键分支
+    make_tile(2, 3, nullptr, 130, "油 管", _toolYt_cb, 256, 12, -1, 16);
 #endif  // !PLATFORM_BUILD_WEB
 }
 
@@ -870,6 +887,19 @@ void AppSettings::openGames()
 void AppSettings::_toolGames_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->openGames();
+}
+
+void AppSettings::openYt()
+{
+    if (_yt_id > 0) {
+        _tools_page = nullptr;   // 子 app 打开后本页随 _scr 一起由 onClose 清
+        mooncake::GetMooncake().openApp(_yt_id);
+    }
+}
+
+void AppSettings::_toolYt_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->openYt();
 }
 
 void AppSettings::openStocks()
