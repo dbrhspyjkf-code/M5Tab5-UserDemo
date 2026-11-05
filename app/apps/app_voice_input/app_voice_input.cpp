@@ -3,7 +3,9 @@
 #include <mooncake_log.h>
 #include <esp_log.h>
 #include <algorithm>
+#ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
+#endif
 
 #ifdef PLATFORM_BUILD_DESKTOP
 // Voice input is a no-op on desktop simulator (no audio codec).
@@ -20,6 +22,8 @@
 #endif
 
 // 中文状态提示字体 (app_timer 同款三平台分支; montserrat 无中文字形)
+extern "C" const lv_font_t font_puhui_20_4;   // 桌面回退 20px C 数组字体 (链接期提供)
+
 static const lv_font_t* vi_zh_font()
 {
 #if defined(PLATFORM_BUILD_WEB)
@@ -30,7 +34,6 @@ static const lv_font_t* vi_zh_font()
     static lv_font_t* f = cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
     return f;
 #else
-    extern "C" const lv_font_t font_puhui_20_4;
     return &font_puhui_20_4;
 #endif
 }

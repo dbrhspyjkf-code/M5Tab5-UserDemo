@@ -646,6 +646,20 @@ void AppSettings::_buildToolsPage()
                 tool_accent_line(tile, C_ACCENT, cx - 2, cy - 20, hand, 2, 5);
                 tool_accent_rect(tile, C_ACCENT, cx - 4, cy - 4, 8, 8, 4);     // 中心轴点
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 15) {
+                // 游戏 — 手柄: 圆角横身 + 左十字键 + 右双钮
+                // (2026-11-06 游戏合集 tile: 翻牌/星星/扫雷/数独)
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                tool_accent_frame(tile, C_ACCENT, start + 4, top + 24, 88, 48, 20, 6);   // 身
+                // 左十字 (中心 start+30, top+48)
+                tool_accent_rect(tile, C_ACCENT, start + 22, top + 45, 16, 6, 3);   // 横
+                tool_accent_rect(tile, C_ACCENT, start + 27, top + 40, 6, 16, 3);   // 竖
+                // 右双钮
+                tool_accent_rect(tile, C_ACCENT, start + 58, top + 38, 12, 12, 6);
+                tool_accent_rect(tile, C_ACCENT, start + 74, top + 50, 12, 12, 6);
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -693,6 +707,8 @@ void AppSettings::_buildToolsPage()
     make_tile(0, 2, nullptr, 130, "图  库", _toolGallery_cb, 256, 12, -1, 13);
     // (2026-11-05: 计时器入口自主页迁入工具页, web 版主页按钮位让给「想法」)
     make_tile(1, 2, nullptr, 130, "计时器", _toolTimer_cb, 256, 12, -1, 14);
+    // (2026-11-06: 游戏合集入口, 与设备端同款)
+    make_tile(2, 2, nullptr, 130, "游 戏", _toolGames_cb, 256, 12, -1, 15);
 #else
     // 行 0: 计算器 / 汇率 / 单位换算 — 图标全部走 make_tile 图形分支
     // (kind 5/6/7), 线条随主题强调色, 原静态图 calc_icon/fx_icon/unit_icon 已弃用.
@@ -740,6 +756,10 @@ void AppSettings::_buildToolsPage()
     // 第 4 行第 1 列: 计时器 (2026-11-05 入口从主页迁入, 主页按钮位让给「想法」;
     //   页面纵向可滚动, 第 4 行直接滚出来) 图标走 kind=14 秒表分支
     make_tile(0, 3, nullptr, 130, "计时器", _toolTimer_cb, 256, 12, -1, 14);
+
+    // 第 4 行第 2 列: 游戏合集 (car-dash 4 个触屏小游戏移植: 翻牌/星星/扫雷/数独,
+    //   2026-11-06) 图标走 kind=15 手柄分支
+    make_tile(1, 3, nullptr, 130, "游 戏", _toolGames_cb, 256, 12, -1, 15);
 #endif  // !PLATFORM_BUILD_WEB
 }
 
@@ -837,6 +857,19 @@ void AppSettings::openTimer()
 void AppSettings::_toolTimer_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->openTimer();
+}
+
+void AppSettings::openGames()
+{
+    if (_games_id > 0) {
+        _tools_page = nullptr;   // 子 app 打开后本页随 _scr 一起由 onClose 清
+        mooncake::GetMooncake().openApp(_games_id);
+    }
+}
+
+void AppSettings::_toolGames_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->openGames();
 }
 
 void AppSettings::openStocks()

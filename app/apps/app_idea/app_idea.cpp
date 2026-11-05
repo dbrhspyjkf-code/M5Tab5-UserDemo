@@ -17,7 +17,9 @@
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
+#endif
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -26,7 +28,9 @@
 #include <mutex>
 #include <algorithm>
 
+#ifndef PLATFORM_BUILD_DESKTOP
 #include "../utils/assets/assets_partition.h"
+#endif
 #include "../app_voice_input/app_voice_input.h"
 
 #ifndef PLATFORM_BUILD_DESKTOP
