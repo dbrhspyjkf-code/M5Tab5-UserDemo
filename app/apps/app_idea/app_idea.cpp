@@ -470,11 +470,15 @@ void AppIdea::_buildUi()
             auto* self = static_cast<AppIdea*>(lv_event_get_user_data(e));
             int i = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_current_target_obj(e));
             self->_sel_cat = i;
-            // 重刷 4 个 chip 底色 (子序 1..4)
+            // 重刷 4 个 chip 底色 + 文字色 (子序 1..4; 选中=分类亮底黑字,
+            // 未选中=track 深底白字 — 只刷背景会留黑字在深底上看不见)
             lv_obj_t* p = lv_obj_get_parent(lv_event_get_current_target_obj(e));
             for (int k = 0; k < N_CATS; k++) {
                 lv_obj_t* c = lv_obj_get_child(p, k + 1);
-                lv_obj_set_style_bg_color(c, lv_color_hex(k == self->_sel_cat ? CATS[k].color : self->track_color()), 0);
+                bool sel = (k == self->_sel_cat);
+                lv_obj_set_style_bg_color(c, lv_color_hex(sel ? CATS[k].color : self->track_color()), 0);
+                lv_obj_t* lbl = lv_obj_get_child(c, 0);
+                if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(sel ? 0x10151A : C_TEXT), 0);
             }
         }, LV_EVENT_CLICKED, this);
         lv_obj_t* cl = lv_label_create(chip);
