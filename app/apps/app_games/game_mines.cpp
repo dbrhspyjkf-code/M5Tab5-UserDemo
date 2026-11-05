@@ -113,7 +113,7 @@ void AppGames::_minNew()
     const int gap = 2;
     int cell = std::min((SCREEN_W - 48 - (_min_cols - 1) * gap) / _min_cols,
                         (SCREEN_H - TAB_H - 76 - 16 - (_min_rows - 1) * gap) / _min_rows);
-    if (cell > 64) cell = 64;
+    if (cell > 150) cell = 150;
     const int bw = _min_cols * cell + (_min_cols - 1) * gap;
     const int bh = _min_rows * cell + (_min_rows - 1) * gap;
     const int x0 = (SCREEN_W - bw) / 2;

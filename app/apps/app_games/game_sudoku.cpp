@@ -98,20 +98,22 @@ void AppGames::_buildSudokuPage()
     lv_obj_t* pg = _pages[3];
     if (!pg) return;
 
-    // 页头: 难度 chips + 重开
+    // 布局 (2026-11-06 用户要求: 格子加大 + 难度/重开挪到数字键盘上面):
+    // 棋盘 70px cell 占满左侧全高 (630², y 13..643); 右栏 = 难度/重开 → 数字键盘
+    // → 笔记/擦除/用时 → 最佳
     for (int i = 0; i < 3; i++) {
-        _sud_chips[i] = gmu::chip_btn(pg, _SUD_LV[i].nm, 24 + i * 130, 6, 120, 44,
+        _sud_chips[i] = gmu::chip_btn(pg, _SUD_LV[i].nm, 648 + i * 124, 8, 120, 44,
                                       C_ACC(), _sudChipCb, this);
         lv_obj_set_user_data(_sud_chips[i], (void*)(intptr_t)i);
         if (i == _sud_lvl) lv_obj_add_state(_sud_chips[i], LV_STATE_CHECKED);
     }
-    gmu::action_btn(pg, "重开", SCREEN_W - 24 - 120, 6, 120, 44, _sudNewCb, this);
+    gmu::action_btn(pg, "重开", 1136, 8, 120, 44, _sudNewCb, this);
 
-    // 棋盘 9×9 (cell 60, 540²), 左侧居中
-    constexpr int CELL = 60;
+    // 棋盘 9×9 (cell 70, 630²), 左侧满高
+    constexpr int CELL = 70;
     const int bd = CELL * 9;
-    const int x0 = 48;
-    const int y0 = 64 + ((SCREEN_H - TAB_H - 64 - 16) - bd) / 2;
+    const int x0 = (648 - bd) / 2;
+    const int y0 = (SCREEN_H - TAB_H - bd) / 2;
 
     for (int i = 0; i < 81; i++) {
         const int r = i / 9, c = i % 9;
@@ -163,7 +165,7 @@ void AppGames::_buildSudokuPage()
     }
 
     // 生成中提示 (棋盘中央)
-    _sud_status = gmu::soft_label(pg, "", x0, y0 + bd / 2 - 20, C_DIM(), gmu::zh30());
+    _sud_status = gmu::soft_label(pg, "", x0 + bd / 2 - 90, y0 + bd / 2 - 20, C_DIM(), gmu::zh30());
 
     // 右侧数字键盘 3×3 (剩余计数)
     const int nx = 648, ny = 64, nw = 190, nh = 110, ngap = 12;

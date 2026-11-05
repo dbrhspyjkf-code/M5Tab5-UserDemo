@@ -149,7 +149,8 @@ private:
 
     // ── tab2 扫雷 (game_mines.cpp) ──
     struct MinLevel { const char* nm; int cols, rows, mines; };
-    static constexpr MinLevel _MIN_LV[3] = {{"轻松", 10, 8, 12}, {"标准", 14, 10, 28}, {"挑战", 18, 12, 52}};
+    // 格子更少更大 (2026-11-06 用户要求: 铺满全屏/格子加大), 雷密度≈25%
+    static constexpr MinLevel _MIN_LV[3] = {{"轻松", 8, 4, 8}, {"标准", 12, 6, 18}, {"挑战", 14, 8, 26}};
     void _buildMinesPage();
     void _minNew();
     void _minRender(int i);

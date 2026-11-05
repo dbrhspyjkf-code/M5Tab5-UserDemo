@@ -177,7 +177,7 @@ void AppYt::onRunning()
         const int el = (int)(bytes / PCM_BYTES_PER_SEC);
         if (_play_status) {
             const char* s = nullptr;
-            if (st == 1) s = "连接中… 首次起播约 5-15s";
+            if (st == 1) s = "连接中… 首次约 10-30s";
             else if (st == 3) s = "播放失败, 点「停止」重选";
             else if (st == 0 && bytes > 0) s = "播完了, 点「停止」回列表";
             if (s) lv_label_set_text(_play_status, s);
@@ -451,7 +451,7 @@ void AppYt::_play(int i)
                          _thumb_bufs[i] ? _thumb_bufs[i] : yt_placeholder());
         lv_image_set_scale(_play_thumb, 256);
     }
-    if (_play_status) lv_label_set_text(_play_status, "连接中… 首次起播约 5-15s");
+    if (_play_status) lv_label_set_text(_play_status, "连接中… 首次约 10-30s");
     if (_play_bar) lv_bar_set_value(_play_bar, 0, LV_ANIM_OFF);
     _showView(true);
 }
@@ -1014,7 +1014,9 @@ void AppYt::_startTask()
                 hcfg.url          = url;
                 hcfg.buffer_size  = 4096;
                 hcfg.buffer_size_tx = 1024;
-                hcfg.timeout_ms   = 8000;
+                // 服务端在 prepare 响应头前要完成 resolve+下载头 (冷 10-30s),
+                // 8s 必假超时 (2026-11-06 晨实锤全失败) → 40s; 起播后改 1s 感知停止
+                hcfg.timeout_ms   = 40000;
                 http = esp_http_client_init(&hcfg);
                 bool ok = false;
                 if (http && esp_http_client_open(http, 0) == ESP_OK && !_app_closing.load()) {
