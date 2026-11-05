@@ -510,7 +510,9 @@ void AppIdea::_buildUi()
 #ifndef PLATFORM_BUILD_DESKTOP
         if (AppIdea::s_recording.load()) { self->_setStatus("录音中, 先停止", C_DANGER); return; }
 #endif
-        AppVoiceInput::requestVoiceInput(self->_ta, KB_H);
+        // 大麦克风模式 (SSH 同款): 全屏波图 + 立即录音, 静音 2s 自动停,
+        // 识别文字自动填入输入框 (requestVoiceInput 小 mic 需再点一次停)
+        AppVoiceInput::requestMicInput(self->_ta);
     }, LV_EVENT_CLICKED, this);
     lv_obj_t* tl = lv_label_create(_stt_btn);
     lv_label_set_text(tl, "语音输入");
