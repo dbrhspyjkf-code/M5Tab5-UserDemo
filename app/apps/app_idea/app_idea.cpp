@@ -3,7 +3,7 @@
  *
  * 双栏: 左=记录卡 (文字 textarea + 分类 chips + 录音 + 语音转写),
  * 右=灵感时间线 (按天分组卡片流, 分类过滤, 删除/清空)。
- * 数据链路: hermes :8766 /api/idea/* (与车机网页同一份 Pi ~/idea_data/)。
+ * 数据链路: hermes :8766 的 /api/idea 系列端点 (与车机网页同一份 Pi ~/idea_data/)。
  *
  * 设备专属管线 (web/桌面构建裁掉):
  * - 录音: xiaozhi_set_input_tap 订阅 16kHz mono s16 (订阅期暂停唤醒词) →
@@ -50,6 +50,8 @@ static const lv_font_t* zh_font_lg()
 }
 static const lv_font_t* zh_font_md()
 {
+    extern const uint8_t font_puhui_common_30_4_bin_start[]
+        asm("_binary_font_puhui_common_30_4_bin_start");
     static lv_font_t* f = []() -> lv_font_t* {
         const uint8_t* p = assets_part::find("font_zh_24");
         return p ? cbin_font_create(const_cast<uint8_t*>(p))
@@ -166,7 +168,7 @@ static std::string day_label(long long ms)
     long long day_now = (long long)now - (tn.tm_hour * 3600 + tn.tm_min * 60 + tn.tm_sec);
     long long day_it  = (long long)t - (td.tm_hour * 3600 + td.tm_min * 60 + td.tm_sec);
     long long dd = (day_now - day_it) / 86400;
-    char buf[24];
+    char buf[40];
     if (dd <= 0) return "今天";
     if (dd == 1) return "昨天";
     if (tn.tm_year == td.tm_year) snprintf(buf, sizeof buf, "%02d-%02d", td.tm_mon + 1, td.tm_mday);
