@@ -630,6 +630,21 @@ void AppSettings::_buildToolsPage()
                 };
                 tool_accent_line(tile, C_ACCENT, fx, fy + 32, hills, 6, 5);
                 lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
+            } else if (kind == 14) {
+                // 计时器 — 秒表: 顶部按钮 + 圆环表身 + 45° 指针 + 中心点
+                // (参考 icons8-秒表; 2026-11-05 计时器入口从主页迁入工具页).
+                const int IW = 96;
+                const int start = (TW - IW - ICON_GAP - name_w) / 2;
+                const int top = TH / 2 - IW / 2;
+                const int cx = start + 48, cy = top + 54;
+                tool_accent_rect(tile, C_ACCENT, cx - 14, cy - 56, 28, 6, 3);  // 顶帽
+                tool_accent_rect(tile, C_ACCENT, cx - 6, cy - 50, 12, 14, 4);  // 按钮颈
+                tool_accent_frame(tile, C_ACCENT, cx - 36, cy - 36, 72, 72, 36, 6);  // 表身圆环
+                // 指针: 中心 → 右上 45° (点位相对线对象原点, 全正坐标)
+                static const lv_point_precise_t hand[] = {{0, 20}, {20, 0}};
+                tool_accent_line(tile, C_ACCENT, cx - 2, cy - 20, hand, 2, 5);
+                tool_accent_rect(tile, C_ACCENT, cx - 4, cy - 4, 8, 8, 4);     // 中心轴点
+                lv_obj_align(name, LV_ALIGN_LEFT_MID, start + IW + ICON_GAP, 0);
             } else {
                 // 3x3 实心圆点网格, 象征 8x8 LED 矩阵缩略图.
                 // 不用 LV_SYMBOL_BULLET (依赖字体覆盖, 16px montserrat 渲染可能出方框),
@@ -675,6 +690,8 @@ void AppSettings::_buildToolsPage()
     make_tile(2, 1, nullptr, 130, "SSH", _toolSsh_cb, 256, 12, -1, 10);
     make_tile(3, 1, nullptr, 0, "双色球", _toolLottery_cb, 256, 12, -1, 12);
     make_tile(0, 2, nullptr, 130, "图  库", _toolGallery_cb, 256, 12, -1, 13);
+    // (2026-11-05: 计时器入口自主页迁入工具页, web 版主页按钮位让给「想法」)
+    make_tile(1, 2, nullptr, 130, "计时器", _toolTimer_cb, 256, 12, -1, 14);
 #else
     // 行 0: 计算器 / 汇率 / 单位换算 — 图标全部走 make_tile 图形分支
     // (kind 5/6/7), 线条随主题强调色, 原静态图 calc_icon/fx_icon/unit_icon 已弃用.
@@ -718,6 +735,10 @@ void AppSettings::_buildToolsPage()
     // 第 3 行第 4 列: 图库 (共享相簿「壁纸」浏览, hermes :8766/gallery/*)
     //   图标走 kind=13 分支: 相框 + 双山 + 太阳; 2026-11-02 补最后空位
     make_tile(3, 2, nullptr, 130, "图  库", _toolGallery_cb, 256, 12, -1, 13);
+
+    // 第 4 行第 1 列: 计时器 (2026-11-05 入口从主页迁入, 主页按钮位让给「想法」;
+    //   页面纵向可滚动, 第 4 行直接滚出来) 图标走 kind=14 秒表分支
+    make_tile(0, 3, nullptr, 130, "计时器", _toolTimer_cb, 256, 12, -1, 14);
 #endif  // !PLATFORM_BUILD_WEB
 }
 
@@ -802,6 +823,19 @@ void AppSettings::openGallery()
 void AppSettings::_toolGallery_cb(lv_event_t* e)
 {
     static_cast<AppSettings*>(lv_event_get_user_data(e))->openGallery();
+}
+
+void AppSettings::openTimer()
+{
+    if (_timer_id > 0) {
+        _tools_page = nullptr;   // 子 app 打开后本页随 _scr 一起由 onClose 清
+        mooncake::GetMooncake().openApp(_timer_id);
+    }
+}
+
+void AppSettings::_toolTimer_cb(lv_event_t* e)
+{
+    static_cast<AppSettings*>(lv_event_get_user_data(e))->openTimer();
 }
 
 void AppSettings::openStocks()

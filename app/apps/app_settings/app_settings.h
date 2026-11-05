@@ -67,6 +67,11 @@ public:
     void setGalleryAppId(int id) { _gallery_id = id; }
     void openGallery();  // 工具页 tile → 打开图库 app
 
+    // AppTimer (计时器) 的 mooncake app id, 由 app_installer 注入.
+    // (2026-11-05: 计时器入口从主页迁到工具页, 主页按钮位让给「想法」)
+    void setTimerAppId(int id) { _timer_id = id; }
+    void openTimer();    // 工具页 tile → 打开计时器 app
+
     // ── Shared email cache (status-bar poll + sub-page both read these) ──
     // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
     // and reads email_unread_total to decide whether to show the icon.
@@ -100,6 +105,7 @@ private:
     int _health_id    = -1;
     int _lottery_id   = -1;
     int _gallery_id   = -1;
+    int _timer_id     = -1;
 
     lv_indev_t* _gesture_indev = nullptr;
     lv_obj_t*   _scr        = nullptr;
@@ -196,4 +202,5 @@ private:
     static void _toolHealth_cb(lv_event_t* e); // tools tile → open 健康
     static void _toolLottery_cb(lv_event_t* e); // tools tile → open 双色球
     static void _toolGallery_cb(lv_event_t* e); // tools tile → open 图库
+    static void _toolTimer_cb(lv_event_t* e);   // tools tile → open 计时器 (2026-11-05 自主页迁入)
 };

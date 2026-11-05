@@ -28,6 +28,7 @@
 #include "app_health/app_health.h"
 #include "app_lottery/app_lottery.h"
 #include "app_gallery/app_gallery.h"
+#include "app_idea/app_idea.h"
 #include "app_news/app_news.h"
 #include <cstdlib>
 #include <cstring>
@@ -122,6 +123,9 @@ inline void on_install_apps()
     auto ga_uptr = std::make_unique<AppGallery>();
     AppGallery* gallery = ga_uptr.get();     // 图库: 工具页入口
 
+    auto id_uptr = std::make_unique<AppIdea>();
+    AppIdea* idea = id_uptr.get();           // 想法: 主页入口 (2026-11-05 替换计时器按钮; 计时器迁工具页)
+
     auto nw_uptr = std::make_unique<AppNews>();
     AppNews* news = nw_uptr.get();           // 新闻: 主页入口 (2026-11-05 替换小智按钮)
 
@@ -153,6 +157,7 @@ inline void on_install_apps()
     int hl_id  = mooncake::GetMooncake().installApp(std::move(hl_uptr));
     int lo_id  = mooncake::GetMooncake().installApp(std::move(lo_uptr));
     int ga_id  = mooncake::GetMooncake().installApp(std::move(ga_uptr));
+    int id_id  = mooncake::GetMooncake().installApp(std::move(id_uptr));
     int nw_id  = mooncake::GetMooncake().installApp(std::move(nw_uptr));
 
     // ── Wire close callbacks ──
@@ -208,6 +213,8 @@ inline void on_install_apps()
 #endif
     // 计时器同为主页入口
     timer->setCloseCallback([home]() { home->restoreScreen(); });
+    // 想法同为主页入口 (2026-11-05: 替换主页「计时器」按钮位)
+    idea->setCloseCallback([home]() { home->restoreScreen(); });
     // 新闻同为主页入口
     news->setCloseCallback([home]() { home->restoreScreen(); });
 #ifndef PLATFORM_BUILD_WEB
@@ -231,6 +238,8 @@ inline void on_install_apps()
     settings->setHealthAppId(hl_id);
     settings->setLotteryAppId(lo_id);
     settings->setGalleryAppId(ga_id);
+    // 计时器入口 2026-11-05 从主页迁到工具页
+    settings->setTimerAppId(ti_id);
     // 主页健康卡长按 → 打开健康 app (工具页同款入口)
     home->setOpenHealthHandler([hl_id]() {
         mooncake::GetMooncake().openApp(hl_id);
@@ -265,6 +274,7 @@ inline void on_install_apps()
         else if (strcmp(want, "player") == 0) mooncake::GetMooncake().openApp(pl_id);
 #endif
         else if (strcmp(want, "gallery") == 0) mooncake::GetMooncake().openApp(ga_id);
+        else if (strcmp(want, "idea") == 0) mooncake::GetMooncake().openApp(id_id);
         else if (strcmp(want, "news") == 0) mooncake::GetMooncake().openApp(nw_id);
     }
 #endif
@@ -301,7 +311,8 @@ inline void on_install_apps()
 #ifndef PLATFORM_BUILD_WEB
     home->addApp("播放器", pl_id);
 #endif
-    home->addApp("计时器", ti_id);
+    // 2026-11-05: 主页「计时器」按钮 →「想 法」(计时器迁工具页, 入口不丢)
+    home->addApp("想 法", id_id);
     home->addApp("工  具", set_id);   // 2026-10-28: 移到最右 (用户指定)
 #ifdef PLATFORM_BUILD_DESKTOP
     // 桌面调试: TAB5_OPEN_CALENDAR=1 启动即打开万年历; TAB5_OPEN_SSH=1 打开 SSH 表单
