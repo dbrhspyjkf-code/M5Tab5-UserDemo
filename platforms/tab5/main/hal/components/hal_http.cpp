@@ -33,6 +33,14 @@ static bool _is_slow_hermes_url(const std::string& url)
         || url.find(":8766/yt/search") != std::string::npos;
 }
 
+// /yt/prepare: 油管外放前预热管线, 冷启动 resolve+下载头+首段 15-60s (慢网更久),
+// 30s 慢档也会假超时 → 单独 100s (服务端有限流/单飞护栏, 长等不会放大请求)
+static int _http_get_timeout_ms(const std::string& url)
+{
+    if (url.find(":8766/yt/prepare/") != std::string::npos) return 100000;
+    return _is_slow_hermes_url(url) ? 30000 : 10000;
+}
+
 static esp_err_t _http_event_handler(esp_http_client_event_t* evt)
 {
     auto* body = static_cast<std::string*>(evt->user_data);
@@ -53,7 +61,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpGet(
     config.url            = url.c_str();
     config.event_handler  = _http_event_handler;
     config.user_data      = &body;
-    config.timeout_ms     = _is_slow_hermes_url(url) ? 30000 : 10000;
+    config.timeout_ms     = _http_get_timeout_ms(url);
     config.buffer_size    = 2048;
     config.buffer_size_tx = 512;
     // https 必须给服务器校验选项, 否则 esp-tls 拒绝建连

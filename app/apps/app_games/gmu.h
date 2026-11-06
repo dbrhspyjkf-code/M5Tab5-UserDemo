@@ -54,6 +54,21 @@ inline const lv_font_t* zh20()
 #endif
 }
 
+// 24px: res 分区 font_zh_24 (想法 app 同款; 缺失时退 30px 全字库)
+inline const lv_font_t* zh24()
+{
+#ifdef PLATFORM_BUILD_DESKTOP
+    return &font_puhui_20_4;
+#else
+    static lv_font_t* f = []() -> lv_font_t* {
+        const uint8_t* p = assets_part::find("font_zh_24");
+        return p ? cbin_font_create(const_cast<uint8_t*>(p))
+                 : cbin_font_create((uint8_t*)font_puhui_common_30_4_bin_start);
+    }();
+    return f;
+#endif
+}
+
 // 备用: 候选小数字/计数 (montserrat 全量启用, lv_conf.h)
 inline const lv_font_t* mono14() { return &lv_font_montserrat_14; }
 inline const lv_font_t* mono16() { return &lv_font_montserrat_16; }
