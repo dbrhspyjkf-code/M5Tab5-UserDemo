@@ -150,6 +150,7 @@ private:
     void _fetchCover();
     void _fetchThumbs();                  // 按当前 _items 逐行拉列表缩略图
     void _updatePlayPage();                // 500ms 节流: 状态/进度/时间/按钮
+    void _updateMiniBar();                 // 列表页底部迷你播放条 (有内容在播/待续时显示)
     void _refreshPlayBtn();
     lv_obj_t* _scr = nullptr;
     lv_obj_t* _home_view = nullptr;
@@ -179,6 +180,12 @@ private:
     lv_obj_t* _pp_lbl      = nullptr;
     lv_obj_t* _vol_slider  = nullptr;
     lv_obj_t* _vol_lbl     = nullptr;
+    lv_obj_t* _mini_bar     = nullptr;     // 列表页底部迷你播放条 (点条回播放页)
+    lv_obj_t* _mini_pp_lbl  = nullptr;     // ⏸/▶
+    lv_obj_t* _mini_title   = nullptr;
+    bool _mini_shown = false;              // 变更检测缓存 (onRunning 每帧调, 只在变化时动 LVGL)
+    int  _mini_icon = -1;                  // 0=▶ 1=⏸
+    std::string _mini_title_txt;
     void* _cover_buf = nullptr;            // 当前显示的大封面 (UI 持有)
     std::mutex _cover_mu;
     void* _cover_ready = nullptr;          // worker → UI

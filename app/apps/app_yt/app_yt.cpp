@@ -185,6 +185,7 @@ void AppYt::onRunning()
     }
     // 前台/后台都跑 (mooncake 每帧对所有 app 调 onRunning):
     _extFinishCheck();                    // 外放墙钟走到时长 → 播完态 (♪YT 消失)
+    _updateMiniBar();                     // 列表页迷你条 (状态变化才动 LVGL)
     if (_paused.load() && _pause_since_ms != 0 &&
         yt_mono_ms() - _pause_since_ms > 5 * 60 * 1000) {
         _pause_since_ms = 0;
@@ -371,7 +372,7 @@ void AppYt::_applySearch()
     }
 
     _thumb_gen.fetch_add(1);   // 在途缩略图 worker 作废
-    _stopPlayback();           // 新搜索 = 停播 (本机 + 外放, car 同语义)
+    // 新搜索不停播 (2026-11-07 用户要求): 边播边搜, 点了别的视频才切换
 
     std::vector<void*> old_bufs;
     {
@@ -959,10 +960,10 @@ void AppYt::_buildHomeView()
     // 状态行
     _status_lbl = gmu::soft_label(_home_view, "输入关键词开始搜索", 24, 138, C_DIM());
 
-    // 结果列表 (两列卡片网格, 纵向滚动)
+    // 结果列表 (两列卡片网格, 纵向滚动; 高度收到迷你条上方 168..630)
     _grid = lv_obj_create(_home_view);
     if (_grid) {
-        lv_obj_set_size(_grid, SCREEN_W - 24, SCREEN_H - 170);
+        lv_obj_set_size(_grid, SCREEN_W - 24, 462);
         lv_obj_set_pos(_grid, 12, 168);
         lv_obj_set_style_bg_opa(_grid, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(_grid, 0, 0);
@@ -974,6 +975,67 @@ void AppYt::_buildHomeView()
                               LV_FLEX_ALIGN_START);
         lv_obj_add_flag(_grid, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scroll_dir(_grid, LV_DIR_VER);
+    }
+
+    // ── 迷你播放条 (列表页底部; 有内容在播/连接中/失败待重试/暂停待续时显示;
+    //    点条回播放页, ⏸/▶ 就地切换) ──
+    _mini_shown = false;
+    _mini_icon = -1;
+    _mini_title_txt.clear();
+    _mini_bar = lv_obj_create(_home_view);
+    if (_mini_bar) {
+        lv_obj_set_size(_mini_bar, SCREEN_W - 48, 76);
+        lv_obj_set_pos(_mini_bar, 24, 640);
+        lv_obj_set_style_bg_color(_mini_bar, lv_color_hex(C_CARD()), 0);
+        lv_obj_set_style_bg_opa(_mini_bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(_mini_bar, 16, 0);
+        lv_obj_set_style_border_width(_mini_bar, 1, 0);
+        lv_obj_set_style_border_color(_mini_bar, lv_color_hex(C_BORDER()), 0);
+        lv_obj_set_style_pad_all(_mini_bar, 0, 0);
+        lv_obj_set_style_shadow_width(_mini_bar, 0, 0);
+        lv_obj_clear_flag(_mini_bar, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(_mini_bar, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(_mini_bar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(_mini_bar, [](lv_event_t* e) {
+            auto* self = static_cast<AppYt*>(lv_event_get_user_data(e));
+            if (self && self->_scr) self->_showView(true);   // 回播放页 (播放不受影响)
+        }, LV_EVENT_CLICKED, this);
+        _mini_pp_lbl = lv_label_create(_mini_bar);
+        if (_mini_pp_lbl) {
+            lv_obj_set_style_text_font(_mini_pp_lbl, &lv_font_montserrat_24, 0);
+            lv_obj_set_style_text_color(_mini_pp_lbl, lv_color_hex(C_ACC()), 0);
+            lv_label_set_text(_mini_pp_lbl, LV_SYMBOL_PLAY);
+            lv_obj_align(_mini_pp_lbl, LV_ALIGN_LEFT_MID, 40, 0);
+        }
+        // ⏸/▶ 热区 (透明按钮; 点击不冒泡到条)
+        lv_obj_t* pp = lv_obj_create(_mini_bar);
+        if (pp) {
+            lv_obj_set_size(pp, 88, 60);
+            lv_obj_align(pp, LV_ALIGN_LEFT_MID, 8, 0);
+            lv_obj_set_style_bg_opa(pp, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(pp, 0, 0);
+            lv_obj_set_style_pad_all(pp, 0, 0);
+            lv_obj_clear_flag(pp, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(pp, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(pp, [](lv_event_t* e) {
+                static_cast<AppYt*>(lv_event_get_user_data(e))->_togglePause();
+            }, LV_EVENT_CLICKED, this);
+        }
+        _mini_title = lv_label_create(_mini_bar);
+        if (_mini_title) {
+            lv_obj_set_style_text_font(_mini_title, gmu::zh20(), 0);
+            lv_obj_set_style_text_color(_mini_title, lv_color_hex(C_TEXT()), 0);
+            lv_label_set_long_mode(_mini_title, LV_LABEL_LONG_DOT);
+            lv_obj_set_width(_mini_title, SCREEN_W - 48 - 120 - 60);
+            lv_obj_align(_mini_title, LV_ALIGN_LEFT_MID, 110, 0);
+        }
+        lv_obj_t* ch = lv_label_create(_mini_bar);
+        if (ch) {
+            lv_obj_set_style_text_font(ch, &lv_font_montserrat_20, 0);
+            lv_obj_set_style_text_color(ch, lv_color_hex(C_DIM()), 0);
+            lv_label_set_text(ch, LV_SYMBOL_RIGHT);
+            lv_obj_align(ch, LV_ALIGN_RIGHT_MID, -16, 0);
+        }
     }
 
     // ── 屏幕虚拟键盘 (idea 同款: 点 textarea 弹出, READY=回车收起+搜索) ──
@@ -1294,9 +1356,8 @@ void AppYt::_buildPlayView()
     gmu::action_btn(_play_view, "列表", 1040, 500, 216, 100, [](lv_event_t* e) {
         auto* self = static_cast<AppYt*>(lv_event_get_user_data(e));
         if (!self) return;
-        self->_stopPlayback();           // 回列表 = 彻底停 (本机断流/外放 stop)
-        self->_paused.store(false);
-        self->_resume_s.store(0);
+        // 回列表不停播 (2026-11-07 用户要求): 播放继续, 列表页底部迷你条可回播放页;
+        // 只有点别的视频才切换。暂停中按列表 = 保持暂停待续 (迷你条显示 ▶)。
         if (self->_scr) self->_showView(false);   // 事件回调已在 LVGL 线程, 不再加锁
     }, this, gmu::zh30());
 }
@@ -1385,6 +1446,32 @@ void AppYt::_fetchCover()
         _cover_ready = buf;
         _cover_ready_gen = gen;
     }, 16 * 1024);
+}
+
+void AppYt::_updateMiniBar()
+{
+    // 变更检测在前 (原子量/字符串比较, 无锁); 只在变化时持锁动 LVGL
+    const int st = _state.load();
+    const bool want = !_cur.id.empty() &&
+                      (st == 1 || st == 2 || st == 3 || (st == 0 && _paused.load()));
+    const int icon = (st == 2 && !_paused.load()) ? 1 : 0;   // 1=⏸(播放中) 0=▶
+    const bool title_changed = _mini_title_txt != _cur.t;
+    if (want == _mini_shown && icon == _mini_icon && !title_changed) return;
+
+    LvglLockGuard lock;
+    if (_mini_bar && want != _mini_shown) {
+        _mini_shown = want;
+        if (want) lv_obj_clear_flag(_mini_bar, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(_mini_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (want && _mini_title && title_changed) {
+        _mini_title_txt = _cur.t;
+        lv_label_set_text(_mini_title, _cur.t.c_str());
+    }
+    if (want && _mini_pp_lbl && icon != _mini_icon) {
+        _mini_icon = icon;
+        lv_label_set_text(_mini_pp_lbl, icon ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+    }
 }
 
 void AppYt::_updatePlayPage()
@@ -1662,6 +1749,7 @@ void AppYt::_nullUiPtrs()
     _play_bar = _play_el = _play_dur = nullptr;
     _pp_btn = _pp_lbl = nullptr;
     _vol_slider = _vol_lbl = nullptr;
+    _mini_bar = _mini_pp_lbl = _mini_title = nullptr;
 }
 
 void AppYt::_destroyUi()
@@ -1823,6 +1911,7 @@ void AppYt::_startTask()
         auto finish = [&](int st, int code, const char* why) {
             yt_teardown(http);
             _err_code.store(code);
+            _resume_s.store(_pos_base_s.load());   // ▶ 重试从本次开播点
             _state.store(st);
             int exp = cur;
             _want.compare_exchange_strong(exp, -1);
