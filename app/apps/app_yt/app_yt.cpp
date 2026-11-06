@@ -527,7 +527,7 @@ void AppYt::_histRender()
         }, LV_EVENT_ALL, this);
         lv_obj_t* l = lv_label_create(chip);
         lv_label_set_text(l, q.c_str());
-        lv_obj_set_style_text_font(l, gmu::zh20(), 0);
+        lv_obj_set_style_text_font(l, gmu::zh30(), 0);
         lv_obj_set_style_text_color(l, lv_color_hex(0xE8EAEC), 0);
     }
 }
@@ -908,7 +908,7 @@ void AppYt::_buildHomeView()
                 self->_searchAsync(text);   // 识别成功直接搜
             }
         });
-    }, this);
+    }, this, gmu::zh30());
     gmu::action_btn(_home_view, "搜索", 814, 12, 170, 56, [](lv_event_t* e) {
         auto* self = static_cast<AppYt*>(lv_event_get_user_data(e));
         if (self && self->_ta) {
@@ -934,17 +934,17 @@ void AppYt::_buildHomeView()
         lv_label_set_text(ic, LV_SYMBOL_AUDIO);
         lv_obj_align(ic, LV_ALIGN_LEFT_MID, 12, 0);
         lv_obj_t* tl = lv_label_create(_out_chip_home);
-        lv_obj_set_style_text_font(tl, gmu::zh20(), 0);
+        lv_obj_set_style_text_font(tl, gmu::zh30(), 0);
         lv_obj_set_style_text_color(tl, lv_color_hex(C_TEXT()), 0);
         lv_label_set_text(tl, kOutputs[_output_sel].name);
-        lv_obj_align(tl, LV_ALIGN_LEFT_MID, 44, 0);
+        lv_obj_align(tl, LV_ALIGN_LEFT_MID, 46, 0);
         lv_obj_set_user_data(_out_chip_home, tl);
     }
 
     // 历史行 (横向滚动, 点击重搜 / 长按删除)
     _hist_row = lv_obj_create(_home_view);
     if (_hist_row) {
-        lv_obj_set_size(_hist_row, SCREEN_W - 48, 48);
+        lv_obj_set_size(_hist_row, SCREEN_W - 48, 54);
         lv_obj_set_pos(_hist_row, 24, 78);
         lv_obj_set_style_bg_opa(_hist_row, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(_hist_row, 0, 0);
