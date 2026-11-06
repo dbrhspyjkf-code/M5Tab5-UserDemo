@@ -131,11 +131,14 @@ inline void on_install_apps()
     auto nw_uptr = std::make_unique<AppNews>();
     AppNews* news = nw_uptr.get();           // 新闻: 主页入口 (2026-11-05 替换小智按钮)
 
+#ifndef PLATFORM_BUILD_WEB
+    // 游戏/油管仅设备固件 (web 端冻结不接入, 2026-11-06 用户明确)
     auto gm_uptr = std::make_unique<AppGames>();
     AppGames* games = gm_uptr.get();         // 游戏: 工具页入口 (car-dash 4 小游戏移植)
 
     auto yt_uptr = std::make_unique<AppYt>();
     AppYt* yt = yt_uptr.get();               // 油管: 工具页入口 (Pi 中继音频版)
+#endif
 
 #ifndef PLATFORM_BUILD_WEB
     auto is_uptr = std::make_unique<AppIdleScreen>();
@@ -167,8 +170,10 @@ inline void on_install_apps()
     int ga_id  = mooncake::GetMooncake().installApp(std::move(ga_uptr));
     int id_id  = mooncake::GetMooncake().installApp(std::move(id_uptr));
     int nw_id  = mooncake::GetMooncake().installApp(std::move(nw_uptr));
+#ifndef PLATFORM_BUILD_WEB
     int gm_id  = mooncake::GetMooncake().installApp(std::move(gm_uptr));
     int yt_id  = mooncake::GetMooncake().installApp(std::move(yt_uptr));
+#endif
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
@@ -201,6 +206,7 @@ inline void on_install_apps()
     gallery->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+#ifndef PLATFORM_BUILD_WEB
     // 游戏合集同从「工具」页打开, 上拨返回工具页.
     games->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
@@ -209,6 +215,7 @@ inline void on_install_apps()
     yt->setCloseCallback([set_id]() {
         mooncake::GetMooncake().openApp(set_id);
     });
+#endif
 #ifndef PLATFORM_BUILD_WEB
     // Reachy 同样从「工具」页打开, 返回 (← / 上拨) 回到工具页.
     reachy->setCloseCallback([set_id]() {
@@ -259,8 +266,10 @@ inline void on_install_apps()
     settings->setGalleryAppId(ga_id);
     // 计时器入口 2026-11-05 从主页迁到工具页
     settings->setTimerAppId(ti_id);
+#ifndef PLATFORM_BUILD_WEB
     settings->setGamesAppId(gm_id);
     settings->setYtAppId(yt_id);
+#endif
     // 主页健康卡长按 → 打开健康 app (工具页同款入口)
     home->setOpenHealthHandler([hl_id]() {
         mooncake::GetMooncake().openApp(hl_id);
@@ -297,8 +306,10 @@ inline void on_install_apps()
         else if (strcmp(want, "gallery") == 0) mooncake::GetMooncake().openApp(ga_id);
         else if (strcmp(want, "idea") == 0) mooncake::GetMooncake().openApp(id_id);
         else if (strcmp(want, "news") == 0) mooncake::GetMooncake().openApp(nw_id);
+#ifndef PLATFORM_BUILD_WEB
         else if (strcmp(want, "games") == 0) mooncake::GetMooncake().openApp(gm_id);
         else if (strcmp(want, "youtube") == 0) mooncake::GetMooncake().openApp(yt_id);
+#endif
     }
 #endif
 

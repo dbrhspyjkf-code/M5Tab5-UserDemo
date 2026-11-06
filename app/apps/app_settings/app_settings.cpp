@@ -718,10 +718,6 @@ void AppSettings::_buildToolsPage()
     make_tile(0, 2, nullptr, 130, "图  库", _toolGallery_cb, 256, 12, -1, 13);
     // (2026-11-05: 计时器入口自主页迁入工具页, web 版主页按钮位让给「想法」)
     make_tile(1, 2, nullptr, 130, "计时器", _toolTimer_cb, 256, 12, -1, 14);
-    // (2026-11-06: 游戏合集入口, 与设备端同款)
-    make_tile(2, 2, nullptr, 130, "游 戏", _toolGames_cb, 256, 12, -1, 15);
-    // (2026-11-06: 油管入口, 与设备端同款)
-    make_tile(3, 2, nullptr, 130, "油 管", _toolYt_cb, 256, 12, -1, 16);
 #else
     // 行 0: 计算器 / 汇率 / 单位换算 — 图标全部走 make_tile 图形分支
     // (kind 5/6/7), 线条随主题强调色, 原静态图 calc_icon/fx_icon/unit_icon 已弃用.
