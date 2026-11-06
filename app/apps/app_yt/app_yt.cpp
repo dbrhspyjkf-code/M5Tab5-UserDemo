@@ -1235,11 +1235,14 @@ void AppYt::_buildPlayView()
         lv_label_set_text(_play_status, "");
     }
 
-    // 进度条 + 时间 (zh24); 滑条背景 = 卡色圆角槽 (track 太黑看不出边界)
+    // 进度条 + 时间 (zh24); 滑条背景 = 卡色圆角槽 (track 太黑看不出边界)。
+    // 进度条整屏水平居中 (2026-11-07 用户要求), 已播/总时长分列左右两翼
+    constexpr int BAR_W = SCREEN_W - 400;            // 880
+    constexpr int BAR_X = (SCREEN_W - BAR_W) / 2;    // 200
     lv_obj_t* bar_bg = lv_obj_create(_play_view);
     if (bar_bg) {
-        lv_obj_set_size(bar_bg, SCREEN_W - 400, 26);
-        lv_obj_set_pos(bar_bg, 24, 422);
+        lv_obj_set_size(bar_bg, BAR_W, 26);
+        lv_obj_set_pos(bar_bg, BAR_X, 422);
         lv_obj_set_style_bg_color(bar_bg, lv_color_hex(C_CARD()), 0);
         lv_obj_set_style_bg_opa(bar_bg, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(bar_bg, 13, 0);
@@ -1251,8 +1254,8 @@ void AppYt::_buildPlayView()
     }
     _play_bar = lv_slider_create(_play_view);
     if (_play_bar) {
-        lv_obj_set_size(_play_bar, SCREEN_W - 400, 14);
-        lv_obj_set_pos(_play_bar, 24, 428);
+        lv_obj_set_size(_play_bar, BAR_W, 14);
+        lv_obj_set_pos(_play_bar, BAR_X, 428);
         lv_slider_set_range(_play_bar, 0, 1000);
         lv_obj_set_style_bg_opa(_play_bar, LV_OPA_TRANSP, LV_PART_MAIN);   // 露出底槽
         lv_obj_set_style_bg_color(_play_bar, lv_color_hex(C_ACC()), LV_PART_INDICATOR);
@@ -1265,14 +1268,16 @@ void AppYt::_buildPlayView()
         lv_obj_set_style_text_font(_play_el, &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_color(_play_el, lv_color_hex(C_TEXT()), 0);
         lv_label_set_text(_play_el, "0:00");
-        lv_obj_set_pos(_play_el, _play_bar ? (int)lv_obj_get_x(_play_bar) : 24, 452);
+        lv_obj_set_pos(_play_el, BAR_X - 150, 452);
+        lv_obj_set_width(_play_el, 140);
+        lv_obj_set_style_text_align(_play_el, LV_TEXT_ALIGN_RIGHT, 0);
     }
     _play_dur = lv_label_create(_play_view);
     if (_play_dur) {
         lv_obj_set_style_text_font(_play_dur, &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_color(_play_dur, lv_color_hex(C_DIM()), 0);
         lv_label_set_text(_play_dur, "0:00");
-        lv_obj_align(_play_dur, LV_ALIGN_TOP_RIGHT, -36, 452);
+        lv_obj_set_pos(_play_dur, BAR_X + BAR_W + 10, 452);
     }
 
     // 控制行: 播放/暂停 (200×100 大键) + 音量 (图标 + 滑条 640 + 数字)
