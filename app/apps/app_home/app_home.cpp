@@ -371,6 +371,14 @@ void AppHome::onOpen()
     lv_obj_add_flag(_np_lbl, LV_OBJ_FLAG_HIDDEN);
     make_tappable(_np_lbl, 6);
 
+    // 油管后台播放指示 (2026-11-06): ♪YT (音符+YT 两段文本), 闪动, 点按回油管
+    _np_yt_lbl = lv_label_create(irow);
+    lv_obj_set_style_text_font(_np_yt_lbl, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(_np_yt_lbl, lv_color_hex(theme::cur().ok), 0);
+    lv_label_set_text(_np_yt_lbl, LV_SYMBOL_AUDIO);
+    lv_obj_add_flag(_np_yt_lbl, LV_OBJ_FLAG_HIDDEN);
+    make_tappable(_np_yt_lbl, 7);
+
     // Quick-settings gear (volume + brightness).
     _status_tools = lv_label_create(irow);
     lv_obj_set_style_text_font(_status_tools, &lv_font_montserrat_28, 0);
@@ -755,6 +763,22 @@ void AppHome::onRunning()
             if (playing) lv_obj_clear_flag(_np_lbl, LV_OBJ_FLAG_HIDDEN);
             else         lv_obj_add_flag(_np_lbl, LV_OBJ_FLAG_HIDDEN);
         }
+    }
+
+    // 油管后台播放指示 (2026-11-06): 在播 → ♪YT 显示并 1s 闪动 (邮件图标同相位),
+    // 点按直达油管播放页 (onOpen 的后台恢复逻辑负责重建页面)
+    if (_np_yt_lbl) {
+        bool playing = _yt_np_getter && !_yt_np_getter().empty();
+        bool is_shown = !lv_obj_has_flag(_np_yt_lbl, LV_OBJ_FLAG_HIDDEN);
+        if (playing != is_shown) {
+            if (playing) lv_obj_clear_flag(_np_yt_lbl, LV_OBJ_FLAG_HIDDEN);
+            else         lv_obj_add_flag(_np_yt_lbl, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (playing)
+            lv_obj_set_style_opa(_np_yt_lbl,
+                                 _mail_blink_on ? LV_OPA_COVER : LV_OPA_30, 0);
+        else
+            lv_obj_set_style_opa(_np_yt_lbl, LV_OPA_COVER, 0);
     }
 
     // Dashboard cards — poll hermes every 60s. All four endpoints are
@@ -1242,6 +1266,7 @@ void AppHome::onClose()
     _status_tools = nullptr;
     _status_email = nullptr;
     _np_lbl       = nullptr;
+    _np_yt_lbl    = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
     _net_ssid = _net_pass = _net_host = _net_ssid_dd = _net_kb = _net_status = nullptr;
     _btn_data.clear();
@@ -2018,6 +2043,9 @@ void AppHome::_statusClick_cb(lv_event_t* e)
         for (auto& e : self->_apps) {
             if (e.name == "收音机") { mooncake::GetMooncake().openApp(e.app_id); break; }
         }
+    }
+    else if (tag == 7 && self->_open_yt_cb) {   // 油管后台播放中 → 回油管播放页
+        self->_open_yt_cb();
     }
 }
 

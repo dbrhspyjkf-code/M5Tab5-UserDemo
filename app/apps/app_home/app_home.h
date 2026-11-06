@@ -36,6 +36,10 @@ public:
     // 收音机后台播放状态 (app_installer 注入): 返回播放中的台名, 未播返回
     // 空串。主页状态栏据此显示/隐藏音符图标 (点按回收音机页)。
     void setOpenHealthHandler(std::function<void()> cb) { _open_health_cb = std::move(cb); }
+    // 油管后台播放 ♪ 图标 (2026-11-06): getter 返回 "YT·标题" 或 "" (同收音机) +
+    // 点击直达油管播放页的回调 (installer 注入)
+    void setOpenYtHandler(std::function<void()> cb) { _open_yt_cb = std::move(cb); }
+    void setYtNowPlayingGetter(std::function<std::string()> g) { _yt_np_getter = std::move(g); }
     void setNowPlayingGetter(std::function<std::string()> g) { _np_getter = std::move(g); }
 
     // Cached weather (refreshed every 15 min by AppHome's own status bar) —
@@ -80,10 +84,13 @@ private:
     lv_obj_t* _status_tools   = nullptr;  // gear/quick-settings icon (left of battery)
     lv_obj_t* _status_email   = nullptr;
     lv_obj_t* _np_lbl         = nullptr;  // 收音机后台播放中 ♪ 图标 (点按回收音机)
+    lv_obj_t* _np_yt_lbl      = nullptr;  // 油管后台播放中 ♪YT 图标 (点按回油管播放页)
     uint32_t   _last_blink_ms = 0;    // 邮件图标闪烁相位
     bool       _mail_blink_on = true;  // mail icon (left of wifi), only visible when unread>0
     OpenEmailCb _open_email;              // tap handler: jump into settings email sub-page
     std::function<std::string()> _np_getter;  // 收音机播放状态 (installer 注入)
+    std::function<std::string()> _yt_np_getter;   // 油管播放状态 (installer 注入)
+    std::function<void()> _open_yt_cb;            // ♪YT 点击 → 油管播放页
     uint32_t  _last_email_ms  = 0;        // throttle for the 60s email poll
 
     // Weather is fetched asynchronously (home has no HA client of its own), so a

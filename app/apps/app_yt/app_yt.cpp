@@ -13,13 +13,13 @@
 #include "../utils/rgb565_fetch.h"
 #include "../app_games/gmu.h"
 #include "../app_voice_input/app_voice_input.h"
+#include <xiaozhi_ctl.h>   // 音量读写 (桌面: compat 桩)
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <esp_http_client.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
-#include <xiaozhi_ctl.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #endif
@@ -117,6 +117,40 @@ void AppYt::onOpen()
     _histRender();
     _refreshOutputUi();
 
+    // 后台播放恢复: 流任务/外放在播 (onClose 不再停播) → 跳过搜索页直达播放页,
+    // 条目数据从 _items 原子态恢复 (标题/频道/时长); 进度 = 已喂字节
+    {
+        const int st = _state.load();
+        const bool active = (st == 1 || st == 2);                  // 后台在播/连接中
+        const bool parked = (st == 0 && _paused.load());           // 暂停中离开 (已释放)
+        // 上次的搜索结果仍在 (_items 跨会话存活): 重建列表, 「列表」键回来不空
+        size_t n_items = 0;
+        {
+            std::lock_guard<std::mutex> lk(_mu);
+            n_items = _items.size();
+        }
+        if (n_items > 0) {
+            LvglLockGuard lock;
+            _buildRows();
+            if (_status_lbl) {
+                char b[48];
+                snprintf(b, sizeof(b), "%d 个结果", (int)n_items);
+                lv_label_set_text(_status_lbl, b);
+            }
+        }
+        if (n_items > 0) _fetchThumbs();
+        if ((active || parked) && !_cur.id.empty()) {
+            {
+                LvglLockGuard lock;
+                _fillPlayPage(/*resume=*/true);
+                _showView(true);
+            }
+            if (_output_sel > 0) _extVolSync();          // 音箱当前音量 → 滑条
+            mclog::tagInfo(TAG, "resume playing view, fid={} st={} paused={}",
+                           _cur.id, st, (int)_paused.load());
+        }
+    }
+
     // 硬件键盘 → 搜索框 (textarea 入 lvKbGroup 铁律, SSH 教训)
 #ifndef PLATFORM_BUILD_DESKTOP
     if (GetHAL()->lvKbGroup && _ta) {
@@ -133,10 +167,11 @@ void AppYt::onOpen()
 void AppYt::onRunning()
 {
     // 失焦收尾 (games/lottery 同款; async 删屏防「删除活动屏」)。
-    // 油管关 app = 停播 (car 同语义): 失焦也全停 (本机 + 外放), 不做后台播。
+    // 后台播放 (2026-11-06, 收音机同款): 拆 UI 不停播 —— 流任务/外放走原子量,
+    // 主页 ♪ 图标可跳回; 彻底停止 = 播放页 ⏸ 或主页音频焦点互踢。
     if (_scr && lv_screen_active() != _scr) {
-        mclog::tagInfo(TAG, "lost foreground, tearing down screen");
-        _want.store(-1);
+        mclog::tagInfo(TAG, "lost foreground, tearing down screen (keep playing)");
+        _releaseIfPaused();   // 暂停中离开 = 不在听 → 停流释放 Pi 资源 (在播则后台续播)
         _removeSwipeGesture();
         _detachInput();   // 防悬垂: lvKbGroup/语音回调指向即将删除的 textarea
         _closeOutputModal();                       // 弹窗挂在 lv_layer_top, 必须先摘
@@ -147,6 +182,13 @@ void AppYt::onRunning()
         lv_async_call([](void* p) { lv_obj_delete(static_cast<lv_obj_t*>(p)); }, scr);
         for (void* b : bufs) rgb565::release(b);   // 删屏已发 async, 引用已断
         return;
+    }
+    // 前台/后台都跑 (mooncake 每帧对所有 app 调 onRunning):
+    _extFinishCheck();                    // 外放墙钟走到时长 → 播完态 (♪YT 消失)
+    if (_paused.load() && _pause_since_ms != 0 &&
+        yt_mono_ms() - _pause_since_ms > 5 * 60 * 1000) {
+        _pause_since_ms = 0;
+        _releaseIfPaused();               // 暂停 5 分钟 (屏保盖着等): 停流释放 Pi 资源
     }
     if (!_scr) return;
 
@@ -190,7 +232,7 @@ void AppYt::onRunning()
         }
         if (buf) {
             LvglLockGuard lock;
-            if (gen == _cover_gen.load() && _play_thumb && _cur_item >= 0) {
+            if (gen == _cover_gen.load() && _play_thumb && !_cur.id.empty()) {
                 if (_cover_buf) lv_image_cache_drop(_cover_buf);   // 旧图出缓存 (P4 有 cache)
                 _cover_buf = buf;
                 lv_image_set_src(_play_thumb, buf);
@@ -233,7 +275,32 @@ void AppYt::_requestExitOnce()
     int64_t now = yt_mono_ms();
     if (_last_exit_ms != 0 && now - _last_exit_ms < 500) return;
     _last_exit_ms = now;
+    // 工具页 app 的退出 = _close_cb (openApp 工具页): 工具页 onOpen 载入自己的屏后
+    // 本 app 在 onRunning 失焦分支 async 拆屏。**不能用 close()**: onClose 同步删
+    // 仍是活动屏的 _scr, 此时工具页尚未 load —— 删活动屏 = LVGL 悬空 (收音机注释
+    // 实锤的坑; close() 只适用 close_cb=restoreScreen 的主页系 app)。
+    // mooncake 每帧对所有 app 调 onRunning, 后台检查照常进行。
     _requestClose();
+}
+
+std::string AppYt::nowPlayingInfo()
+{
+    _extFinishCheck();
+    // 主页 ♪YT 图标数据源: 连接中/播放中 (本机或外放) 且未暂停 → "YT·标题";
+    // 暂停/停止/失败/播完 → "" (图标隐藏; 暂停中退出也不算后台在播)
+    const int st = _state.load();
+    if ((st != 1 && st != 2) || _paused.load()) return "";
+    if (_cur.id.empty()) return "YouTube";
+    // 标题截前 12 个字 (UTF-8 安全: 只在首字节处截)
+    const std::string& t = _cur.t;
+    size_t pos = 0;
+    int chars = 0;
+    while (pos < t.size() && chars < 12) {
+        unsigned char c = (unsigned char)t[pos];
+        pos += (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
+        chars++;
+    }
+    return "YT·" + t.substr(0, std::min(pos, t.size()));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -306,13 +373,19 @@ void AppYt::_applySearch()
     _thumb_gen.fetch_add(1);   // 在途缩略图 worker 作废
     _stopPlayback();           // 新搜索 = 停播 (本机 + 外放, car 同语义)
 
+    std::vector<void*> old_bufs;
     {
         LvglLockGuard lock;
         _showView(false);
-        for (auto& r : _rows) r = nullptr;
+        // 旧卡片整体删除 (原实现只清指针表, 卡片在 _grid 里越积越多且旧图指向
+        // 将被释放的缓冲) → 删完再释放其缩略图缓冲
+        if (_grid) lv_obj_clean(_grid);
         _rows.clear();
+        for (void* b : _thumb_bufs)
+            if (b) { lv_image_cache_drop(b); old_bufs.push_back(b); }
+        _thumb_bufs.clear();
         if (_play_thumb) lv_image_set_src(_play_thumb, yt_placeholder());
-        if (_cover_buf) { rgb565::release(_cover_buf); _cover_buf = nullptr; }
+        if (_cover_buf) { lv_image_cache_drop(_cover_buf); old_bufs.push_back(_cover_buf); _cover_buf = nullptr; }
         _cur_item = -1;
 
         if (_status_lbl) {
@@ -330,13 +403,24 @@ void AppYt::_applySearch()
             q_snapshot = lv_textarea_get_text(_ta);
         }
     }
+    for (void* b : old_bufs) rgb565::release(b);   // 引用已断 (卡片已删/封面换占位)
     if (!err.empty() || items.empty()) return;
 
     // 搜到结果 → 记历史 (NVS 写 ~ms 级)
     if (!q_snapshot.empty()) _histAdd(q_snapshot);
+    _fetchThumbs();
+}
 
+void AppYt::_fetchThumbs()
+{
     // 逐行拉缩略图 (单 worker 顺序拉; gen 不符即自弃, 释放归属始终在 worker)
-    auto gen = _thumb_gen.load();
+    std::vector<YtItem> items;
+    {
+        std::lock_guard<std::mutex> lk(_mu);
+        items = _items;
+    }
+    if (items.empty()) return;
+    auto gen = _thumb_gen.fetch_add(1) + 1;
     auto alive = _alive;
     GetHAL()->tryRunDetached([this, alive, gen, items]() {
         for (size_t i = 0; i < items.size() && i < 20; i++) {
@@ -452,30 +536,98 @@ void AppYt::_histRender()
 // ════════════════════════════════════════════════════════════════════════════
 void AppYt::_play(int i)
 {
-    if (i < 0 || i >= (int)_items.size()) return;
+    // 列表点新条目: 从头播 (清断点)
+    {
+        std::lock_guard<std::mutex> lk(_mu);
+        if (i < 0 || i >= (int)_items.size()) return;
+        _cur = _items[i];
+    }
+    _stopPlayback();                     // 旧会话 (本机/外放) 先收
     _cur_item = i;
+    _resume_s.store(0);
+    _fillPlayPage();                     // 列表点击回调 = LVGL 线程, 不再加锁
+    _showView(true);
+    _startFrom(0);
+}
+
+int AppYt::_curPosSec() const
+{
+    // 当前播放位置 (秒): 起播偏移 + 本机已喂字节 / 外放墙钟 (扣暂停)
+    int64_t el = 0;
+    if (_ext_on.load()) {
+        const int64_t t0 = _ext_t0_ms.load();
+        if (t0) {
+            const int64_t now = yt_mono_ms();
+            int64_t paused = _ext_pause_acc_ms.load();
+            const int64_t ps = _ext_pause_start_ms.load();
+            if (_paused.load() && ps) paused += now - ps;
+            el = (now - t0 - paused) / 1000;
+        }
+    } else {
+        el = _pcm_bytes.load() / PCM_BYTES_PER_SEC;
+    }
+    if (el < 0) el = 0;
+    return _pos_base_s.load() + (int)el;
+}
+
+void AppYt::_extFinishCheck()
+{
+    // 外放音频不经本机, 无字节可数: 墙钟 (扣暂停) 走过时长 +5s (MA 起播预缓冲余量)
+    // 即判播完 → 状态 4, 主页 ♪YT 消失。不发 stop (MA 已自然停; relay 播完标记防重拉);
+    // 保留 _ext_dev 让音量条仍控音箱。
+    if (!_ext_on.load() || _state.load() != 2) return;
+    const int dur = _cur.d;
+    if (dur <= 0 || _curPosSec() < dur + 5) return;
+    _ext_on.store(false);
+    _paused.store(false);
+    _state.store(4);
+    mclog::tagInfo(TAG, "ext finished (wall clock reached {}s)", dur);
+}
+
+int AppYt::_resumePos() const
+{
+    // 断点 = 当前位置; 本机按「已收字节」计, 其中最多 ~4s 还在 ring 里没播出 (停流时
+    // 随 ring 丢弃) → 回退 4s, 宁可重听几秒也不跳过
+    int pos = _curPosSec();
+    if (!_ext_on.load()) pos -= 4;
+    return pos < 0 ? 0 : pos;
+}
+
+void AppYt::_startFrom(int t)
+{
+    // 统一开播入口: 播 _cur, t=起播秒数 (0=从头; 断点续播/切输出带当前位置)
+    if (_cur.id.empty()) return;
+    {
+        std::lock_guard<std::mutex> lk(_mu);
+        _play_fid = _cur.id;             // 流任务从这里取 fid (不碰 _items)
+    }
     _pcm_bytes.store(0);
     _err_code.store(0);
     _paused.store(false);
+    _pause_since_ms = 0;
+    _pos_base_s.store(t < 0 ? 0 : t);
     _ext_pause_acc_ms.store(0);
     _ext_pause_start_ms.store(0);
     {
         LvglLockGuard lock;
-        _fillPlayPage(i);
-        _showView(true);
+        _refreshPlayBtn();
     }
-    if (_output_sel > 0) _extStart(i);   // 外放: prepare → relay play_on (worker)
+    if (_radio_stopper) _radio_stopper();   // 音频焦点: 踢收音机
+    // 会话令牌 (正数, 每次开播 +1): 流任务按「令牌变了」重建连接 —— 同一条目
+    // 重播/断点续播也会重建; 流任务收尾时只 CAS 回收自己那一代 (不误杀新会话)
+    const int tok = (int)((_play_gen.fetch_add(1) + 1) & 0x3FFFFFFF) + 1;
+    if (_output_sel > 0) _extStart();       // 外放: prepare → relay play_on (worker)
     else {
         _state.store(1);
-        _want.store(i);
-        _startTask();                    // 本机: 流任务
+        _want.store(tok);                   // >0 = 本机会话激活 (fid 见 _play_fid)
+        _startTask();                       // 本机: 流任务 (URL 带 ?t=)
     }
 }
 
 void AppYt::_stopPlayback()
 {
-    _want.store(-1);                     // 本机流任务收尾
-    if (_ext_on.exchange(false)) {       // 外放停 (worker 发 cmd stop)
+    _want.store(-1);                     // 本机流任务收尾 (断开 → Pi 侧 PCM ffmpeg 立即回收)
+    if (_ext_on.exchange(false)) {       // 外放停 (worker 发 cmd stop → relay 踢链 + MA 残留清理)
         _ext_gen.fetch_add(1);           // 作废在途 prepare/play_on
         _ext_t0_ms.store(0);
         int dev = _ext_dev.exchange(-1);
@@ -485,34 +637,73 @@ void AppYt::_stopPlayback()
     if (_state.load() != 3) _state.store(0);
 }
 
+void AppYt::_releaseIfPaused()
+{
+    // 暂停中离开 app (2026-11-06 用户要求): 暂停 = 不在听 → 彻底停流释放 Pi 资源
+    // (本机断开 → hermes PCM ffmpeg 立即回收; 外放 cmd stop → relay 踢链 + MA 残留
+    // 清理), 记断点; 回来仍是播放页「已暂停」, 按 ▶ 从断点续播 (?t=)。
+    // 在播中离开 = 后台播放 (不调本函数), 主页 ♪YT 闪动指示。
+    const int st = _state.load();
+    if ((st == 1 || st == 2) && _paused.load()) {
+        const int pos = _resumePos();
+        _resume_s.store(pos);
+        _stopPlayback();
+        _paused.store(true);             // 保持「已暂停」显示与 ▶ 键
+        _pause_since_ms = 0;
+        mclog::tagInfo(TAG, "paused stream released (left app / 5min idle), resume at {}s", pos);
+    }
+}
+
+void AppYt::pauseForFocus()
+{
+    // 收音机开播时踢油管: 本机/外放都停, 记断点, 回油管按 ▶ 续播
+    const int st = _state.load();
+    if (st != 1 && st != 2) return;
+    const int pos = _resumePos();
+    _resume_s.store(pos);
+    _stopPlayback();
+    _paused.store(true);
+    mclog::tagInfo(TAG, "audio focus lost (radio): stopped, resume at {}s", pos);
+}
+
 void AppYt::_togglePause()
 {
     const int st = _state.load();
-    if (st != 2) return;                 // 只有播放中可暂停
-    const bool now_paused = !_paused.load();
-    _paused.store(now_paused);
-    if (_output_sel > 0 && _ext_on.load()) {
-        // 外放: MA pause/resume; 暂停墙钟停表
-        const int64_t now = yt_mono_ms();
-        if (now_paused) {
-            _ext_pause_start_ms.store(now);
-        } else {
-            _ext_pause_acc_ms.fetch_add(now - _ext_pause_start_ms.exchange(0));
+    if (st == 2) {
+        const bool now_paused = !_paused.load();
+        _paused.store(now_paused);
+        _pause_since_ms = now_paused ? yt_mono_ms() : 0;
+        if (_ext_on.load()) {
+            // 外放: MA pause/resume; 暂停墙钟停表
+            const int64_t now = yt_mono_ms();
+            if (now_paused) {
+                _ext_pause_start_ms.store(now);
+            } else {
+                _ext_pause_acc_ms.fetch_add(now - _ext_pause_start_ms.exchange(0));
+            }
+            int dev = _ext_dev.load();
+            if (dev >= 0 && dev < kOutputCount)
+                GetHAL()->tryRunDetached([dev, now_paused]() {
+                    AppYt::_relayCmd(kOutputs[dev].pid, now_paused ? "pause" : "play", -1);
+                });
         }
-        int dev = _ext_dev.load();
-        if (dev >= 0 && dev < kOutputCount)
-            GetHAL()->tryRunDetached([dev, now_paused]() {
-                AppYt::_relayCmd(kOutputs[dev].pid, now_paused ? "pause" : "play", -1);
-            });
+        // 本机: 流任务见 _paused 停读, TCP 背压 → 服务端 ffmpeg 写阻塞 → 真暂停
+        _refreshPlayBtn();
+        return;
     }
-    // 本机: 流任务见 _paused 停读, TCP 背压 → 服务端 ffmpeg stdin 写阻塞 → 真暂停
-    _refreshPlayBtn();
+    if (st == 1) return;                 // 连接中: 等结果
+    // 已停 (暂停中离开/焦点被踢/失败/播完): ▶ = 重新开播
+    if (_cur.id.empty()) return;
+    const int t = (st == 4) ? 0 : _resume_s.load();   // 播完从头, 其余从断点
+    _startFrom(t);
 }
 
 void AppYt::_refreshPlayBtn()
 {
     if (!_pp_lbl) return;
-    lv_label_set_text(_pp_lbl, _paused.load() ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE);
+    const int st = _state.load();
+    const bool show_play = _paused.load() || st == 0 || st == 3 || st == 4;
+    lv_label_set_text(_pp_lbl, show_play ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE);
 }
 
 // ── NVS ──
@@ -525,31 +716,20 @@ int AppYt::_nvsOutput()
 void AppYt::_setOutput(int i)
 {
     if (i < 0 || i >= kOutputCount || i == _output_sel) return;
+    const int st = _state.load();
+    const bool was_playing = (st == 1 || st == 2) && !_paused.load();
+    const int pos = _curPosSec();        // 切换前位置 (切完从这里接着播)
     _output_sel = i;
     GetHAL()->setConfig("yt_out", std::to_string(i));
     _closeOutputModal();
     _refreshOutputUi();
-    const bool was_playing = _state.load() == 2 || _state.load() == 1;
-    const int cur = _cur_item;
-    if (!was_playing || cur < 0) {
+    if (!was_playing || _cur.id.empty()) {
         if (i > 0) _extVolSync();        // 待机切换: 同步音箱音量到滑条
         return;
     }
-    // 播放中切换: 立即换到新输出重新开播 (收音机同款语义)
+    // 播放中切换: 停旧输出, 在新输出从当前位置接着播 (收音机同款语义)
     _stopPlayback();
-    _paused.store(false);
-    _pcm_bytes.store(0);
-    _ext_pause_acc_ms.store(0);
-    {
-        LvglLockGuard lock;
-        _refreshPlayBtn();
-    }
-    if (i > 0) _extStart(cur);
-    else {
-        _state.store(1);
-        _want.store(cur);
-        _startTask();
-    }
+    _startFrom(pos);
 }
 
 // ── 外放 (relay → MA) ──
@@ -565,33 +745,37 @@ bool AppYt::_relayCmd(const char* pid, const char* cmd, int v)
             r.body.find("\"ok\": true") != std::string::npos);
 }
 
-void AppYt::_extStart(int i)
+void AppYt::_extStart()
 {
-    if (i < 0 || i >= (int)_items.size()) return;
     const int sel = _output_sel;
-    if (sel <= 0 || sel >= kOutputCount) return;
-    const std::string fid = _items[i].id;
+    if (sel <= 0 || sel >= kOutputCount || _cur.id.empty()) return;
+    const std::string fid = _cur.id;
+    const int t = _pos_base_s.load();
     _ext_on.store(true);
     _state.store(1);
     _err_code.store(0);
-    const auto gen = _ext_gen.fetch_add(1) + 1;   // 本代令牌
-    auto alive = _alive;
-    GetHAL()->tryRunDetached([this, alive, gen, sel, fid]() {
+    const auto gen = _ext_gen.fetch_add(1) + 1;   // 本代令牌 (停止/换条目即作废)
+    // 注意: 不捕获 _alive —— 后台播放期间 UI 已拆, worker 只写原子量照常推进
+    GetHAL()->tryRunDetached([this, gen, sel, fid, t]() {
         auto* hal = GetHAL();
         std::string base = "http://" + hal->getConfig("svc_host", "192.168.1.200") + ":8766";
         // ① 预热管线 (冷 15-60s; HAL 给 /yt/prepare 100s 超时)
         auto pr = hal->httpGet(base + "/yt/prepare/" + fid);
-        if (!alive || !*alive || gen != _ext_gen.load()) return;
+        if (gen != _ext_gen.load()) return;
         if (pr.status != 200) {
             _extFail(gen, pr.status == 429 ? 429 : 1502);
             return;
         }
-        // ② MA 转投 (先 stop 再 play; relay 已踢旧 /ext 链)
-        char url[192];
-        snprintf(url, sizeof(url), "%syt/%s/play_on?p=%s",
-                 kRelayBase, fid.c_str(), kOutputs[sel].pid);
+        // ② MA 转投 (先 stop 再 play; relay 已踢旧 /ext 链); t>0 = 断点续播
+        char url[224];
+        if (t > 0)
+            snprintf(url, sizeof(url), "%syt/%s/play_on?p=%s&t=%d",
+                     kRelayBase, fid.c_str(), kOutputs[sel].pid, t);
+        else
+            snprintf(url, sizeof(url), "%syt/%s/play_on?p=%s",
+                     kRelayBase, fid.c_str(), kOutputs[sel].pid);
         auto r = hal->httpGet(url);
-        if (!alive || !*alive || gen != _ext_gen.load()) return;
+        if (gen != _ext_gen.load()) return;
         bool ok = r.status == 200 &&
                   (r.body.find("\"ok\":true") != std::string::npos ||
                    r.body.find("\"ok\": true") != std::string::npos);
@@ -603,7 +787,7 @@ void AppYt::_extStart(int i)
         _ext_t0_ms.store(yt_mono_ms());
         _ext_pause_acc_ms.store(0);
         _state.store(2);
-        mclog::tagInfo(TAG, "ext play: {} -> {}", fid, kOutputs[sel].full);
+        mclog::tagInfo(TAG, "ext play: {} -> {} (t={})", fid, kOutputs[sel].full, t);
         _extVolSync();                   // 音箱音量 → 滑条
     }, 16 * 1024);
 }
@@ -613,9 +797,8 @@ void AppYt::_extFail(uint32_t gen, int code)
     if (gen != _ext_gen.load()) return;  // 已被新会话取代
     _ext_on.store(false);
     _err_code.store(code);
+    _resume_s.store(_pos_base_s.load()); // 重试从原起点
     _state.store(3);
-    int exp = _cur_item;
-    _want.compare_exchange_strong(exp, -1);
     mclog::tagWarn(TAG, "ext fail: code={}", code);
 }
 
@@ -990,14 +1173,28 @@ void AppYt::_buildPlayView()
         lv_label_set_text(_play_status, "");
     }
 
-    // 进度条 + 时间 (zh24)
+    // 进度条 + 时间 (zh24); 滑条背景 = 卡色圆角槽 (track 太黑看不出边界)
+    lv_obj_t* bar_bg = lv_obj_create(_play_view);
+    if (bar_bg) {
+        lv_obj_set_size(bar_bg, SCREEN_W - 400, 26);
+        lv_obj_set_pos(bar_bg, 24, 422);
+        lv_obj_set_style_bg_color(bar_bg, lv_color_hex(C_CARD()), 0);
+        lv_obj_set_style_bg_opa(bar_bg, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(bar_bg, 13, 0);
+        lv_obj_set_style_border_width(bar_bg, 0, 0);
+        lv_obj_set_style_pad_all(bar_bg, 0, 0);
+        lv_obj_set_style_shadow_width(bar_bg, 0, 0);
+        lv_obj_clear_flag(bar_bg, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(bar_bg, LV_OBJ_FLAG_CLICKABLE);
+    }
     _play_bar = lv_slider_create(_play_view);
     if (_play_bar) {
         lv_obj_set_size(_play_bar, SCREEN_W - 400, 14);
         lv_obj_set_pos(_play_bar, 24, 428);
         lv_slider_set_range(_play_bar, 0, 1000);
-        lv_obj_set_style_bg_color(_play_bar, lv_color_hex(C_TRACK()), 0);
+        lv_obj_set_style_bg_opa(_play_bar, LV_OPA_TRANSP, LV_PART_MAIN);   // 露出底槽
         lv_obj_set_style_bg_color(_play_bar, lv_color_hex(C_ACC()), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(_play_bar, lv_color_hex(C_TEXT()), LV_PART_KNOB);
         lv_obj_set_style_pad_all(_play_bar, 6, LV_PART_KNOB);
         lv_obj_clear_flag(_play_bar, LV_OBJ_FLAG_CLICKABLE);   // 纯显示 (v1)
     }
@@ -1041,13 +1238,28 @@ void AppYt::_buildPlayView()
         lv_label_set_text(vic, LV_SYMBOL_VOLUME_MAX);
         lv_obj_set_pos(vic, 300, 536);
     }
+    // 音量条背景槽 (同进度条)
+    lv_obj_t* vol_bg = lv_obj_create(_play_view);
+    if (vol_bg) {
+        lv_obj_set_size(vol_bg, 640, 26);
+        lv_obj_set_pos(vol_bg, 356, 542);
+        lv_obj_set_style_bg_color(vol_bg, lv_color_hex(C_CARD()), 0);
+        lv_obj_set_style_bg_opa(vol_bg, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(vol_bg, 13, 0);
+        lv_obj_set_style_border_width(vol_bg, 0, 0);
+        lv_obj_set_style_pad_all(vol_bg, 0, 0);
+        lv_obj_set_style_shadow_width(vol_bg, 0, 0);
+        lv_obj_clear_flag(vol_bg, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(vol_bg, LV_OBJ_FLAG_CLICKABLE);
+    }
     _vol_slider = lv_slider_create(_play_view);
     if (_vol_slider) {
         lv_obj_set_size(_vol_slider, 640, 14);
         lv_obj_set_pos(_vol_slider, 356, 548);
         lv_slider_set_range(_vol_slider, 0, 100);
-        lv_obj_set_style_bg_color(_vol_slider, lv_color_hex(C_TRACK()), 0);
+        lv_obj_set_style_bg_opa(_vol_slider, LV_OPA_TRANSP, LV_PART_MAIN);   // 露出底槽
         lv_obj_set_style_bg_color(_vol_slider, lv_color_hex(C_ACC()), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(_vol_slider, lv_color_hex(C_TEXT()), LV_PART_KNOB);
         lv_obj_set_style_pad_all(_vol_slider, 8, LV_PART_KNOB);
         lv_obj_add_event_cb(_vol_slider, [](lv_event_t* e) {
             auto* self = static_cast<AppYt*>(lv_event_get_user_data(e));
@@ -1080,12 +1292,12 @@ void AppYt::_buildPlayView()
 
     // 停止/返回列表 (次按钮, 右侧)
     gmu::action_btn(_play_view, "列表", 1040, 500, 216, 100, [](lv_event_t* e) {
-        static_cast<AppYt*>(lv_event_get_user_data(e))->_stopPlayback();
         auto* self = static_cast<AppYt*>(lv_event_get_user_data(e));
-        if (self && self->_scr) {
-            LvglLockGuard lock;
-            self->_showView(false);
-        }
+        if (!self) return;
+        self->_stopPlayback();           // 回列表 = 彻底停 (本机断流/外放 stop)
+        self->_paused.store(false);
+        self->_resume_s.store(0);
+        if (self->_scr) self->_showView(false);   // 事件回调已在 LVGL 线程, 不再加锁
     }, this, gmu::zh30());
 }
 
@@ -1101,36 +1313,42 @@ void AppYt::_showView(bool play)
     }
 }
 
-void AppYt::_fillPlayPage(int i)
+void AppYt::_fillPlayPage(bool resume)
 {
-    if (i < 0 || i >= (int)_items.size()) return;
+    if (_cur.id.empty()) return;
     if (_play_title) {
-        lv_label_set_text(_play_title, _items[i].t.c_str());
+        lv_label_set_text(_play_title, _cur.t.c_str());
     }
     if (_play_sub) {
         char b[96];
-        snprintf(b, sizeof(b), "%s · %d:%02d", _items[i].c.c_str(),
-                 _items[i].d / 60, _items[i].d % 60);
+        snprintf(b, sizeof(b), "%s · %d:%02d", _cur.c.c_str(),
+                 _cur.d / 60, _cur.d % 60);
         lv_label_set_text(_play_sub, b);
     }
-    // 封面: 先落列表小图 (scale 284/320=228), 大图到货替换
+    // 封面: 先落列表小图 (STRETCH 拉到 640×360), 大图到货替换。
+    // 后台恢复时列表缓冲可能尚未重拉 → 占位 (下标须先判界, 曾越界读)
     if (_play_thumb) {
-        lv_image_set_src(_play_thumb,
-                         _thumb_bufs[i] ? _thumb_bufs[i] : yt_placeholder());
+        void* small = (_cur_item >= 0 && _cur_item < (int)_thumb_bufs.size())
+                          ? _thumb_bufs[_cur_item] : nullptr;
+        lv_image_set_src(_play_thumb, small ? small : (void*)yt_placeholder());
         lv_image_set_inner_align(_play_thumb, LV_IMAGE_ALIGN_STRETCH);
     }
-    if (_play_status) lv_label_set_text(_play_status, "连接中… 首次约 15-40s, 请稍候");
-    if (_play_bar) lv_slider_set_value(_play_bar, 0, LV_ANIM_OFF);
-    if (_play_el) lv_label_set_text(_play_el, "0:00");
+    if (!resume) {
+        if (_play_status) lv_label_set_text(_play_status, "连接中… 首次约 15-40s, 请稍候");
+        if (_play_bar) lv_slider_set_value(_play_bar, 0, LV_ANIM_OFF);
+        if (_play_el) lv_label_set_text(_play_el, "0:00");
+    } else {
+        _last_ui_ms = 0;                 // 下一帧 _updatePlayPage 立即按原子态刷新
+    }
     if (_play_dur) {
         char b[16];
-        snprintf(b, sizeof(b), "%d:%02d", _items[i].d / 60, _items[i].d % 60);
+        snprintf(b, sizeof(b), "%d:%02d", _cur.d / 60, _cur.d % 60);
         lv_label_set_text(_play_dur, b);
     }
     if (_vol_slider) {
-        int v = _output_sel > 0 ? 50
-                                : atoi(GetHAL()->getConfig("speaker_volume", "80").c_str());
-        if (v <= 0) v = 80;
+        // 本机: 读系统音量 (收音机同款); 外放: 先放 50, _extVolSync 回读后覆盖
+        int v = _output_sel > 0 ? 50 : xiaozhi_get_speaker_volume();
+        if (v < 0 || v > 100) v = 80;
         lv_slider_set_value(_vol_slider, v, LV_ANIM_OFF);
         if (_vol_lbl) {
             char b[16];
@@ -1139,22 +1357,22 @@ void AppYt::_fillPlayPage(int i)
         }
     }
     _refreshPlayBtn();
-    _fetchCover(i);
+    _fetchCover();
 }
 
-void AppYt::_fetchCover(int i)
+void AppYt::_fetchCover()
 {
-    if (i < 0 || i >= (int)_items.size()) return;
+    if (_cur.id.empty()) return;
+    const std::string fid = _cur.id;     // 按值捕获: worker 不碰 _items/_cur
     const auto gen = _cover_gen.fetch_add(1) + 1;
-    auto alive = _alive;
-    GetHAL()->tryRunDetached([this, alive, gen, i]() {
+    GetHAL()->tryRunDetached([this, gen, fid]() {
         auto* hal = GetHAL();
         std::string base = "http://" + hal->getConfig("svc_host", "192.168.1.200") + ":8766";
         void* buf = rgb565::alloc(COVER_W, COVER_H);
         if (!buf) return;
         char url[160];
         snprintf(url, sizeof(url), "%s/yt/thumb/%s.rgb565?w=%d&h=%d",
-                 base.c_str(), _items[i].id.c_str(), COVER_W, COVER_H);
+                 base.c_str(), fid.c_str(), COVER_W, COVER_H);
         if (!rgb565::download(url, buf)) {
             rgb565::release(buf);
             return;
@@ -1171,25 +1389,18 @@ void AppYt::_fetchCover(int i)
 
 void AppYt::_updatePlayPage()
 {
+    _extFinishCheck();
     const int st = _state.load();
-    const bool ext = _output_sel > 0 && _ext_on.load();
-    // 已播秒数: 本机 = 已喂字节 / 32000; 外放 = 墙钟 − 暂停累计
-    int64_t el_s;
-    if (ext) {
-        int64_t t = _ext_t0_ms.load();
-        el_s = t ? (yt_mono_ms() - t - _ext_pause_acc_ms.load()
-                    - (_paused.load() ? yt_mono_ms() - _ext_pause_start_ms.load() : 0))
-                   / 1000 : 0;
-        if (el_s < 0) el_s = 0;
-    } else {
-        el_s = _pcm_bytes.load() / PCM_BYTES_PER_SEC;
-    }
-    const int dur = (_cur_item >= 0 && _cur_item < (int)_items.size()) ? _items[_cur_item].d : 0;
+    // 位置: 在播 = 起播偏移 + 已播; 已停 (暂停离开/焦点被踢) = 断点
+    const int64_t el_s = (st == 1 || st == 2) ? _curPosSec()
+                                              : (_paused.load() ? _resume_s.load() : 0);
+    const int dur = _cur.d;
 
     if (_play_status) {
         char sbuf[128];
         const char* s = nullptr;
-        if (st == 1) s = _paused.load() ? "" : "连接中… 首次约 15-40s, 请稍候";
+        if (st == 0 && _paused.load()) s = "已暂停 · 按 ▶ 从断点继续";
+        else if (st == 1) s = "连接中… 首次约 15-40s, 请稍候";
         else if (st == 2) {
             if (_paused.load()) s = "已暂停";
             else {
@@ -1223,8 +1434,7 @@ void AppYt::_updatePlayPage()
         if (strcmp(lv_label_get_text(_play_el), b) != 0) lv_label_set_text(_play_el, b);
     }
 
-    // 本机暂停时 TCP 已背压, 字节不走 — 无需其它处理; 外放暂停墙钟已扣
-    (void)ext;
+    _refreshPlayBtn();                   // 状态切换 (播完/失败/被踢) 时 ▶/⏸ 跟随
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1459,9 +1669,11 @@ void AppYt::_destroyUi()
     _removeSwipeGesture();
     _detachInput();
     _closeOutputModal();      // lv_layer_top 弹窗不在 _scr 子树, 先删
-    // 停播 + 作废在途 worker (关 app = 停播, car 同语义)
-    _app_closing.store(true);
-    _stopPlayback();
+    // 后台播放 (2026-11-06, 收音机同款): 拆 UI 不停播 —— _want/_app_closing/
+    // 流任务/外放全部不动, atomics 随实例常驻; 重进 onOpen 直达播放页。
+    // 彻底停止 = 播放页 ⏸, 或主页音频焦点互踢 (开收音机踢油管)。
+    _app_closing.store(false);
+    _releaseIfPaused();       // 暂停中离开 = 停流释放 Pi 资源, 记断点
     _thumb_gen.fetch_add(1);
     _cover_gen.fetch_add(1);
     std::vector<void*> bufs = _takeImageBufs();
@@ -1607,7 +1819,7 @@ void AppYt::_startTask()
         int64_t last_attempt_ms = 0;
 
         // 失败/播完统一收尾: **绝不自动重连** (11-06 两次 Pi 卡死教训)。
-        // _want 从「这一条」CAS 回 -1 (期间用户已点别条则尊重新选择)。
+        // _want 是会话令牌: 只把「这一代」CAS 回 -1 (期间已开新会话则不动它)。
         auto finish = [&](int st, int code, const char* why) {
             yt_teardown(http);
             _err_code.store(code);
@@ -1635,7 +1847,7 @@ void AppYt::_startTask()
                 std::string fid;
                 {
                     std::lock_guard<std::mutex> lk(_mu);
-                    if (cur >= 0 && cur < (int)_items.size()) fid = _items[cur].id;
+                    fid = _play_fid;
                 }
                 if (fid.empty()) {
                     finish(3, -3, "item gone");
@@ -1655,7 +1867,11 @@ void AppYt::_startTask()
                 // 播放期关 WiFi 省电 (radio 实锤: 省电 → PCM 供不上卡顿)
                 esp_wifi_set_ps(WIFI_PS_NONE);
                 char url[192];
-                snprintf(url, sizeof(url), "%s/yt/pcm/%s", base.c_str(), fid.c_str());
+                const int t0 = _pos_base_s.load();
+                if (t0 > 0)
+                    snprintf(url, sizeof(url), "%s/yt/pcm/%s?t=%d", base.c_str(), fid.c_str(), t0);
+                else
+                    snprintf(url, sizeof(url), "%s/yt/pcm/%s", base.c_str(), fid.c_str());
                 esp_http_client_config_t hcfg = {};
                 hcfg.url          = url;
                 hcfg.buffer_size  = 4096;

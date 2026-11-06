@@ -1261,6 +1261,17 @@ bool AppRadio::streamActive() const
     return _task_running.load() && _want_station.load() >= 0;
 }
 
+void AppRadio::pauseForFocus()
+{
+    // 油管开播时踢收音机: 本机在播 → want=-1 断流 (后台语义不变, 用户回收音机
+    // 可续播); 外放在播 → cmd stop 真停音箱。ui 状态随原子量自然恢复。
+    if (_ext_on.load()) {
+        _extStop();
+        return;
+    }
+    if (_want_station.load() >= 0) _want_station.store(-1);
+}
+
 std::string AppRadio::streamInfo() const
 {
     int w = _want_station.load();
@@ -1293,6 +1304,7 @@ void AppRadio::_refreshStationUi()
 void AppRadio::_play(int idx)
 {
     if (idx < 0 || idx >= st_count()) return;
+    if (_yt_stopper) _yt_stopper();   // 音频焦点: 踢油管 (暂停/停外放)
     _last_station = idx;
     _want_station.store(idx);
     if (_output_sel > 0) { _extStart(idx); return; }   // 外部模式: 转投

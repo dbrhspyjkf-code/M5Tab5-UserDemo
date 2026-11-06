@@ -37,6 +37,8 @@ public:
 
     // ── 后台播放状态 (主页状态栏入口用; UI 关掉后流任务仍活着) ──
     bool streamActive() const;                 // 流任务在播/重连中
+    void pauseForFocus();                      // 音频焦点: 油管开播时被踢暂停 (不退出后台播放语义)
+    void setYtStopper(std::function<void()> cb) { _yt_stopper = std::move(cb); }   // 音频焦点: 开播踢油管
     std::string streamInfo() const;            // 播放中的台名, 未播返回 ""
 
     void onCreate()  override;
@@ -46,6 +48,7 @@ public:
 
 private:
     std::function<void()> _close_cb;
+    std::function<void()> _yt_stopper;
     std::function<void(bool)> _suppress;
     std::function<void(bool)> _block;
     // ── UI ──

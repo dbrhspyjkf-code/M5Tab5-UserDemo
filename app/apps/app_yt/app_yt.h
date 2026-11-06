@@ -33,6 +33,13 @@ public:
 
     void setCloseCallback(std::function<void()> cb) { _close_cb = std::move(cb); }
 
+    // 后台播放 (2026-11-06): 主页 ♪ 图标读此状态; 再点主页油管入口直达播放页。
+    // 返回空串 = 没在播。收音机同款语义 (app 常驻, atomics 跨会话存活)。
+    // 音频焦点: 开播前踢收音机 (setRadioStopper 注入, installer 接线)。
+    void setRadioStopper(std::function<void()> cb) { _radio_stopper = std::move(cb); }
+    void pauseForFocus();             // 音频焦点: 收音机开播时被踢 (暂停本机/停外放)
+    std::string nowPlayingInfo();   // 非 const: 顺带做外放播完检测 (后台时 onRunning 不跑)
+
     void onCreate()  override {}
     void onOpen()    override;
     void onRunning() override;
@@ -80,9 +87,23 @@ private:
     std::atomic<bool> _paused{false}; // 本机: 流任务停读 (TCP 背压让服务端自然暂停); 外放: MA pause
     std::atomic<bool> _app_closing{false};
     std::atomic<bool> _task_started{false};
+    // 正在播的条目 = 开播时从 _items 拷出的副本 (UI/mooncake 线程独占)。
+    // 不能直接读 _items[_cur_item]: 搜索 worker 会在另一线程整表替换 _items,
+    // 后台播放期间主页 ♪YT 也在读 —— 副本消除数据竞争与下标漂移。
+    YtItem _cur;
+    std::string _play_fid;                    // 流任务读 (受 _mu 保护)
+    std::atomic<uint32_t> _play_gen{0};       // 每次开播 +1: 同一条目重播也强制流任务重建
+    std::atomic<int> _pos_base_s{0};  // 当前流的起播偏移 (秒, ?t= 断点续播)
+    std::atomic<int> _resume_s{0};    // 已停 (暂停离开/焦点被踢/失败) 后 ▶ 的续播点
+    int64_t _pause_since_ms = 0;      // 本次暂停起点 (mooncake 线程独占; 5 分钟自动释放)
     void _startTask();
-    void _play(int i);                // 用户点条目 / 重播: 按当前输出开播
+    void _play(int i);                // 列表点条目: 从头播
+    void _startFrom(int t);           // 统一开播入口 (_cur, t 秒起, 按当前输出)
     void _stopPlayback();             // 本机 + 外放全停
+    void _releaseIfPaused();          // 暂停中离开 app: 彻底停流释放 Pi 资源, 记断点
+    int  _curPosSec() const;          // 当前播放位置 (秒)
+    int  _resumePos() const;          // 停流时记的断点 (本机扣 ring 未播部分)
+    void _extFinishCheck();           // 外放: 墙钟走到时长 → 播完态 (MA 不回报进度)
     void _togglePause();
 
     // ── 外放 (relay → Music Assistant → 音箱) ──
@@ -95,7 +116,7 @@ private:
     std::atomic<int64_t> _ext_pause_start_ms{0};
     std::atomic<int> _ext_vol{-1};            // MA 音量回读 → onRunning 落 UI
     std::atomic<bool> _ext_vol_wait{false};
-    void _extStart(int i);
+    void _extStart();
     void _extStop();
     void _extFail(uint32_t gen, int code);
     void _extVolSync();
@@ -125,8 +146,9 @@ private:
     void _buildRows();
     void _showKeyboard();
     void _hideKeyboard();
-    void _fillPlayPage(int i);
-    void _fetchCover(int i);
+    void _fillPlayPage(bool resume = false);   // 按 _cur 填; resume=后台恢复 (不覆盖状态/进度)
+    void _fetchCover();
+    void _fetchThumbs();                  // 按当前 _items 逐行拉列表缩略图
     void _updatePlayPage();                // 500ms 节流: 状态/进度/时间/按钮
     void _refreshPlayBtn();
     lv_obj_t* _scr = nullptr;
@@ -184,4 +206,5 @@ private:
     int _voice_retry = 0;              // 语音空结果自动重试一次
 
     std::function<void()> _close_cb;
+    std::function<void()> _radio_stopper;
 };

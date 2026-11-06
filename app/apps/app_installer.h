@@ -255,6 +255,13 @@ inline void on_install_apps()
 #endif
     // 后台播放: 主页状态栏音符图标读收音机流状态 (在播→显示, 点按回收音机)
     home->setNowPlayingGetter([radio]() -> std::string { return radio->streamInfo(); });
+    // 油管后台播放 (2026-11-06): 主页 ♪YT 图标状态 + 点击直达播放页
+    home->setYtNowPlayingGetter([yt]() -> std::string { return yt->nowPlayingInfo(); });
+    home->setOpenYtHandler([yt_id]() { mooncake::GetMooncake().openApp(yt_id); });
+    // 音频焦点互踢: 油管开播前暂停收音机 (开收音机踢油管见 AppRadio)
+    yt->setRadioStopper([radio]() { radio->pauseForFocus(); });
+    // 反向: 收音机开播踢油管
+    radio->setYtStopper([yt]() { yt->pauseForFocus(); });
 
 #ifndef PLATFORM_BUILD_WEB
     settings->setLoraChatAppId(lc_id);
