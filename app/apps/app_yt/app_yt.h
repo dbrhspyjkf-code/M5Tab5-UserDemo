@@ -73,7 +73,8 @@ private:
 
     // 播放状态 (worker 写原子量, UI 读)
     std::atomic<int> _want{-1};       // 目标 item 下标, -1=停
-    std::atomic<int> _state{0};       // 0 停 / 1 连接中 / 2 播放 / 3 失败
+    std::atomic<int> _state{0};       // 0 停 / 1 连接中 / 2 播放 / 3 失败 / 4 播完
+    std::atomic<int> _err_code{0};    // 失败原因: HTTP 状态码 / -1 连不上 / 其它负数=本地错误
     std::atomic<int64_t> _pcm_bytes{0};
     std::atomic<bool> _app_closing{false};
     std::atomic<bool> _task_started{false};

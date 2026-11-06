@@ -176,11 +176,23 @@ void AppYt::onRunning()
         const int dur = (_cur_item >= 0 && _cur_item < (int)_items.size()) ? _items[_cur_item].d : 0;
         const int el = (int)(bytes / PCM_BYTES_PER_SEC);
         if (_play_status) {
+            char sbuf[96];
             const char* s = nullptr;
-            if (st == 1) s = "连接中… 首次约 10-30s";
-            else if (st == 3) s = "播放失败, 点「停止」重选";
-            else if (st == 0 && bytes > 0) s = "播完了, 点「停止」回列表";
-            if (s) lv_label_set_text(_play_status, s);
+            if (st == 1) s = "连接中… 首次约 15-40s, 请稍候";
+            else if (st == 2) s = "播放中 · 仅音频";
+            else if (st == 4) s = "播完了, 点「停止」回列表";
+            else if (st == 3) {
+                const int code = _err_code.load();
+                if (code == 429) s = "服务器忙 (上一首还在准备/点太快), 稍等几秒再点";
+                else if (code == 502 || code == 503) s = "服务器取不到这个视频, 换一个试试";
+                else if (code == -1) s = "连不上服务器, 稍后再试";
+                else {
+                    snprintf(sbuf, sizeof(sbuf), "播放失败 (%d), 点「停止」返回重选", code);
+                    s = sbuf;
+                }
+            }
+            if (s && strcmp(lv_label_get_text(_play_status), s) != 0)
+                lv_label_set_text(_play_status, s);
         }
         if (_play_bar && dur > 0) {
             int pct = (int)(el * 100 / dur);
@@ -433,6 +445,7 @@ void AppYt::_play(int i)
     if (i < 0 || i >= (int)_items.size()) return;
     _cur_item = i;
     _pcm_bytes.store(0);
+    _err_code.store(0);
     _state.store(1);
     _want.store(i);
     _startTask();
@@ -451,7 +464,7 @@ void AppYt::_play(int i)
                          _thumb_bufs[i] ? _thumb_bufs[i] : yt_placeholder());
         lv_image_set_scale(_play_thumb, 256);
     }
-    if (_play_status) lv_label_set_text(_play_status, "连接中… 首次约 10-30s");
+    if (_play_status) lv_label_set_text(_play_status, "连接中… 首次约 15-40s, 请稍候");
     if (_play_bar) lv_bar_set_value(_play_bar, 0, LV_ANIM_OFF);
     _showView(true);
 }
@@ -981,6 +994,23 @@ void AppYt::_startTask()
         uint8_t odd_carry = 0;
         bool have_odd = false;
         int stall = 0;
+        int64_t last_attempt_ms = 0;
+
+        // 失败/播完统一收尾: **绝不自动重连**。2026-11-06 两次 Pi 卡死实锤: 旧版
+        // 失败后只置 cur=-1 而 _want 仍是该条 → 下一圈立即重连, 零退避 ~10 次/秒
+        // (连「播完」都会从头重播); 叠加服务端每次 500 泄漏一个 yt-dlp 孤儿 → 1h
+        // 493 次请求拖垮 Pi。现在只把 _want 从「这一条」CAS 回 -1 (期间用户若已
+        // 点了别条则尊重新选择); 重试只能由用户再次点击触发。
+        auto finish = [&](int st, int code, const char* why) {
+            yt_teardown(http);
+            _err_code.store(code);
+            _state.store(st);
+            int exp = cur;
+            _want.compare_exchange_strong(exp, -1);
+            if (st == 3) mclog::tagWarn(TAG, "pcm fail: {} (code={})", why, code);
+            else mclog::tagInfo(TAG, "pcm end: {}", why);
+            cur = -1;
+        };
 
         while (!_app_closing.load()) {
             const int want = _want.load();
@@ -990,7 +1020,7 @@ void AppYt::_startTask()
                 odd_carry = 0;
                 have_odd = false;
                 stall = 0;
-                if (cur < 0) {
+                if (cur < 0) {                   // 用户停止
                     _state.store(0);
                     vTaskDelay(pdMS_TO_TICKS(80));
                     continue;
@@ -1002,10 +1032,20 @@ void AppYt::_startTask()
                     if (cur >= 0 && cur < (int)_items.size()) fid = _items[cur].id;
                 }
                 if (fid.empty()) {
-                    _state.store(3);
-                    cur = -1;
+                    finish(3, -3, "item gone");
                     continue;
                 }
+                // 纵深防御: 两次建连最少间隔 3s (等待中仍可被停止/换选打断)
+                while (!_app_closing.load() && _want.load() == cur &&
+                       yt_mono_ms() - last_attempt_ms < 3000) {
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                }
+                if (_app_closing.load() || _want.load() != cur) {
+                    cur = -2;                    // 重新按最新选择走一圈
+                    continue;
+                }
+                last_attempt_ms = yt_mono_ms();
+
                 // 播放期关 WiFi 省电 (radio 实锤: 省电 → PCM 供不上卡顿)
                 esp_wifi_set_ps(WIFI_PS_NONE);
                 char url[192];
@@ -1014,58 +1054,57 @@ void AppYt::_startTask()
                 hcfg.url          = url;
                 hcfg.buffer_size  = 4096;
                 hcfg.buffer_size_tx = 1024;
-                // 服务端在 prepare 响应头前要完成 resolve+下载头 (冷 10-30s),
-                // 8s 必假超时 (2026-11-06 晨实锤全失败) → 40s; 起播后改 1s 感知停止
-                hcfg.timeout_ms   = 40000;
+                // 服务端建链 = resolve + 下载头 + 首段 (冷 15-60s): 给 90s, 宁可多等
+                // 也别超时后让用户狂点 (服务端单飞期间再来只会吃 429 busy)
+                hcfg.timeout_ms   = 90000;
                 http = esp_http_client_init(&hcfg);
-                bool ok = false;
+                int sc = -1, first = 0;
                 if (http && esp_http_client_open(http, 0) == ESP_OK && !_app_closing.load()) {
                     esp_http_client_fetch_headers(http);
-                    int sc = esp_http_client_get_status_code(http);
-                    int first = esp_http_client_read(http, (char*)inbuf, sizeof(inbuf));
-                    if (sc == 200 && first > 0) {
-                        ok = true;
-                        if (!s_yt_ring)
-                            s_yt_ring = (uint8_t*)heap_caps_malloc(kYtRingSize,
-                                                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                        s_yt_rs.prev = 0;
-                        s_yt_rs.phase = 0;
-                        yt_feed_pcm(inbuf, first, odd_carry, have_odd);
-                        _pcm_bytes.fetch_add(first);
-                        mclog::tagInfo(TAG, "pcm up: sc={} first={}B", sc, first);
-                    }
+                    sc = esp_http_client_get_status_code(http);
+                    if (sc == 200) first = esp_http_client_read(http, (char*)inbuf, sizeof(inbuf));
                 }
-                if (!ok) {
-                    _state.store(3);
+                if (_want.load() != cur) {       // 建链期间用户已停止/换选: 丢弃本次
                     yt_teardown(http);
-                    cur = -1;
+                    cur = -2;
                     continue;
                 }
+                if (sc != 200 || first <= 0) {
+                    finish(3, sc != 200 ? sc : -2, sc != 200 ? "http status" : "empty stream");
+                    continue;
+                }
+                if (!s_yt_ring)
+                    s_yt_ring = (uint8_t*)heap_caps_malloc(kYtRingSize,
+                                                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                if (!s_yt_ring) {                // 原版未判空: ring_push 会写空指针
+                    finish(3, -4, "ring alloc");
+                    continue;
+                }
+                s_yt_rs.prev = 0;
+                s_yt_rs.phase = 0;
+                yt_feed_pcm(inbuf, first, odd_carry, have_odd);
+                _pcm_bytes.fetch_add(first);
+                mclog::tagInfo(TAG, "pcm up: sc={} first={}B", sc, first);
                 esp_http_client_set_timeout_ms(http, 1000);   // 感知停止/断流
+                _err_code.store(0);
                 _state.store(2);
             }
 
             if (!http) { vTaskDelay(pdMS_TO_TICKS(80)); continue; }
             int n = esp_http_client_read(http, (char*)inbuf, sizeof(inbuf));
-            if (n == 0) {                    // 服务端关流 = 播完
-                _state.store(0);
-                yt_teardown(http);
-                cur = -1;
+            if (n == 0) {                        // 服务端关流 = 播完 (或被新会话踢)
+                s_yt_armed = true;
+                yt_ring_drain();                 // 环内余量 (≤4s) 播完再收尾
+                finish(4, 0, "server closed");
                 continue;
             }
             if (n < 0) {
                 if (n != -ESP_ERR_HTTP_EAGAIN) {
-                    _state.store(3);
-                    yt_teardown(http);
-                    cur = -1;
+                    finish(3, -5, "read error");
                     continue;
                 }
-                yt_ring_drain();             // 断流期环内余量续播
-                if (++stall >= 20) {         // 连续 ~20s 无数据 → 失败
-                    _state.store(3);
-                    yt_teardown(http);
-                    cur = -1;
-                }
+                yt_ring_drain();                 // 断流期环内余量续播
+                if (++stall >= 20) finish(3, -6, "stall 20s");   // 连续 ~20s 无数据
                 continue;
             }
             stall = 0;
