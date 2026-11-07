@@ -220,6 +220,7 @@ void Application::Run() {
         if (bits & MAIN_EVENT_SEND_AUDIO) {
             while (auto packet = audio_service_.PopPacketFromSendQueue()) {
                 if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
+                    ESP_LOGW(TAG, "[wake-dbg] SendAudio failed, stop pumping this batch");
                     break;
                 }
             }
@@ -854,6 +855,7 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     xiaozhi_ensure_output();
+    ESP_LOGI(TAG, "[wake-dbg] cw: ensure_output done");
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
@@ -865,23 +867,29 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
 #if CONFIG_SEND_WAKE_WORD_DATA
     // Encode and send the wake word data to the server
+    ESP_LOGI(TAG, "[wake-dbg] cw: sending wake packets");
     while (auto packet = audio_service_.PopWakeWordPacket()) {
         protocol_->SendAudio(std::move(packet));
     }
+    ESP_LOGI(TAG, "[wake-dbg] cw: wake packets sent");
     // Set the chat state to wake word detected
     protocol_->SendWakeWordDetected(wake_word);
+    ESP_LOGI(TAG, "[wake-dbg] cw: wake-word-detected sent, SetListeningMode");
     SetListeningMode(GetDefaultListeningMode());
 #else
     // Set flag to play popup sound after state changes to listening
     // (PlaySound here would be cleared by ResetDecoder in EnableVoiceProcessing)
     play_popup_on_listening_ = true;
+    ESP_LOGI(TAG, "[wake-dbg] cw: popup flag set, SetListeningMode");
     SetListeningMode(GetDefaultListeningMode());
+    ESP_LOGI(TAG, "[wake-dbg] cw: done");
 #endif
 }
 
 void Application::HandleStateChangedEvent() {
     DeviceState new_state = state_machine_.GetState();
     clock_ticks_ = 0;
+    ESP_LOGI(TAG, "[wake-dbg] StateChanged enter -> %d", (int)new_state);
 
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
@@ -905,18 +913,24 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateListening:
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
+            ESP_LOGI(TAG, "[wake-dbg] listening: status set");
 
             // Make sure the audio processor is running
             if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
                 // For auto mode, wait for playback queue to be empty before enabling voice processing
                 // This prevents audio truncation when STOP arrives late due to network jitter
                 if (listening_mode_ == kListeningModeAutoStop) {
+                    ESP_LOGI(TAG, "[wake-dbg] listening: wait playback queue empty");
                     audio_service_.WaitForPlaybackQueueEmpty();
+                    ESP_LOGI(TAG, "[wake-dbg] listening: queue empty ok");
                 }
-                
+
                 // Send the start listening command
+                ESP_LOGI(TAG, "[wake-dbg] listening: SendStartListening");
                 protocol_->SendStartListening(listening_mode_);
+                ESP_LOGI(TAG, "[wake-dbg] listening: EnableVoiceProcessing");
                 audio_service_.EnableVoiceProcessing(true);
+                ESP_LOGI(TAG, "[wake-dbg] listening: voice processing on");
             }
 
 #ifdef CONFIG_WAKE_WORD_DETECTION_IN_LISTENING
@@ -926,11 +940,13 @@ void Application::HandleStateChangedEvent() {
             // Disable wake word detection in listening mode
             audio_service_.EnableWakeWordDetection(false);
 #endif
-            
+            ESP_LOGI(TAG, "[wake-dbg] listening: wake word detection toggled");
+
             // Play popup sound after ResetDecoder (in EnableVoiceProcessing) has been called
             if (play_popup_on_listening_) {
                 play_popup_on_listening_ = false;
                 audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+                ESP_LOGI(TAG, "[wake-dbg] listening: popup sound queued");
             }
             break;
         case kDeviceStateSpeaking:
@@ -954,6 +970,7 @@ void Application::HandleStateChangedEvent() {
             // Do nothing
             break;
     }
+    ESP_LOGI(TAG, "[wake-dbg] StateChanged done (%d)", (int)new_state);
 }
 
 void Application::Schedule(std::function<void()>&& callback) {

@@ -11,14 +11,36 @@ void SonosClient::init(Config cfg)
 {
     _cfg     = cfg;
     _running = true;
-    _poll_thread = std::thread([this]() { _poll_loop(); });
+    _ensure_poll_thread();
 }
 
 void SonosClient::destroy()
 {
     _running = false;
-    if (_poll_thread.joinable()) _poll_thread.join();
+    if (_poll_exit.valid()) _poll_exit.wait();
+    _poll_thread_up = false;
     _join_workers();
+}
+
+// 与 HaClient::_ensure_poll_thread 同款：运行期线程禁止裸 std::thread
+// （低内部 RAM 时 pthread_create 失败 → 未捕获异常 → abort，2026-11-07 实锤）。
+bool SonosClient::_ensure_poll_thread()
+{
+    if (_poll_thread_up.exchange(true)) return true;
+
+    // std::function 要求可拷贝，move-only 的 promise 用 shared_ptr 装载
+    auto exit_promise = std::make_shared<std::promise<void>>();
+    _poll_exit = exit_promise->get_future();
+    bool ok = GetHAL()->tryRunDetached([this, p = exit_promise]() {
+        _poll_loop();
+        p->set_value();
+    }, 16 * 1024);
+    if (!ok) {
+        _poll_thread_up = false;
+        mclog::tagWarn(_tag, "poll thread spawn failed (low internal RAM)");
+        return false;
+    }
+    return true;
 }
 
 SonosClient::State SonosClient::getState() const
@@ -30,6 +52,7 @@ SonosClient::State SonosClient::getState() const
 void SonosClient::requestRefresh()
 {
     _refresh_requested = true;
+    _ensure_poll_thread();  // 自愈：init 时低内存 spawn 失败则借机重试
 }
 
 void SonosClient::sendCommand(const std::string& action)
@@ -58,20 +81,29 @@ void SonosClient::sendCommand(const std::string& action)
 void SonosClient::_start_worker(std::function<void()> fn)
 {
     if (!_running.load()) return;
-    std::lock_guard<std::mutex> lock(_worker_mutex);
-    _workers.emplace_back(std::move(fn));
+
+    // Spawn through the HAL so a failed thread creation degrades gracefully
+    // instead of aborting the device (low internal RAM, 2026-11-07).
+    _active_workers.fetch_add(1, std::memory_order_relaxed);
+    bool ok = GetHAL()->tryRunDetached([this, fn = std::move(fn)]() {
+        fn();
+        if (_active_workers.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            std::lock_guard<std::mutex> lock(_worker_mutex);
+            _worker_cv.notify_all();
+        }
+    });
+    if (!ok) {
+        mclog::tagWarn(_tag, "worker spawn failed (low internal RAM), skipping");
+        _active_workers.fetch_sub(1, std::memory_order_acq_rel);
+    }
 }
 
 void SonosClient::_join_workers()
 {
-    std::vector<std::thread> workers;
-    {
-        std::lock_guard<std::mutex> lock(_worker_mutex);
-        workers.swap(_workers);
-    }
-    for (auto& worker : workers) {
-        if (worker.joinable()) worker.join();
-    }
+    std::unique_lock<std::mutex> lock(_worker_mutex);
+    _worker_cv.wait_for(lock, std::chrono::seconds(5), [this]() {
+        return _active_workers.load(std::memory_order_acquire) == 0;
+    });
 }
 
 void SonosClient::_poll_loop()

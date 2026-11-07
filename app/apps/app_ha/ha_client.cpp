@@ -12,13 +12,39 @@ void HaClient::init(Config cfg)
 {
     _cfg     = cfg;
     _running = true;
-    _poll_thread = std::thread([this]() { _poll_loop(); });
+    _ensure_poll_thread();
 }
 
 void HaClient::destroy()
 {
     _running = false;
-    if (_poll_thread.joinable()) _poll_thread.join();
+    if (_poll_exit.valid()) _poll_exit.wait();
+    _poll_thread_up = false;
+}
+
+// 运行期线程禁止裸 std::thread：内部 RAM 紧张时 pthread_create 失败会抛
+// system_error，未捕获即 abort 重启（2026-11-07 一天 4 次，panic 栈解到本
+// 函数，app_player onOpen 重建 HaClient 时最易触发）。走 HAL tryRunDetached：
+// ≥16KB 栈优先落 PSRAM，失败返回 false 由调用方降级。
+bool HaClient::_ensure_poll_thread()
+{
+    if (_poll_thread_up.exchange(true)) return true;
+
+    // std::function 要求可拷贝，move-only 的 promise 用 shared_ptr 装载
+    auto exit_promise = std::make_shared<std::promise<void>>();
+    _poll_exit = exit_promise->get_future();
+    bool ok = GetHAL()->tryRunDetached([this, p = exit_promise]() {
+        _poll_loop();
+        p->set_value();
+    }, 16 * 1024);
+    if (!ok) {
+        // spawn 失败：promise 随弃置的 lambda 变 broken，_poll_exit 立即就绪，
+        // destroy() 的 wait() 不会悬挂；下次 requestRefresh() 会重试 spawn。
+        _poll_thread_up = false;
+        mclog::tagWarn(_tag, "poll thread spawn failed (low internal RAM)");
+        return false;
+    }
+    return true;
 }
 
 std::vector<HaEntity> HaClient::getStates() const
@@ -136,6 +162,7 @@ void HaClient::setFanOscillation(const std::string& entity_id, bool oscillating)
 void HaClient::requestRefresh()
 {
     _refresh_requested = true;
+    _ensure_poll_thread();  // 自愈：init 时低内存 spawn 失败则借机重试
 }
 
 void HaClient::toggle(const std::string& entity_id)

@@ -4,6 +4,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <future>
 #include <atomic>
 #include <functional>
 
@@ -78,13 +79,15 @@ private:
     Config _cfg;
     std::vector<HaEntity> _states;
     mutable std::mutex _mutex;
-    std::thread _poll_thread;
+    std::future<void> _poll_exit;
+    std::atomic<bool> _poll_thread_up{false};
     std::atomic<bool> _running{false};
     std::atomic<bool> _connected{false};
     std::atomic<bool> _fetching{false};
     std::atomic<bool> _refresh_requested{false};
     std::atomic<uint32_t> _last_update_ms{0};
 
+    bool _ensure_poll_thread();
     void _start_worker(std::function<void()> fn);
     void _poll_loop();
     void _fetch_states();

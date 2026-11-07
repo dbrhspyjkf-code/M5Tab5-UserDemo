@@ -2,7 +2,9 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
+#include <future>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -53,14 +55,17 @@ private:
     mutable std::mutex _mutex;
     State  _state;
 
-    std::thread        _poll_thread;
+    std::future<void>  _poll_exit;
+    std::atomic<bool>  _poll_thread_up{false};
     std::atomic<bool>  _running{false};
     std::atomic<bool>  _busy{false};
     std::atomic<bool>  _refresh_requested{false};
 
-    std::vector<std::thread> _workers;
-    std::mutex               _worker_mutex;
+    std::atomic<int>   _active_workers{0};
+    std::mutex         _worker_mutex;
+    std::condition_variable _worker_cv;
 
+    bool _ensure_poll_thread();
     void _poll_loop();
     void _fetch_state();
     void _start_worker(std::function<void()> fn);
