@@ -133,47 +133,60 @@ void AudioService::Start(StartMode mode) {
 
     // Input task + AFE are persistent — only spawn the first time.
     if (audio_input_task_handle_ == nullptr) {
+        BaseType_t created = pdFAIL;
 #if CONFIG_USE_AUDIO_PROCESSOR
-        xTaskCreatePinnedToCore([](void* arg) {
+        created = xTaskCreatePinnedToCore([](void* arg) {
             AudioService* audio_service = (AudioService*)arg;
             audio_service->AudioInputTask();
             vTaskDelete(NULL);
         }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
 #else
-        xTaskCreate([](void* arg) {
+        created = xTaskCreate([](void* arg) {
             AudioService* audio_service = (AudioService*)arg;
             audio_service->AudioInputTask();
             vTaskDelete(NULL);
         }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
 #endif
+        if (created != pdPASS) {
+            ESP_LOGE(TAG, "[wake-dbg] FAILED to create audio_input task (low internal RAM?)");
+        }
     }
 
     // Output + opus tasks are lazily created the first time a conversation begins.
     if (mode == StartMode::kAll) {
         /* Start the audio output task */
         if (audio_output_task_handle_ == nullptr) {
+            BaseType_t created = pdFAIL;
 #if CONFIG_USE_AUDIO_PROCESSOR
-            xTaskCreate([](void* arg) {
+            created = xTaskCreate([](void* arg) {
                 AudioService* audio_service = (AudioService*)arg;
                 audio_service->AudioOutputTask();
                 vTaskDelete(NULL);
             }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
 #else
-            xTaskCreate([](void* arg) {
+            created = xTaskCreate([](void* arg) {
                 AudioService* audio_service = (AudioService*)arg;
                 audio_service->AudioOutputTask();
                 vTaskDelete(NULL);
             }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
 #endif
+            if (created != pdPASS) {
+                ESP_LOGE(TAG, "[wake-dbg] FAILED to create audio_output task (low internal RAM?)");
+            }
         }
 
         /* Start the opus codec task */
         if (opus_codec_task_handle_ == nullptr) {
-            xTaskCreate([](void* arg) {
+            if (xTaskCreate([](void* arg) {
                 AudioService* audio_service = (AudioService*)arg;
                 audio_service->OpusCodecTask();
                 vTaskDelete(NULL);
-            }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+            }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_) != pdPASS) {
+                // 24KB 内部栈分配失败时此前是静默的——表现为语音不上传/
+                // 提示音滞留解码队列（2026-11-07 实锤）。必须留下证据。
+                opus_codec_task_handle_ = nullptr;
+                ESP_LOGE(TAG, "[wake-dbg] FAILED to create opus_codec task (24KB stack, low internal RAM?)");
+            }
         }
     }
 }
@@ -781,9 +794,14 @@ void AudioService::WaitForPlaybackQueueEmpty() {
         return service_stopped_ || (audio_decode_queue_.empty() && audio_playback_queue_.empty());
     });
     if (!drained) {
-        ESP_LOGW(TAG, "[wake-dbg] playback queue drain timeout: decode=%u playback=%u output_task=%p",
+        ESP_LOGW(TAG, "[wake-dbg] playback queue drain timeout: decode=%u playback=%u output_task=%p opus_task=%p",
                  (unsigned)audio_decode_queue_.size(), (unsigned)audio_playback_queue_.size(),
-                 (void*)audio_output_task_handle_);
+                 (void*)audio_output_task_handle_, (void*)opus_codec_task_handle_);
+        // 超时即队列已无人消费（opus 任务缺席/输出挂死）——残留的多为陈旧
+        // 音频（如开机提示音），清掉防之后 opus 任务恢复时突然外放。
+        audio_decode_queue_.clear();
+        audio_playback_queue_.clear();
+        audio_queue_cv_.notify_all();
     }
 }
 

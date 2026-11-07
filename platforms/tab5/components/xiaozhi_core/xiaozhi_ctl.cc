@@ -44,9 +44,12 @@ static void xiaozhi_task_fn(void*)
     s_initialized = true;
     s_running = true;
 
-    // Always-on: keep the input + AFE pipeline running for the life of the
-    // device. Output + opus tasks are spun up lazily when a conversation begins.
-    app.GetAudioService().Start(StartMode::kInputOnly);
+    // Always-on: keep the audio pipeline running for the life of the device.
+    // 输出+opus 任务必须在开机内存最干净时就建好：懒创建（第一次对话才
+    // Start(kAll)）撞上激活后的内部 RAM 低位，24KB 栈的 opus_codec 任务
+    // xTaskCreate 会静默失败 → 编码死（语音传不出去、服务器 60s goodbye）
+    // + 开机提示音滞留解码队列（2026-11-07 实锤 decode=18 排不空）。
+    app.GetAudioService().Start(StartMode::kAll);
 
     // Ensure the wake word is enabled even if no models were downloaded yet.
     if (!app.GetAudioService().IsAfeWakeWord()) {
