@@ -149,7 +149,7 @@ void AudioService::Start(StartMode mode) {
         }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
 #endif
         if (created != pdPASS) {
-            ESP_LOGE(TAG, "[wake-dbg] FAILED to create audio_input task (low internal RAM?)");
+            ESP_LOGE(TAG, "FAILED to create audio_input task (low internal RAM?)");
         }
     }
 
@@ -172,7 +172,7 @@ void AudioService::Start(StartMode mode) {
             }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
 #endif
             if (created != pdPASS) {
-                ESP_LOGE(TAG, "[wake-dbg] FAILED to create audio_output task (low internal RAM?)");
+                ESP_LOGE(TAG, "FAILED to create audio_output task (low internal RAM?)");
             }
         }
 
@@ -187,14 +187,14 @@ void AudioService::Start(StartMode mode) {
                     2048 * 12 * sizeof(StackType_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
             }
             if (opus_stack_ == nullptr) {
-                ESP_LOGE(TAG, "[wake-dbg] FAILED to alloc opus PSRAM stack");
+                ESP_LOGE(TAG, "FAILED to alloc opus PSRAM stack");
             } else if ((opus_codec_task_handle_ = xTaskCreateStatic([](void* arg) {
                 AudioService* audio_service = (AudioService*)arg;
                 audio_service->OpusCodecTask();
                 vTaskDelete(NULL);
             }, "opus_codec", 2048 * 12, this, 2, opus_stack_, &opus_task_cb_)) == nullptr) {
                 opus_codec_task_handle_ = nullptr;
-                ESP_LOGE(TAG, "[wake-dbg] FAILED to create opus_codec task (PSRAM stack)");
+                ESP_LOGE(TAG, "FAILED to create opus_codec task (PSRAM stack)");
             }
         }
     }
@@ -438,7 +438,7 @@ void AudioService::AudioOutputTask() {
         auto output_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - output_start).count();
         if (output_ms > 1500) {
-            ESP_LOGW(TAG, "[wake-dbg] OutputData took %d ms (output task stuck?)", (int)output_ms);
+            ESP_LOGW(TAG, "OutputData took %d ms (output task stuck?)", (int)output_ms);
         }
 
         /* Update the last output time */
@@ -782,7 +782,7 @@ void AudioService::PlaySound(const std::string_view& ogg) {
         // 提示音可弃：队列满（输出链路卡死等）时直接放弃，绝不在调用方
         // （xiaozhi 主循环 / UI 线程）里做无限背压等待——2026-11-07 卡死第二陷阱。
         if (!PushPacketToDecodeQueue(std::move(packet), false)) {
-            ESP_LOGW(TAG, "[wake-dbg] sound packet dropped (decode queue full)");
+            ESP_LOGW(TAG, "sound packet dropped (decode queue full)");
         }
     });
     demuxer->Reset();
@@ -803,7 +803,7 @@ void AudioService::WaitForPlaybackQueueEmpty() {
         return service_stopped_ || (audio_decode_queue_.empty() && audio_playback_queue_.empty());
     });
     if (!drained) {
-        ESP_LOGW(TAG, "[wake-dbg] playback queue drain timeout: decode=%u playback=%u output_task=%p opus_task=%p",
+        ESP_LOGW(TAG, "playback queue drain timeout: decode=%u playback=%u output_task=%p opus_task=%p",
                  (unsigned)audio_decode_queue_.size(), (unsigned)audio_playback_queue_.size(),
                  (void*)audio_output_task_handle_, (void*)opus_codec_task_handle_);
         // 超时即队列已无人消费（opus 任务缺席/输出挂死）——残留的多为陈旧
@@ -833,13 +833,13 @@ void AudioService::CheckAndUpdateAudioPowerState() {
     auto input_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_input_time_).count();
     auto output_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_output_time_).count();
     if (input_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->input_enabled()) {
-        ESP_LOGI(TAG, "[wake-dbg] audio power: disable input (idle %d ms)", (int)input_elapsed);
+        ESP_LOGI(TAG, "audio power: disable input (idle %d ms)", (int)input_elapsed);
         codec_->EnableInput(false);
     }
     if (output_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->output_enabled()) {
         // Keep TX clock when duplex RX is active; otherwise RX may stall on some boards.
         if (!(codec_->duplex() && codec_->input_enabled())) {
-            ESP_LOGI(TAG, "[wake-dbg] audio power: disable output (idle %d ms)", (int)output_elapsed);
+            ESP_LOGI(TAG, "audio power: disable output (idle %d ms)", (int)output_elapsed);
             codec_->EnableOutput(false);
         }
     }
