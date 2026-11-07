@@ -18,10 +18,20 @@
 
 // Single shared email cache, populated by the worker in
 // AppSettings::fetchEmail() and read by both the email sub-page and the
-// AppHome status-bar icon. Lives at file scope so the static keyword isn't
+// AppHome status bar icon. Lives at file scope so the static keyword isn't
 // required on each declaration; definitions are in app_settings.cpp.
+struct EmailFolderInfo {
+    std::string name;
+    int unread  = 0;
+    int flagged = 0;
+};
+
+// 一封邮件 (8768 email-status-server 新 schema: 每文件夹最近 30 封带
+// uid/seen/flagged — 与 car-dash 邮件面板同源同能力, 支持旗标操作)
 struct EmailItem {
-    std::string from, subject, date, preview, folder;
+    std::string uid, from, subject, date, preview, folder;
+    bool seen    = false;
+    bool flagged = false;
 };
 
 class AppSettings : public mooncake::AppAbility {
@@ -84,12 +94,23 @@ public:
     // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
     // and reads email_unread_total to decide whether to show the icon.
     static std::atomic<int>  email_unread_total;   // total, from j["count"]
+    static std::atomic<int>  email_flagged_total;  // 红旗总数, j["flagged_total"]
     static std::atomic<bool> email_updated;        // list changed → UI rebuild
     static std::atomic<bool> email_fetching;       // in-flight guard
     static std::atomic<bool> email_error;          // last fetch failed
     static std::string       email_error_msg;
-    static std::mutex        email_list_mutex;     // guards email_list
-    static std::vector<EmailItem> email_list;      // parsed folder entries
+    static std::mutex        email_list_mutex;     // guards email_list/email_folders/email_act_msg
+    static std::vector<EmailItem> email_list;      // parsed messages (全文件夹最近 30 封)
+    static std::vector<EmailFolderInfo> email_folders;  // 文件夹行 (与 email_list 同序)
+
+    // 旗标操作 (POST /api/email/action, car-dash 同款): worker 完成 →
+    // email_act_done 置位 → onRunning 反馈; 成功后 email_refetch_at 记
+    // 3.5s 重拉期限 (等服务端 _wake 秒级重轮询)。
+    static std::atomic<bool> email_act_done;
+    static std::atomic<bool> email_act_ok;
+    static std::atomic<bool> email_act_busy;
+    static std::atomic<uint32_t> email_refetch_at;  // tick 期限, 0=无
+    static std::string       email_act_msg;
 
     // Kick off an async fetch from hermes :8768. In-flight safe (the second
     // call while one is running is a no-op). Safe to call from anywhere —
@@ -151,11 +172,17 @@ private:
     std::string _unit_entry   = "1";      // amount string
     int         _unit_cat_idx = 0;        // current category
 
-    // ── Email (邮件) ────────────────────────────────────────────────────────────
+    // ── Email (邮件) — car-dash 同款: 未读/红旗 双视图 + 左右滑露操作钮 ──────────
     bool        _email_open_pending = false;  // app 未打开时点了主页邮件图标, onOpen 建屏后补开
     lv_obj_t*   _email_page   = nullptr;
-    lv_obj_t*   _email_hint   = nullptr;  // 列表区居中提示 (加载中/失败/无未读)
-    lv_obj_t*   _email_list   = nullptr;  // 未读邮件卡片列 (3 行 1 列, 参考股票卡)
+    lv_obj_t*   _email_hint   = nullptr;  // 列表区居中提示 (加载中/失败/空)
+    lv_obj_t*   _email_list   = nullptr;  // 卡片列 (横向滑动的行 + 文件夹组头)
+    lv_obj_t*   _email_tabs[2] = {nullptr, nullptr};  // 未读 / 红旗 页签
+    lv_obj_t*   _email_status_lbl = nullptr;  // "N 封未读" / 操作反馈 (car-dash tool-sub)
+    int         _email_view = 0;              // 0=未读 1=红旗 (car-dash mailView)
+    lv_obj_t*   _mail_swipe_open = nullptr;   // 当前滑开的行 (单开原则, car-dash mailSwipeOpen)
+    uint32_t    _mail_swipe_ts = 0;           // 滑开时刻 → 5s 无操作自动合拢
+    lv_timer_t* _mail_swipe_timer = nullptr;  // 500ms 巡检自动合拢
 
     void _buildToolsPage();
     void _openCalculator();
@@ -178,8 +205,22 @@ private:
 
     void _openEmail();
     void _closeEmail();
-    void _emailRefresh();  // UI thread: rebuild lv_list from email_list
+    void _emailRefresh();       // UI thread: 按当前视图重建列表
     void _emailShowError();
+    void _emailSetView(int v);  // 页签切换 → 重渲染
+    void _emailUpdateTabs();    // 页签 on 态高亮
+    void _emailCollapseSwipe(bool anim);  // 合拢滑开的行 (切视图/操作后/5s 超时)
+    lv_obj_t* _emailMakeRow(const EmailItem& m);  // 一行 = 左右操作区 + 可横滑面卡
+    void _emailRefreshGo();     // 刷新钮: 先 /refresh 唤醒再拉状态
+    void _emailRunAction(const std::string& act, const std::string& folder,
+                         const std::string& uid, const char* tip);
+    static void _emailTab_cb(lv_event_t* e);
+    static void _emailRefreshBtn_cb(lv_event_t* e);
+    static void _emailAct_cb(lv_event_t* e);
+    static void _emailActDel_cb(lv_event_t* e);      // MailActCtx 释放
+    static void _emailRowPressed_cb(lv_event_t* e);  // 按新行时合拢旧行 (单开)
+    static void _emailRowScroll_cb(lv_event_t* e);   // SCROLL_END 吸合 + 单开登记
+    static void _emailSwipeTimer_cb(lv_timer_t* e);
 
     void _installSwipeGesture();
     void _removeSwipeGesture();
