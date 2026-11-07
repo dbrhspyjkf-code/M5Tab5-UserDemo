@@ -15,6 +15,9 @@
 #include <thread>
 #include <nlohmann/json.hpp>
 #ifndef PLATFORM_BUILD_DESKTOP
+#include <esp_heap_caps.h>
+#endif
+#ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
 #elif defined(PLATFORM_BUILD_WEB)
 #include "web_fonts.h"
@@ -2163,6 +2166,42 @@ void AppSettings::_closeEmail()
     if (_tools_page) lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_HIDDEN);
 }
 
+// ── 邮件 JSON 解析落 PSRAM ─────────────────────────────────────────────
+// nlohmann DOM 的每个节点/字符串都是小块 malloc, 默认全落内部堆 (<16KB 的
+// PSRAM 阈值): 307 封 × 7 字段 ≈ 4K 个节点, 每分钟 churn 两次把内部堆搅碎
+// (27KB 空闲分不出 181B → WiFi SDIO 断言, 2026-11-07)。自定义分配器让
+// 节点+字符串整棵落 PSRAM; 解析出的紧凑 email_list 仍走内部堆 (常驻小体量)。
+#ifdef PLATFORM_BUILD_DESKTOP
+// 桌面/网页构建: 直接用标准 json (web 定义 DESKTOP 一并排除, 不为冻结的
+// web 端引入任何新代码)
+using PsramString = std::string;
+using PsramJson   = nlohmann::json;
+#else
+template <class T>
+struct PsramAllocator
+{
+    using value_type = T;
+    PsramAllocator() noexcept = default;
+    template <class U> PsramAllocator(const PsramAllocator<U>&) noexcept {}
+    T* allocate(std::size_t n)
+    {
+        auto* p = static_cast<T*>(heap_caps_malloc(n * sizeof(T),
+                                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!p) throw std::bad_alloc();
+        return p;
+    }
+    void deallocate(T* p, std::size_t) noexcept { heap_caps_free(p); }
+};
+template <class T, class U>
+bool operator==(const PsramAllocator<T>&, const PsramAllocator<U>&) noexcept { return true; }
+template <class T, class U>
+bool operator!=(const PsramAllocator<T>&, const PsramAllocator<U>&) noexcept { return false; }
+
+using PsramString = std::basic_string<char, std::char_traits<char>, PsramAllocator<char>>;
+using PsramJson   = nlohmann::basic_json<std::map, std::vector, PsramString, bool,
+                                         std::int64_t, std::uint64_t, double, PsramAllocator>;
+#endif
+
 void AppSettings::fetchEmail()
 {
     if (email_fetching.exchange(true)) {
@@ -2177,17 +2216,38 @@ void AppSettings::fetchEmail()
     // 用 svc_host 而不是 ha_host:
     // ha_host 指向 HA 主机, svc_host 才是 hermes + email-status-server 跑的机器.
     std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");   // 默认与主页一致 (模拟器无 NVS 配置)
-    std::string url  = "http://" + host + ":8768/api/email/status";
+    // 申请端按自身内存决定拿多少: Tab5 小内存 → 每夹最多 30 封 + 预览截 100 字
+    // (服务端不带参数=全量, car-dash/浏览器端不受影响)。
+    std::string url  = "http://" + host + ":8768/api/email/status?limit=30&preview=100";
     mclog::tagInfo(_tag, "emailFetch: url={}", url);
 
-    bool spawned = GetHAL()->tryRunDetached([url]() {
+    // ETag 协商: 内容没变服务端回 304 空 body, 下载+解析整个跳过
+    // (轮询 99% 走这条路, 内部堆 churn 归零)。仅 worker 线程读写,
+    // 由 email_fetching 闸串行化。
+    static std::string s_etag;
+    std::vector<std::pair<std::string, std::string>> req_headers;
+    if (!s_etag.empty()) req_headers.emplace_back("If-None-Match", s_etag);
+
+    bool spawned = GetHAL()->tryRunDetached([url, req_headers]() {
         mclog::tagInfo(_tag, "emailFetch: worker started");
-        auto resp = GetHAL()->httpGet(url);
+        auto resp = GetHAL()->httpGet(url, req_headers);
         mclog::tagInfo(_tag, "emailFetch: httpGet done, ok={}, status={}, body_len={}",
                        resp.ok, resp.status, resp.body.size());
+        if (resp.status == 304) {
+            mclog::tagInfo(_tag, "emailFetch: unchanged (304), skip parse");
+            return;
+        }
         if (resp.ok) {
+            for (auto& [k, v] : resp.resp_headers) {
+                std::string lk = k;
+                for (auto& c : lk) c = (char)std::tolower((unsigned char)c);
+                if (lk == "etag" && !v.empty()) { s_etag = v; break; }
+            }
             try {
-                auto j = nlohmann::json::parse(resp.body);
+                auto j = PsramJson::parse(resp.body);
+                auto to_std = [](const PsramString& s) {
+                    return std::string(s.data(), s.size());
+                };
                 std::lock_guard<std::mutex> lk(email_list_mutex);
                 email_list.clear();
                 email_folders.clear();
@@ -2206,7 +2266,7 @@ void AppSettings::fetchEmail()
                     int total = 0;
                     for (const auto& f : j["folders"]) {
                         if (!f.is_object()) continue;
-                        std::string name = f.value("name", std::string("?"));
+                        std::string name = to_std(f.value("name", PsramString("?")));
                         if (is_draft(name)) continue;  // 跳过草稿箱
                         EmailFolderInfo fi;
                         fi.name    = name;
@@ -2220,11 +2280,11 @@ void AppSettings::fetchEmail()
                             for (const auto& m : f["messages"]) {
                                 if (!m.is_object()) continue;
                                 EmailItem it;
-                                it.uid     = m.value("uid", std::string());
-                                it.from    = m.value("from", std::string("?"));
-                                it.subject = m.value("subject", std::string("(无主题)"));
-                                it.date    = m.value("date", std::string());
-                                it.preview = m.value("preview", std::string());
+                                it.uid     = to_std(m.value("uid", PsramString()));
+                                it.from    = to_std(m.value("from", PsramString("?")));
+                                it.subject = to_std(m.value("subject", PsramString("(无主题)")));
+                                it.date    = to_std(m.value("date", PsramString()));
+                                it.preview = to_std(m.value("preview", PsramString()));
                                 it.folder  = name;
                                 it.seen    = m.value("seen", false);
                                 it.flagged = m.value("flagged", false);
@@ -2232,9 +2292,9 @@ void AppSettings::fetchEmail()
                             }
                         } else {
                             EmailItem it;   // 兜底条目无 uid → 不可旗标操作
-                            it.from    = f.value("latest_from", std::string("?"));
-                            it.subject = f.value("latest_subject", std::string("(无主题)"));
-                            it.preview = f.value("latest_preview", std::string());
+                            it.from    = to_std(f.value("latest_from", PsramString("?")));
+                            it.subject = to_std(f.value("latest_subject", PsramString("(无主题)")));
+                            it.preview = to_std(f.value("latest_preview", PsramString()));
                             it.folder  = name;
                             email_list.push_back(std::move(it));
                         }
@@ -2261,7 +2321,7 @@ void AppSettings::fetchEmail()
                                    changed ? "" : ", unchanged");
                 } else {
                     email_error.store(true);
-                    email_error_msg = j.value("error", std::string("未知错误"));
+                    email_error_msg = to_std(j.value("error", PsramString("未知错误")));
                 }
             } catch (const std::exception& ex) {
                 mclog::tagWarn(_tag, "email parse failed: {}", ex.what());

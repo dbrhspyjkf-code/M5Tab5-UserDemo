@@ -41,11 +41,31 @@ static int _http_get_timeout_ms(const std::string& url)
     return _is_slow_hermes_url(url) ? 30000 : 10000;
 }
 
+// 事件回调共享上下文: body 之外还要收响应头 (ETag 等协商头)
+typedef struct {
+    std::string* body;
+    std::vector<std::pair<std::string, std::string>>* resp_headers;
+} _http_ctx_t;
+
 static esp_err_t _http_event_handler(esp_http_client_event_t* evt)
 {
-    auto* body = static_cast<std::string*>(evt->user_data);
-    if (evt->event_id == HTTP_EVENT_ON_DATA && body && evt->data_len > 0)
-        body->append(static_cast<const char*>(evt->data), evt->data_len);
+    auto* ctx = static_cast<_http_ctx_t*>(evt->user_data);
+    if (evt->event_id == HTTP_EVENT_ON_HEADER && ctx && ctx->resp_headers) {
+        ctx->resp_headers->emplace_back(evt->header_key, evt->header_value ? evt->header_value : "");
+        return ESP_OK;
+    }
+    if (evt->event_id == HTTP_EVENT_ON_DATA && ctx && ctx->body && evt->data_len > 0) {
+        // 首块数据时按 Content-Length 一次性预留: std::string 逐块 append 会
+        // 扩容 realloc 多次, 小容量落内部堆, 每次轮询都给内部堆留一串碎片
+        // (2026-11-07 邮件 158KB×2/分钟把内部堆搅碎实锤)。一次性的大块
+        // (>16KB) 经 CONFIG_SPIRAM_USE_MALLOC 直接落 PSRAM。
+        if (ctx->body->capacity() < 4096) {
+            int64_t len = esp_http_client_get_content_length(evt->client);
+            if (len > (int64_t)ctx->body->capacity() && len <= 8 * 1024 * 1024)
+                ctx->body->reserve((size_t)len + 1);
+        }
+        ctx->body->append(static_cast<const char*>(evt->data), evt->data_len);
+    }
     return ESP_OK;
 }
 
@@ -56,11 +76,12 @@ hal::HalBase::HttpResponse_t HalEsp32::httpGet(
     HttpResponse_t resp;
     std::string body;
     body.reserve(2048);
+    _http_ctx_t ctx{&body, &resp.resp_headers};
 
     esp_http_client_config_t config = {};
     config.url            = url.c_str();
     config.event_handler  = _http_event_handler;
-    config.user_data      = &body;
+    config.user_data      = &ctx;
     config.timeout_ms     = _http_get_timeout_ms(url);
     config.buffer_size    = 2048;
     config.buffer_size_tx = 512;
@@ -97,12 +118,13 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPost(
     HttpResponse_t resp;
     std::string body;
     body.reserve(512);
+    _http_ctx_t ctx{&body, &resp.resp_headers};
 
     esp_http_client_config_t config = {};
     config.url            = url.c_str();
     config.method         = HTTP_METHOD_POST;
     config.event_handler  = _http_event_handler;
-    config.user_data      = &body;
+    config.user_data      = &ctx;
     // ssq/ticket: 服务端多方向×逐行×3变换 OCR 全管线 >10s, 60s 上限
     config.timeout_ms     = _is_claude_gateway_url(url) ? 240000
                           : (url.find("/api/ssq/ticket") != std::string::npos ? 60000 : 10000);
@@ -140,11 +162,13 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPut(
     std::string body;
     body.reserve(512);
 
+    _http_ctx_t ctx{&body, &resp.resp_headers};
+
     esp_http_client_config_t config = {};
     config.url            = url.c_str();
     config.method         = HTTP_METHOD_PUT;
     config.event_handler  = _http_event_handler;
-    config.user_data      = &body;
+    config.user_data      = &ctx;
     config.timeout_ms     = 10000;
     config.buffer_size    = 1024;
     config.buffer_size_tx = 2048;
@@ -215,7 +239,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPostKeepAlive(
 
     for (int attempt = 0; attempt < 2; ++attempt) {
         if (!s_keepalive_client) {
-            esp_http_client_config_t config = {};
+    esp_http_client_config_t config = {};
             config.url               = url.c_str();
             config.method            = HTTP_METHOD_POST;
             config.event_handler     = _keepalive_event_handler;

@@ -437,6 +437,8 @@ public:
         int status = 0;
         std::string body;
         bool ok = false;
+        // 响应头捕获（HTTP_EVENT_ON_HEADER 全量收）——ETag 等协商头用
+        std::vector<std::pair<std::string, std::string>> resp_headers;
     };
     virtual HttpResponse_t httpGet(const std::string& url,
         const std::vector<std::pair<std::string, std::string>>& headers = {})
