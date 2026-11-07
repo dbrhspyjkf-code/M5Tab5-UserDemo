@@ -409,7 +409,15 @@ void AudioService::AudioOutputTask() {
             codec_->EnableOutput(true);
         }
 
+        // 卡死探针：正常一次 I2S 写毫秒级；若断电重开把链路弄挂，
+        // OutputData 会长时间不返回——量化出来（2026-11-07 唤醒卡死排查）。
+        auto output_start = std::chrono::steady_clock::now();
         codec_->OutputData(task->pcm);
+        auto output_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - output_start).count();
+        if (output_ms > 1500) {
+            ESP_LOGW(TAG, "[wake-dbg] OutputData took %d ms (output task stuck?)", (int)output_ms);
+        }
 
         /* Update the last output time */
         last_output_time_ = std::chrono::steady_clock::now();
@@ -749,7 +757,11 @@ void AudioService::PlaySound(const std::string_view& ogg) {
         packet->frame_duration = 60;
         packet->payload.resize(size);
         std::memcpy(packet->payload.data(), data, size);
-        PushPacketToDecodeQueue(std::move(packet), true);
+        // 提示音可弃：队列满（输出链路卡死等）时直接放弃，绝不在调用方
+        // （xiaozhi 主循环 / UI 线程）里做无限背压等待——2026-11-07 卡死第二陷阱。
+        if (!PushPacketToDecodeQueue(std::move(packet), false)) {
+            ESP_LOGW(TAG, "[wake-dbg] sound packet dropped (decode queue full)");
+        }
     });
     demuxer->Reset();
     demuxer->Process(buf, size);
@@ -762,9 +774,17 @@ bool AudioService::IsIdle() {
 
 void AudioService::WaitForPlaybackQueueEmpty() {
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-    audio_queue_cv_.wait(lock, [this]() { 
-        return service_stopped_ || (audio_decode_queue_.empty() && audio_playback_queue_.empty()); 
+    // 有限等待：本函数在 xiaozhi 主循环里调用；若输出链路卡死（如闲置断电
+    // 后 OutputData 挂住、队列无人排空），无限等 = 整个主循环冻结（2026-11-07
+    // 实锤：唤醒后卡死 17 分钟直到崩机）。超时放行让会话继续。
+    bool drained = audio_queue_cv_.wait_for(lock, std::chrono::seconds(3), [this]() {
+        return service_stopped_ || (audio_decode_queue_.empty() && audio_playback_queue_.empty());
     });
+    if (!drained) {
+        ESP_LOGW(TAG, "[wake-dbg] playback queue drain timeout: decode=%u playback=%u output_task=%p",
+                 (unsigned)audio_decode_queue_.size(), (unsigned)audio_playback_queue_.size(),
+                 (void*)audio_output_task_handle_);
+    }
 }
 
 void AudioService::ResetDecoder() {
@@ -786,11 +806,13 @@ void AudioService::CheckAndUpdateAudioPowerState() {
     auto input_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_input_time_).count();
     auto output_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_output_time_).count();
     if (input_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->input_enabled()) {
+        ESP_LOGI(TAG, "[wake-dbg] audio power: disable input (idle %d ms)", (int)input_elapsed);
         codec_->EnableInput(false);
     }
     if (output_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->output_enabled()) {
         // Keep TX clock when duplex RX is active; otherwise RX may stall on some boards.
         if (!(codec_->duplex() && codec_->input_enabled())) {
+            ESP_LOGI(TAG, "[wake-dbg] audio power: disable output (idle %d ms)", (int)output_elapsed);
             codec_->EnableOutput(false);
         }
     }
