@@ -1,5 +1,6 @@
 #include "audio_service.h"
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <cstring>
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
@@ -177,15 +178,23 @@ void AudioService::Start(StartMode mode) {
 
         /* Start the opus codec task */
         if (opus_codec_task_handle_ == nullptr) {
-            if (xTaskCreate([](void* arg) {
+            // 24KB 栈用 PSRAM（xTaskCreateStatic）：24KB 内部栈会压垮 boot
+            // 内存（WiFi SDIO 断言蓝屏循环，2026-11-07）；栈缓冲常驻成员，
+            // Stop 后再 Start 可复用。PSRAM 栈 CONFIG_SPIRAM_ALLOW_STACK_
+            // EXTERNAL_MEMORY=y 已开（hal 的 ≥16KB pthread 同款先例）。
+            if (opus_stack_ == nullptr) {
+                opus_stack_ = (StackType_t*)heap_caps_malloc(
+                    2048 * 12 * sizeof(StackType_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            }
+            if (opus_stack_ == nullptr) {
+                ESP_LOGE(TAG, "[wake-dbg] FAILED to alloc opus PSRAM stack");
+            } else if ((opus_codec_task_handle_ = xTaskCreateStatic([](void* arg) {
                 AudioService* audio_service = (AudioService*)arg;
                 audio_service->OpusCodecTask();
                 vTaskDelete(NULL);
-            }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_) != pdPASS) {
-                // 24KB 内部栈分配失败时此前是静默的——表现为语音不上传/
-                // 提示音滞留解码队列（2026-11-07 实锤）。必须留下证据。
+            }, "opus_codec", 2048 * 12, this, 2, opus_stack_, &opus_task_cb_)) == nullptr) {
                 opus_codec_task_handle_ = nullptr;
-                ESP_LOGE(TAG, "[wake-dbg] FAILED to create opus_codec task (24KB stack, low internal RAM?)");
+                ESP_LOGE(TAG, "[wake-dbg] FAILED to create opus_codec task (PSRAM stack)");
             }
         }
     }

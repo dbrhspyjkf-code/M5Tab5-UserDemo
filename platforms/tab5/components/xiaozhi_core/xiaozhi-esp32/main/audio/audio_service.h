@@ -187,6 +187,11 @@ private:
     TaskHandle_t audio_input_task_handle_ = nullptr;
     TaskHandle_t audio_output_task_handle_ = nullptr;
     TaskHandle_t opus_codec_task_handle_ = nullptr;
+    // opus 任务 24KB 栈放 PSRAM（xTaskCreateStatic）：内部 RAM 放不下它，
+    // 开机即建会把 boot 内存压到 WiFi SDIO 断言红线（2026-11-07 蓝屏重启循环）。
+    // CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y 已开。
+    StackType_t* opus_stack_ = nullptr;
+    StaticTask_t opus_task_cb_;
     std::mutex audio_queue_mutex_;
     std::condition_variable audio_queue_cv_;
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_decode_queue_;
