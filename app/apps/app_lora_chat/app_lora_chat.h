@@ -65,6 +65,13 @@ private:
     std::atomic<bool>       _uart_ok{false};
     std::atomic<bool>       _task_running{false};
 
+    // 收发诊断 (2026-11-08): "等待 C6L" 卡住时区分「模块没电/接线错」vs
+    // 「模块在说话但不是透传文本」(出厂 Meshtastic 固件 Grove 口是 GPS 角色不回数据).
+    std::atomic<uint32_t>   _rx_bytes{0};      // UART 累计收字节数
+    std::atomic<uint32_t>   _tx_bytes{0};      // UART 累计发字节数
+    std::atomic<bool>       _rx_started{false}; // 是否收到过首包 (诊断气泡只弹一次)
+    int64_t                 _last_diag_us = 0; // 等待期计数刷新节流
+
     // helpers
     void _buildUi();
     void _addBubble(bool is_user, const std::string& text);

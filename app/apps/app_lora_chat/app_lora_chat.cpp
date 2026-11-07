@@ -84,6 +84,19 @@ void AppLoraChat::onOpen()
 
 void AppLoraChat::onRunning()
 {
+    // 等待期诊断 (2026-11-08): 每 2s 刷新收发计数. RX 恒 0 = 模块没回任何数据
+    // (没电/接线反/出厂固件不走透传); RX 在涨 = 模块在说话, 看首包诊断气泡.
+    if (_uart_ok && !_rx_started.load()) {
+        int32_t now_ms = lv_tick_get();
+        if (now_ms - _last_diag_us > 2000) {
+            _last_diag_us = now_ms;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "等待 C6L… RX:%uB TX:%uB",
+                     (unsigned)_rx_bytes.load(), (unsigned)_tx_bytes.load());
+            _setStatus(buf, C_STATUS_NG());
+        }
+    }
+
     // Drain incoming LoRa messages from the UART RX queue
     std::queue<std::string> pending;
     {
@@ -246,6 +259,7 @@ void AppLoraChat::_buildUi()
     // Hint
     _addBubble(false, "等待连接 C6L 模块...\n" \
                "接线: PORT.A → Unit C6L Grove\n" \
+               "状态栏 RX 恒 0 = 模块没回数据\n" \
                "上拨退出");
 }
 
@@ -326,6 +340,7 @@ void AppLoraChat::_sendMessage()
     if (_uart_ok) {
         std::string line = msg + "\n";
         uart_write_bytes((uart_port_t)UART_PORT_NUM, line.c_str(), line.size());
+        _tx_bytes += line.size();
     } else {
         _addBubble(false, "[C6L 未连接]");
     }
@@ -405,10 +420,44 @@ void AppLoraChat::_uartRxTask(void* arg)
     line_buf.reserve(256);
     uint8_t ch;
 
+    // 首包快照: 前 24 字节十六进制回显到聊天区+日志 —— 不建立连接也能识别模块
+    // 在说什么 (透传文本 / Meshtastic protobuf 0x94 0xC3 开头 / NMEA '$GP' /
+    // 乱码=波特率不符). 出厂 Meshtastic 固件 Grove 口是 GPS 角色, 恒静默.
+    uint8_t snap[24] = {0};
+    int  snap_n      = 0;
+    uint32_t snap_last_ms = 0;
+
+    auto flush_snap = [&]() {
+        if (snap_n <= 0) return;
+        char hex[8 * 24 + 8] = {0};
+        int off = 0;
+        for (int i = 0; i < snap_n; i++)
+            off += snprintf(hex + off, sizeof(hex) - off, "%02X ", snap[i]);
+        mclog::tagInfo(TAG, "first rx {}B: {}", snap_n, hex);
+        {
+            std::lock_guard<std::mutex> lk(self->_rx_mutex);
+            self->_rx_queue.push(std::string("[首包 ") + std::to_string(snap_n)
+                                 + "B] " + hex);
+        }
+        self->_rx_started.store(true);
+        snap_n = 0;
+    };
+
     while (self->_task_running) {
         int n = uart_read_bytes((uart_port_t)UART_PORT_NUM, &ch, 1,
                                 20 / portTICK_PERIOD_MS);
-        if (n <= 0) continue;
+        if (n <= 0) {
+            // 字节流断档 100ms 就把已收的快照先回显 (单字节 ping 也能看到)
+            if (snap_n > 0 && lv_tick_elaps(snap_last_ms) > 100) flush_snap();
+            continue;
+        }
+
+        self->_rx_bytes += n;
+        if (!self->_rx_started.load()) {
+            snap[snap_n++] = ch;
+            snap_last_ms   = lv_tick_get();
+            if (snap_n >= (int)sizeof(snap)) flush_snap();
+        }
 
         if (ch == '\n' || ch == '\r') {
             if (!line_buf.empty()) {
