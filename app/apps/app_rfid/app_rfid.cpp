@@ -1989,7 +1989,13 @@ void AppRfid::_bgTaskEntry(void* arg)
 // 后台路径的硬件初始化: 与 _hwInit 相同的引脚/芯片流程, 但不碰任何 UI 对象
 bool AppRfid::_bgHwInit()
 {
-    static int s_fail_n = 0;  // 连败计数 (成功归零); 驱动 EXT5V 断电升级节奏
+    static int s_fail_n = 0;  // 连败计数; 成功归零; 驱动 EXT5V 断电升级节奏
+
+    // 排障仪表 (2026-11-08): 每次 bg 重建硬件 (bb_bus_recover + I2C 探测 + 芯片
+    // init 全打在共用线上) 都可见 —— LoRa 会话中 C6L 收到周期性垃圾字节时,
+    // 对照此行时间戳即可证实/排除 NFC 侧来源
+    mclog::tagInfo(TAG, "bg hw init (porta_req={} ui_owns={})",
+                   (int)s_porta_requested.load(), (int)s_ui_owns.load());
 
     // 共线排障: C6L boot 打印 / LoRa 会话残留的假时钟会把从机卡死 (见 bb_bus_recover)
     bb_bus_recover();

@@ -363,6 +363,14 @@ void AppLoraChat::_sendMessage()
 #ifndef PLATFORM_BUILD_DESKTOP
     if (_uart_ok) {
         std::string line = msg + "\n";
+        // 排障仪表 (2026-11-08): C6L 侧曾收到与发送内容不符的 255B 周期垃圾,
+        // 实际写上 UART 的字节逐一可见, 供两端逐字节对照定案
+        char hex[3 * 96 + 1] = {0};
+        int off = 0;
+        for (size_t k = 0; k < line.size() && off < (int)sizeof(hex) - 4; k++)
+            off += snprintf(hex + off, sizeof(hex) - off, "%02X ",
+                            (unsigned char)line[k]);
+        mclog::tagInfo(TAG, "tx {}B: {}", line.size(), hex);
         uart_write_bytes((uart_port_t)UART_PORT_NUM, line.c_str(), line.size());
         _tx_bytes += line.size();
     } else {
@@ -390,7 +398,10 @@ void AppLoraChat::_uartInit()
     cfg.parity     = UART_PARITY_DISABLE;
     cfg.stop_bits  = UART_STOP_BITS_1;
     cfg.flow_ctrl  = UART_HW_FLOWCTRL_DISABLE;
-    cfg.source_clk = UART_SCLK_DEFAULT;
+    // 2026-11-08: 时钟源钉死 XTAL —— DEFAULT(PLL 派生)期间 C6L 曾收到字节被
+    // ~32x 拉长的周期性垃圾 (9B 消息变 288B), 疑发送窗口时钟树被动; XTAL 是
+    // 唯一不受任何调压/切频路径影响的基准.
+    cfg.source_clk = UART_SCLK_XTAL;
 
     esp_err_t err;
     err = uart_driver_install((uart_port_t)UART_PORT_NUM, UART_BUF_SIZE * 2, 0, 0, nullptr, 0);
@@ -560,6 +571,41 @@ void AppLoraChat::_sendBtn_cb(lv_event_t* e)
 // 语音输入 (2026-11-08): 大麦克风模式 + 回调交付. 用 requestVoiceText 而非
 // requestMicInput(textarea) —— LoRa Chat 退出时会拆 UI, 回调在交付时校验
 // 屏幕归属, 退出路径再 cancelVoiceText, 杜绝向已删 textarea 写入.
+// STT 结果尾部常带非 UTF-8 脏字节 (实测 '你好\x80\x82'), 清洗后再入框 ——
+// 脏字节随消息上 UART 是 C6L 侧乱码的变量之一, 必须排除.
+static std::string lora_utf8_sanitize(const std::string& in)
+{
+    std::string out;
+    out.reserve(in.size());
+    size_t i = 0;
+    while (i < in.size()) {
+        unsigned char c = (unsigned char)in[i];
+        int len;
+        if ((c & 0x80) == 0x00) len = 1;
+        else if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        else { i++; continue; }                  // 非法起始字节: 丢
+        if (i + (size_t)len > in.size()) break;  // 截断尾序列: 丢
+        bool ok = true;
+        for (int k = 1; k < len; k++) {
+            if (((unsigned char)in[i + k] & 0xC0) != 0x80) { ok = false; break; }
+        }
+        // 过短编码 (C0/C1) 与 UTF-16 代理区不是合法 UTF-8
+        if (ok && len == 2 && c < 0xC2) ok = false;
+        if (ok && len == 3) {
+            uint32_t cp = ((uint32_t)c & 0x0F) << 12
+                        | ((uint32_t)(unsigned char)in[i + 1] & 0x3F) << 6
+                        | ((uint32_t)(unsigned char)in[i + 2] & 0x3F);
+            if (cp >= 0xD800 && cp <= 0xDFFF) ok = false;
+        }
+        if (!ok) { i++; continue; }
+        out.append(in, i, (size_t)len);
+        i += (size_t)len;
+    }
+    return out;
+}
+
 void AppLoraChat::_micBtn_cb(lv_event_t* e)
 {
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -567,7 +613,8 @@ void AppLoraChat::_micBtn_cb(lv_event_t* e)
     AppVoiceInput::requestVoiceText([self](const std::string& text) {
         if (!text.empty() && self && self->_input && self->_scr
             && lv_screen_active() == self->_scr) {
-            lv_textarea_add_text(self->_input, text.c_str());
+            std::string clean = lora_utf8_sanitize(text);
+            if (!clean.empty()) lv_textarea_add_text(self->_input, clean.c_str());
         }
     });
 #endif
