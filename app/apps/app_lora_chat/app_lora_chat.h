@@ -43,7 +43,11 @@ private:
     static constexpr int UART_PORT_NUM = 2;   // UART_NUM_2
     static constexpr int UART_RX_GPIO  = 53;
     static constexpr int UART_TX_GPIO  = 54;
-    static constexpr int UART_BAUD     = 115200;
+    // 2026-11-08 115200→9600: 共用线 (Hub 上与 NFC I2C 同两根) 曾间歇出现
+    // 22ms 周期波形把 9B 消息打成 288B 垃圾 (与内容无关, XTAL 钉死仍复现,
+    // 判定台面级 EMI/电气瞬态). 9600 每位 104µs=12 倍位宽, 瞬态只占位零头;
+    // LoRa 聊天带宽毫无损失 (SF12 空口一条 3-6s 才是瓶颈). C6L 侧同步改.
+    static constexpr int UART_BAUD     = 9600;
     static constexpr int UART_BUF_SIZE = 512;
 
     std::function<void()> _close_cb;
