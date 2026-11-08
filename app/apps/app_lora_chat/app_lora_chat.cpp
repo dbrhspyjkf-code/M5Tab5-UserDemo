@@ -391,6 +391,19 @@ void AppLoraChat::_uartInit()
         return;
     }
 
+    // 共线共存 (2026-11-08): TX 改开漏 —— 说话拉低、说完松手靠上拉回高.
+    // 推挽 TX 闲置会把白线(G54=NFC SCL)顶死, NFC 的 I2C 无法拉低应答;
+    // 上拉由 NFC 板载 4.7k + 本侧内部上拉提供, 115200 无损.
+    // gpio_config 只改垫层输出类型, 不动 UART 矩阵路由.
+    gpio_config_t io_od = {};
+    io_od.pin_bit_mask = (1ULL << UART_TX_GPIO);
+    io_od.mode         = GPIO_MODE_OUTPUT_OD;
+    io_od.pull_up_en   = GPIO_PULLUP_ENABLE;
+    io_od.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_od.intr_type    = GPIO_INTR_DISABLE;
+    gpio_config(&io_od);
+    gpio_pullup_en((gpio_num_t)UART_RX_GPIO);
+
     _uart_ok = true;
     _task_running = true;
     xTaskCreate(_uartRxTask, "lora_rx", 3072, this, 5, nullptr);
