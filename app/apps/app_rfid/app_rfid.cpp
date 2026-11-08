@@ -67,6 +67,43 @@ static constexpr gpio_num_t BB_SCL = GPIO_NUM_54;
 static inline void bb_delay() { esp_rom_delay_us(10); }  // ~50kHz, 留足上拉上升时间
 static inline void bb_idle()  { gpio_set_level(BB_SDA, 1); gpio_set_level(BB_SCL, 1); }
 
+// ── I2C 总线恢复 (2026-11-08 实锤) ─────────────────────────────────────────
+// PORT A 上 NFC(I2C) 与 C6L(UART) 经 Hub 共线: LoRa 会话期间 Tab5 UART TX 的
+// 字节流打在 NFC 的 SCL(白=G54) 上像假时钟、C6L 的 TX 打在 SDA(黄=G53) 上,
+// ST25R3916 从机状态机会锁死在「已见 START 等时钟/时钟拉伸拉低 SCL」→ 之后
+// 探测 0x50 永远 no ACK (C6L 上电 boot 打印同理, 这也是开机 bg reader ready
+// 迟迟不出现的原因). 标准 Linux 式恢复: SCL 打 9 个脉冲放行卡在读/拉伸中的
+// 从机, 再补一个 STOP. OD 写 0 必赢(线与), 从机拉低时写 1 无效 —— 脉冲照样
+// 送达. 无从机时纯空操作, 幂等无害.
+static void bb_bus_recover()
+{
+    gpio_reset_pin(BB_SDA);
+    gpio_reset_pin(BB_SCL);
+    gpio_config_t io = {};
+    io.pin_bit_mask = (1ULL << BB_SDA) | (1ULL << BB_SCL);
+    io.mode         = GPIO_MODE_INPUT_OUTPUT_OD;
+    io.pull_up_en   = GPIO_PULLUP_ENABLE;
+    io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io.intr_type    = GPIO_INTR_DISABLE;
+    gpio_config(&io);
+    gpio_set_level(BB_SDA, 1);
+    gpio_set_level(BB_SCL, 1);
+    esp_rom_delay_us(10);
+
+    for (int i = 0; i < 9; i++) {           // ≤9 个时钟放行任何卡死的单字节读
+        gpio_set_level(BB_SCL, 0);
+        esp_rom_delay_us(10);
+        gpio_set_level(BB_SCL, 1);
+        esp_rom_delay_us(10);
+        if (gpio_get_level(BB_SDA) && gpio_get_level(BB_SCL)) break;  // 双线已回高, 提前收工
+    }
+    // 补 STOP: SDA 低→高 (SCL 保持高), 让停在 START 态的从机归位
+    gpio_set_level(BB_SDA, 0);
+    esp_rom_delay_us(10);
+    gpio_set_level(BB_SDA, 1);
+    esp_rom_delay_us(10);
+}
+
 // 释放 SCL 后等待从机放手 (clock stretching), 带超时
 static bool bb_wait_scl_high()
 {
@@ -235,6 +272,9 @@ void AppRfid::_hwInit()
     s_ui_owns.store(true);
     AppEmailLed::setPortAOwnedByApp(true);
     vTaskDelay(pdMS_TO_TICKS(60));
+
+    // 共线排障: 先放行可能被 LoRa 会话 UART 字节流卡死的从机 (见 bb_bus_recover 注释)
+    bb_bus_recover();
 
     // 软 I2C 初始化: SDA=53, SCL=54, 开漏 + 内部上拉 (Unit NFC 板上还有外部上拉)
     gpio_reset_pin(BB_SDA);
@@ -1946,6 +1986,9 @@ void AppRfid::_bgTaskEntry(void* arg)
 // 后台路径的硬件初始化: 与 _hwInit 相同的引脚/芯片流程, 但不碰任何 UI 对象
 bool AppRfid::_bgHwInit()
 {
+    // 共线排障: C6L boot 打印 / LoRa 会话残留的假时钟会把从机卡死 (见 bb_bus_recover)
+    bb_bus_recover();
+
     gpio_reset_pin(BB_SDA);
     gpio_reset_pin(BB_SCL);
     gpio_config_t io = {};
@@ -1960,7 +2003,12 @@ bool AppRfid::_bgHwInit()
     bb_start();
     bool ack = bb_write((uint8_t)(NFC_I2C_ADDR << 1));
     bb_stop();
-    if (!ack) return false;
+    if (!ack) {
+        static int s_fail_n = 0;  // 每 ~30s 一条 (2s 重试 × 15), 避免刷屏
+        if (s_fail_n++ % 15 == 0)
+            mclog::tagWarn(TAG, "bg init: no ACK from 0x50 (第{}次)", s_fail_n);
+        return false;
+    }
     if (!_stInit()) return false;
     if (!_stConfigNfcA()) return false;
     return true;
