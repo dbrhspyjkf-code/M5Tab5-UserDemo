@@ -15,6 +15,7 @@ static const char* TAG = "rfid";
 #include <esp_heap_caps.h>                      // 后台任务周期性堆监控
 #include <driver/gpio.h>                          // GPIO53/54 bitbang
 #include <rom/ets_sys.h>                          // esp_rom_delay_us
+#include <bsp/m5stack_tab5.h>                     // bsp_set_ext_5v_en (总线楔死时的 Hub 断电升级)
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nlohmann/json.hpp>                    // 解析 HA /api/states
@@ -293,7 +294,9 @@ void AppRfid::_hwInit()
     bool ack = bb_write((uint8_t)(NFC_I2C_ADDR << 1));
     bb_stop();
     if (!ack) {
-        mclog::tagWarn(TAG, "no ACK from 0x{:02X}", NFC_I2C_ADDR);
+        // 电平诊断 (与 bg 路径同款): 双高=模块不在/芯片楔死, SDA 低=线被按住, SCL 低=时钟拉伸楔死
+        mclog::tagWarn(TAG, "no ACK from 0x{:02X} (电平 SDA={} SCL={})", NFC_I2C_ADDR,
+                       gpio_get_level(BB_SDA), gpio_get_level(BB_SCL));
         _setStatus("● 未检测到读卡器", false);
         _setMsg("请把 Unit NFC 插到 PORT A (红色 Grove 口)", C_DIM());
         return;
@@ -1986,6 +1989,8 @@ void AppRfid::_bgTaskEntry(void* arg)
 // 后台路径的硬件初始化: 与 _hwInit 相同的引脚/芯片流程, 但不碰任何 UI 对象
 bool AppRfid::_bgHwInit()
 {
+    static int s_fail_n = 0;  // 连败计数 (成功归零); 驱动 EXT5V 断电升级节奏
+
     // 共线排障: C6L boot 打印 / LoRa 会话残留的假时钟会把从机卡死 (见 bb_bus_recover)
     bb_bus_recover();
 
@@ -2004,11 +2009,16 @@ bool AppRfid::_bgHwInit()
     bool ack = bb_write((uint8_t)(NFC_I2C_ADDR << 1));
     bb_stop();
     if (!ack) {
-        static int s_fail_n = 0;  // 每 ~30s 一条 (2s 重试 × 15), 避免刷屏
-        if (s_fail_n++ % 15 == 0)
-            mclog::tagWarn(TAG, "bg init: no ACK from 0x50 (第{}次)", s_fail_n);
+        // 电平诊断: 双高=模块不在/推挽顶线(如 C6L UART TX 闲置顶高 SDA, NFC 从此
+        // 无法拉低应答 —— 同 IR RX 顶死 SCL 的物理冲突, 软件救不了); SDA 低=线被
+        // 按住; SCL 低=时钟拉伸楔死. 恢复脉冲/断电对「推挽顶线」都无效, 只重试.
+        if (s_fail_n % 15 == 0)
+            mclog::tagWarn(TAG, "bg init: no ACK (第{}次, 电平 SDA={} SCL={})",
+                           s_fail_n + 1, gpio_get_level(BB_SDA), gpio_get_level(BB_SCL));
+        s_fail_n++;
         return false;
     }
+    s_fail_n = 0;
     if (!_stInit()) return false;
     if (!_stConfigNfcA()) return false;
     return true;
