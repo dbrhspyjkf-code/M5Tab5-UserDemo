@@ -56,6 +56,7 @@ private:
     lv_obj_t*   _input       = nullptr;
     lv_obj_t*   _input_row   = nullptr;   // 输入框+发送键所在行 (弹键盘时整体上移)
     lv_obj_t*   _send_btn    = nullptr;
+    lv_obj_t*   _mic_btn     = nullptr;   // 语音输入按钮 (设备端)
     lv_obj_t*   _keyboard    = nullptr;   // 屏幕虚拟键盘 (无实体键盘时弹出)
     lv_indev_t* _gesture_indev = nullptr;
 
@@ -88,6 +89,7 @@ private:
     void _removeSwipeGesture();
     static void _gesture_cb(lv_event_t* e);
     static void _sendBtn_cb(lv_event_t* e);
+    static void _micBtn_cb(lv_event_t* e);
 
     static const lv_font_t* _font();
 };

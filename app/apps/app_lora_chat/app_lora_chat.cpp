@@ -10,6 +10,7 @@
 #include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "../app_voice_input/app_voice_input.h"
 #else
 #include <thread>
 #include <chrono>
@@ -55,9 +56,12 @@ void AppLoraChat::onOpen()
         _removeSwipeGesture();
         _uartDeinit();
         AppEmailLed::setPortAOwnedByApp(false);
+        AppVoiceInput::cancelVoiceText();   // 防悬挂回调写已删 textarea
+        AppVoiceInput::dismissMicButton();
         lv_obj_delete(_scr);
         _scr = nullptr;
         _status_lbl = _chat_scroll = _chat_panel = _input = _send_btn = nullptr;
+        _mic_btn = nullptr;
         _input_row = _keyboard = nullptr;
     }
 
@@ -135,12 +139,15 @@ void AppLoraChat::onClose()
 
     // 把 PORT A 交还给后台邮件通知器.
     AppEmailLed::setPortAOwnedByApp(false);
+    AppVoiceInput::cancelVoiceText();
+    AppVoiceInput::dismissMicButton();
 
     if (_scr) {
         lv_obj_delete(_scr);
         _scr = nullptr;
     }
     _status_lbl = _chat_scroll = _chat_panel = _input = _send_btn = nullptr;
+    _mic_btn = nullptr;
     _input_row = _keyboard = nullptr;
 }
 
@@ -226,6 +233,23 @@ void AppLoraChat::_buildUi()
     lv_obj_add_event_cb(_input, [](lv_event_t* e) {
         static_cast<AppLoraChat*>(lv_event_get_user_data(e))->_showKeyboard();
     }, LV_EVENT_CLICKED, this);
+
+    // 语音输入按钮 (2026-11-08): 大麦克风模式, 识别文字回调填入输入框 ——
+    // 中文输入的主路径 (LoRa 链路是透明字节流, UTF-8 中文直接过).
+#ifndef PLATFORM_BUILD_DESKTOP
+    _mic_btn = lv_button_create(input_row);
+    lv_obj_set_size(_mic_btn, 130, 90);
+    lv_obj_set_style_bg_color(_mic_btn, lv_color_hex(C_SEND()), 0);
+    lv_obj_set_style_radius(_mic_btn, 12, 0);
+    lv_obj_set_style_border_width(_mic_btn, 0, 0);
+    lv_obj_set_style_margin_left(_mic_btn, 12, 0);
+    lv_obj_add_event_cb(_mic_btn, _micBtn_cb, LV_EVENT_CLICKED, this);
+    lv_obj_t* mic_lbl = lv_label_create(_mic_btn);
+    lv_label_set_text(mic_lbl, "语音");
+    lv_obj_set_style_text_font(mic_lbl, _font(), 0);
+    lv_obj_set_style_text_color(mic_lbl, lv_color_hex(C_TEXT()), 0);
+    lv_obj_center(mic_lbl);
+#endif
 
     // Send button
     _send_btn = lv_button_create(input_row);
@@ -499,6 +523,8 @@ void AppLoraChat::_gesture_cb(lv_event_t* e)
         // (否则 setPortAOwnedByApp(true) 永不复位, worker 永久让位).
         self->_uartDeinit();
         AppEmailLed::setPortAOwnedByApp(false);
+        AppVoiceInput::cancelVoiceText();
+        AppVoiceInput::dismissMicButton();
         if (self->_close_cb) self->_close_cb();
     }
 }
@@ -529,4 +555,20 @@ void AppLoraChat::_removeSwipeGesture()
 void AppLoraChat::_sendBtn_cb(lv_event_t* e)
 {
     static_cast<AppLoraChat*>(lv_event_get_user_data(e))->_sendMessage();
+}
+
+// 语音输入 (2026-11-08): 大麦克风模式 + 回调交付. 用 requestVoiceText 而非
+// requestMicInput(textarea) —— LoRa Chat 退出时会拆 UI, 回调在交付时校验
+// 屏幕归属, 退出路径再 cancelVoiceText, 杜绝向已删 textarea 写入.
+void AppLoraChat::_micBtn_cb(lv_event_t* e)
+{
+#ifndef PLATFORM_BUILD_DESKTOP
+    auto* self = static_cast<AppLoraChat*>(lv_event_get_user_data(e));
+    AppVoiceInput::requestVoiceText([self](const std::string& text) {
+        if (!text.empty() && self && self->_input && self->_scr
+            && lv_screen_active() == self->_scr) {
+            lv_textarea_add_text(self->_input, text.c_str());
+        }
+    });
+#endif
 }
