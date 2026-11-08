@@ -551,6 +551,31 @@ void bsp_reset_tp()
     clrbit(write_buf[1], 4);
     i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
     vTaskDelay(100 / portTICK_PERIOD_MS);
+
+    /* 白屏加固 (2026-11-08): USB-JTAG 热复位(刷机后自动重启)后偶发面板无信号
+     * —— 背光亮但 DSI 视频链路未建立 = 纯白屏; 实体复位键/上电则正常。
+     * 单脉冲复位对热复位后的面板状态不够, 加第二脉冲 + 加长稳定窗. */
+    write_buf[0] = PI4IO_REG_OUT_SET;
+    i2c_master_transmit_receive(i2c_dev_handle_pi4ioe1, write_buf, 1, read_buf, 1, I2C_MASTER_TIMEOUT_MS);
+    write_buf[0] = PI4IO_REG_OUT_SET;
+    write_buf[1] = read_buf[0];
+    clrbit(write_buf[1], 4);
+    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    i2c_master_transmit_receive(i2c_dev_handle_pi4ioe1, write_buf, 1, read_buf, 1, I2C_MASTER_TIMEOUT_MS);
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    write_buf[1] = read_buf[0];
+    setbit(write_buf[1], 4);
+    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    i2c_master_transmit_receive(i2c_dev_handle_pi4ioe1, write_buf, 1, read_buf, 1, I2C_MASTER_TIMEOUT_MS);
+    write_buf[0] = PI4IO_REG_IO_DIR;
+    write_buf[1] = read_buf[0];
+    clrbit(write_buf[1], 4);
+    i2c_master_transmit(i2c_dev_handle_pi4ioe1, write_buf, 2, I2C_MASTER_TIMEOUT_MS);
+    vTaskDelay(250 / portTICK_PERIOD_MS);
 }
 
 //==================================================================================

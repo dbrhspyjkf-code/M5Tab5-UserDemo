@@ -111,6 +111,11 @@ void HalEsp32::init()
             default: break;
         }
         mclog::tagWarn(_tag, "RESET REASON: {} ({})", why, (int)esp_reset_reason());
+        // (2026-11-08) 白屏案注记: USB 域复位 (刷机后 esptool 自动重启) 后 MIPI-DSI
+        // 面板偶发无信号=白屏 (显示日志全正常但面板没视频)。**esp_restart 软复位
+        // 救不回** (数字域复位不清 DSI PHY 模拟域状态), **实体复位键 (EN) 3/3 恢复**
+        // —— 刷机后白屏的标准恢复=按一下复位键。已试: 双脉冲 LCD_RST 加固(BSP)、
+        // USB 域复位检测+软复位自愈, 均无效; 深挖需 DSI PHY 域级复位(无公开 API)。
         // 串口 watcher 在设备重启时丢头部日志 — 10s 后 (watcher 已接上) 重打
         static char s_rr[64] = "?";
         snprintf(s_rr, sizeof(s_rr), "%s (%d)", why, (int)esp_reset_reason());
