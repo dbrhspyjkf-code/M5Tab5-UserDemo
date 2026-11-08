@@ -632,12 +632,24 @@ void radio_task_fn(TaskCtx ctx)
 void AppRadio::_startTask()
 {
     if (_task_running.load()) return;
+    int64_t now = lv_tick_get();
+    if (now < _spawn_retry_at) return;   // 上次孵化失败, 退避窗口内不重复试
     _task_running.store(true);
-    GetHAL()->tryRunDetached([this]() {
+    // 16KB → hal 走 PSRAM 栈, 免疫内部 RAM 碎片期(2026-11-08: 8KB 内部栈
+    // 在碎片窗口 pthread_create ENOMEM, 旗标卡 true 致收音机永久哑火)
+    bool ok = GetHAL()->tryRunDetached([this]() {
         radio_task_fn({&_want_station, &_app_closing, &_state,
                        &_lvl_b, &_lvl_m, &_lvl_t, &_ext_on, &_np_kick});
         _task_running.store(false);
-    });
+    }, 16384);
+    if (!ok) {
+        // 孵化失败必须复位旗标并退避重试: 否则 _task_running 卡 true,
+        // 之后按播放/重开 app 全被上面的守卫静默吞掉(实锤一次失败永久哑火)
+        _task_running.store(false);
+        _spawn_retry_at = now + 2000;
+        if (_want_station.load() >= 0) _state.store(3);   // 用户在等播 → UI 出失败态
+        mclog::tagWarn(TAG, "stream task spawn failed, retry in 2s");
+    }
 }
 
 #else   // 桌面模拟器: 无流引擎

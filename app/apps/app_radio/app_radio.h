@@ -93,6 +93,7 @@ private:
     std::atomic<bool> _app_closing{false};
     std::atomic<int>  _state{0};           // 0待机 1连接中 2播放中 3失败
     std::atomic<bool> _task_running{false};
+    int64_t _spawn_retry_at = 0;           // 孵化失败退避截止(lv_tick ms), 仅 LVGL 线程访问
     int _ui_state    = -1;                 // 上次刷进 UI 的值（变化才更新）
     int _ui_station  = -1;
     int _last_station = 0;                 // 暂停/失败后 播放键恢复用
