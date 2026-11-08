@@ -14,8 +14,6 @@
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <esp_log.h>
 #include <esp_timer.h>
-#include "../app_email_led/app_email_led.h"     // setPortAOwnedByApp (PORT A 仲裁)
-#include "../utils/font5x7.h"                   // 5x7 点阵字体 (原 app_unit_puzzle, 灯阵移除后挪 utils)
 #endif
 
 static const char* TAG = "stocks";
@@ -114,13 +112,6 @@ void AppStocks::onOpen()
     mclog::tagInfo(TAG, "opened");
     if (_scr) _destroyUi();  // 幂等: 清掉上次遗留的 UI (后台收尾后重开)
     _app_open.store(true);
-#ifndef PLATFORM_BUILD_DESKTOP
-    // 独占 PORT A: 先让后台邮件通知器释放 RMT/GPIO53, 再由本 app 接管.
-    AppEmailLed::setPortAOwnedByApp(true);
-    if (_stripInit() != ESP_OK) {
-        mclog::tagWarn(TAG, "led init failed, app continues without ticker");
-    }
-#endif
     _buildUi();
     _fetchStocksAsync();  // 首次拉取
 }
@@ -152,12 +143,12 @@ void AppStocks::onRunning()
     }
     // mooncake 给每个已装 app 每轮都调 onRunning, 且 openApp(其他) 不会把本 app
     // 切到 GoClose → onClose 永不触发. 所以这里自己判断是否还在前台 (LVGL 活动屏
-    // 是不是本 app 的 _scr). 一旦被切到后台 (上拨返回 / 唤醒词 / 屏保 等任何方式),
-    // 就停 ticker + 交还 PORT A, 否则 LED 会一直放股票. 重新打开时 onOpen 会重建.
+    // 是不是本 app 的 _scr). 一旦被切到后台 (上拨返回 / 唤醒词 / 屏保 等任何方式)
+    // 就收尾拆 UI. 重新打开时 onOpen 会重建.
     bool foreground = (_scr != nullptr && lv_screen_active() == _scr);
     if (!foreground) {
         if (_app_open.load()) {   // 刚从前台被切走 → 收尾一次
-            mclog::tagInfo(TAG, "lost foreground, releasing LED");
+            mclog::tagInfo(TAG, "lost foreground, cleaning up");
             _teardownHardware();
             _destroyUi();
         }
@@ -211,12 +202,9 @@ void AppStocks::_requestExitOnce()
 
 void AppStocks::_teardownHardware()
 {
-    _app_open.store(false);  // 先关门: 在途 worker 完成后不会再 _startTicker
-#ifndef PLATFORM_BUILD_DESKTOP
-    _stopTicker();
-    _stripDeinit();
-    AppEmailLed::setPortAOwnedByApp(false);  // 交还给后台邮件通知器
-#endif
+    // 2026-11-08 LED ticker/PORT A 仲裁随灯阵功能一并移除, 只剩关门:
+    // 在途 fetch worker 完成后不会再碰已拆 UI.
+    _app_open.store(false);
 }
 
 // 指数卡片长按 → 走势图 (行情未到时标题只带名称+代码)
@@ -333,7 +321,7 @@ void AppStocks::_ensureCards(int n)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  涨跌配色 (UI 详情卡 + LED ticker 共用)
+//  涨跌配色 (UI 详情卡用)
 // ════════════════════════════════════════════════════════════════════════════
 uint32_t AppStocks::_chgColor(float chg)
 {
@@ -1748,9 +1736,6 @@ void AppStocks::_parseStocksJson(const std::string& body)
         }
         mclog::tagInfo(TAG, "fetched {} items", n);
         _refreshUiFromItems();
-#ifndef PLATFORM_BUILD_DESKTOP
-        if (n > 0 && _app_open.load()) _startTicker();
-#endif
     } catch (const std::exception& e) {
         {
             std::lock_guard<std::mutex> lk(_items_mu);
@@ -1763,198 +1748,3 @@ void AppStocks::_parseStocksJson(const std::string& body)
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  LED strip (ESP-only) — 5 块 8x8 串成 40x8, 每块物理 90° 顺时针补偿
-// ════════════════════════════════════════════════════════════════════════════
-#ifndef PLATFORM_BUILD_DESKTOP
-esp_err_t AppStocks::_stripInit()
-{
-    std::lock_guard<std::mutex> lk(_strip_mu);
-    if (_strip) return ESP_OK;
-
-    led_strip_config_t strip_cfg = {};
-    strip_cfg.strip_gpio_num         = LED_DIN_GPIO;
-    strip_cfg.max_leds               = LED_N;
-    strip_cfg.led_model              = LED_MODEL_WS2812;
-    strip_cfg.color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB;
-
-    led_strip_rmt_config_t rmt_cfg = {};
-    rmt_cfg.resolution_hz     = 10 * 1000 * 1000;
-    rmt_cfg.mem_block_symbols = 96;
-
-    esp_err_t err = led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &_strip);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "led_strip init failed (will retry): %s", esp_err_to_name(err));
-        _strip = nullptr;
-        return err;
-    }
-    led_strip_clear(_strip);
-    return ESP_OK;
-}
-
-void AppStocks::_stripDeinit()
-{
-    std::lock_guard<std::mutex> lk(_strip_mu);
-    if (_strip) {
-        led_strip_clear(_strip);
-        led_strip_refresh(_strip);
-        led_strip_del(_strip);
-        _strip = nullptr;
-    }
-}
-
-// 逻辑 (x,y) → 灯带 index. 与「灯阵」app 完全一致: 面板物理逆时针偏转 90°,
-// 顺时针补偿 → panel*64 + lx*8 + (7-y).
-int AppStocks::_xy2i(int x, int y)
-{
-    int panel = x / LED_PANEL;
-    int lx    = x % LED_PANEL;
-    return panel * (LED_PANEL * LED_PANEL) + lx * LED_PANEL + (LED_PANEL - 1 - y);
-}
-
-void AppStocks::_setPixelXY(int x, int y, uint8_t r, uint8_t g, uint8_t b)
-{
-    if (!_strip || x < 0 || x >= LED_W || y < 0 || y >= LED_H) return;
-    // 全局亮度缩放 (与灯阵/邮件 LED 一致). 之前漏了, 导致全功率刺眼.
-    r = (r * _brightness) >> 8;
-    g = (g * _brightness) >> 8;
-    b = (b * _brightness) >> 8;
-    led_strip_set_pixel(_strip, _xy2i(x, y), r, g, b);
-}
-
-// ── ticker 任务 ──────────────────────────────────────────────────────────────
-void AppStocks::_startTicker()
-{
-    if (!_app_open.load()) return;  // app 已退出, 不要再抢 PORT A
-    if (_ticker_running.load()) return;
-    if (!_strip && _stripInit() != ESP_OK) return;
-    _ticker_index = 0;
-    _ticker_seg_state = 0;
-    _ticker_seg_start_ms = mono_ms();
-    _ticker_seg_dur_ms = 0;  // 首段待按文字宽计算
-    _ticker_done.store(false);
-    _ticker_running.store(true);
-    xTaskCreate(_tickerTask, "stocks-led", 8192, this, 1, &_ticker_task);
-    mclog::tagInfo(TAG, "ticker started");
-}
-
-void AppStocks::_stopTicker()
-{
-    if (!_ticker_running.load()) return;
-    _ticker_running.store(false);
-    int waited = 0;
-    while (!_ticker_done.load() && waited < 200) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        waited += 10;
-    }
-    if (!_ticker_done.load() && _ticker_task) {
-        mclog::tagWarn(TAG, "ticker did not stop in 200ms, forcing delete");
-        vTaskDelete(_ticker_task);
-    }
-    _ticker_task = nullptr;
-    {
-        std::lock_guard<std::mutex> lk(_strip_mu);
-        if (_strip) { led_strip_clear(_strip); led_strip_refresh(_strip); }
-    }
-    mclog::tagInfo(TAG, "ticker stopped");
-}
-
-void AppStocks::_tickerTask(void* arg)
-{
-    auto* self = static_cast<AppStocks*>(arg);
-    int64_t last_frame_us = 0;
-    while (self->_ticker_running.load()) {
-        int64_t now_us = esp_timer_get_time();
-        if (last_frame_us != 0 && now_us - last_frame_us < 33 * 1000) {
-            vTaskDelay(pdMS_TO_TICKS(5));
-            continue;
-        }
-        last_frame_us = now_us;
-        self->_renderTickerFrame(now_us / 1000);
-    }
-    self->_ticker_done.store(true);
-    vTaskDelete(nullptr);
-}
-
-// 每只股票一条信息一次性滚出来: "代码 现价 涨跌幅%" (例 "688018 122.50 -0.50%").
-// 整条单一颜色: 涨=纯红, 跌=纯绿, 平=灰 (中国惯例). LED 用纯色 (不用 LCD 的祖母绿,
-// 那个带蓝分量在灯上发蓝). 完整从右向左滚一遍 → 暂停黑屏 → 下一只.
-void AppStocks::_renderTickerFrame(int64_t now_ms)
-{
-    size_t n;
-    {
-        std::lock_guard<std::mutex> lk(_items_mu);
-        n = _items.size();
-    }
-    if (n == 0 || !_strip) return;
-
-    int64_t seg_t = now_ms - _ticker_seg_start_ms;
-
-    // 一只股票一个周期 = 滚完一遍 + 暂停. 周期到 → 下一只.
-    if (_ticker_seg_dur_ms > 0 && seg_t >= _ticker_seg_dur_ms + STOCK_PAUSE_MS) {
-        _ticker_index = (int)((_ticker_index + 1) % n);
-        _ticker_seg_start_ms = now_ms; seg_t = 0; _ticker_seg_dur_ms = 0;
-    }
-
-    StockItem s;
-    {
-        std::lock_guard<std::mutex> lk(_items_mu);
-        s = _items[_ticker_index % n];
-    }
-    // LED 纯色: 涨 红, 跌 绿, 平 灰. (祖母绿/绯红留给 LCD; 灯上用纯三原色才不偏色)
-    uint8_t r, g, b;
-    if (s.chg > 0.01f)       { r = 255; g = 0;   b = 0;   }  // 涨 → 纯红
-    else if (s.chg < -0.01f) { r = 0;   g = 255; b = 0;   }  // 跌 → 纯绿
-    else                     { r = 120; g = 120; b = 120; }  // 平 → 灰
-
-    snprintf(_ticker_buf, sizeof(_ticker_buf), "%s %.2f %+.2f%%",
-             s.code.c_str(), s.price, s.chg);
-    int text_len = (int)strlen(_ticker_buf);
-    int total_w  = text_len * CELL - CHAR_GAP;
-
-    // 首帧 (或刚切股票) 按文字宽算出滚完一遍要多久.
-    if (_ticker_seg_dur_ms == 0) {
-        _ticker_seg_dur_ms = (int64_t)(total_w + LED_W) * SCROLL_MS_PER_PX;
-    }
-
-    // 滚完之后的暂停段: 黑屏 (等下一帧周期到切下一只).
-    if (seg_t >= _ticker_seg_dur_ms) {
-        std::lock_guard<std::mutex> lk(_strip_mu);
-        for (int i = 0; i < LED_N; i++) led_strip_set_pixel(_strip, i, 0, 0, 0);
-        led_strip_refresh(_strip);
-        return;
-    }
-
-    std::lock_guard<std::mutex> lk(_strip_mu);
-    // 注意: 不能用 led_strip_clear() —— 它内部 memset+refresh 会把灯先全灭再刷,
-    // 与本帧末尾的 refresh 形成「黑一下→画字」两次刷新 = 闪. 改为只清缓冲不刷新,
-    // 整帧只在最后 led_strip_refresh 一次.
-    for (int i = 0; i < LED_N; i++) led_strip_set_pixel(_strip, i, 0, 0, 0);
-
-    int x_start;
-    if (total_w <= LED_W) {
-        x_start = (LED_W - total_w) / 2;  // 放得下: 居中静止
-    } else {
-        int scroll_px = (int)(seg_t / SCROLL_MS_PER_PX);  // 0 → total_w+LED_W, 不 wrap
-        x_start = LED_W - scroll_px;                        // 从右进、向左滚一遍
-    }
-
-    for (int ci = 0; ci < text_len; ci++) {
-        int cx = x_start + ci * CELL;
-        if (cx + CHAR_W <= 0) continue;
-        if (cx >= LED_W) break;
-        char c = _ticker_buf[ci];
-        if (c >= 'a' && c <= 'z') c -= ('a' - 'A');
-        if (c < 0x20 || c > 0x7E) c = '?';
-        const uint8_t* bmp = font5x7[c - 0x20];
-        for (int col = 0; col < CHAR_W; col++) {
-            int x = cx + col;
-            if (x < 0 || x >= LED_W) continue;
-            for (int row = 0; row < CHAR_H; row++) {
-                if (bmp[row] & (1 << (4 - col))) _setPixelXY(x, row, r, g, b);
-            }
-        }
-    }
-    led_strip_refresh(_strip);
-}
-#endif  // !PLATFORM_BUILD_DESKTOP

@@ -13,7 +13,6 @@
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <led_strip.h>
 #endif
 
 class AppStocks : public mooncake::AppAbility {
@@ -131,25 +130,10 @@ private:
     static uint32_t C_HEADER()   { return theme::cur().card[1]; }
     static uint32_t C_TEXT()     { return theme::cur().text_hi; }
     static uint32_t C_DIM()      { return theme::cur().text_dim; }
-    // 中国 A 股惯例: 涨=红, 跌=绿 (与西方相反). LCD 表格 + LED ticker 共用.
+    // 中国 A 股惯例: 涨=红, 跌=绿 (与西方相反). LCD 表格用.
     static uint32_t C_UP()       { return theme::cur().danger; }  // 涨 → 红
     static uint32_t C_DOWN()     { return theme::cur().ok; }      // 跌 → 绿
     static uint32_t C_FLAT()     { return theme::cur().text_dim; }  // 平 → 灰
-
-    // ── LED ────────────────────────────────────────────────────────────
-    static constexpr int LED_W = 40;
-    static constexpr int LED_H = 8;
-    static constexpr int LED_PANEL = 8;
-    static constexpr int LED_N = LED_W * LED_H;  // 5 panels * 64 = 320
-    // PORT A Signal 真身 = GPIO53 (与「灯阵」/「邮件 LED」完全一致, 见 app_unit_puzzle.h).
-    static constexpr int LED_DIN_GPIO = 53;      // Grove PORT A signal
-    static constexpr int CHAR_W = 5;
-    static constexpr int CHAR_H = 7;
-    static constexpr int CHAR_GAP = 1;
-    static constexpr int CELL = CHAR_W + CHAR_GAP;       // 6 px per char
-    // 滚动速度: 每段时长 = (文字宽+40) * 此值, 滚完整段再切. 越大越慢. 50ms/px.
-    static constexpr int SCROLL_MS_PER_PX = 50;
-    static constexpr int STOCK_PAUSE_MS = 1000;           // 两段之间黑屏间隔
 
     // ── State ──────────────────────────────────────────────────────────
     std::function<void()> _close_cb;
@@ -158,8 +142,7 @@ private:
     bool                   _fetch_error {false};
     std::string            _fetch_error_msg;
     int64_t                _last_fetch_ms {0};
-    // app 是否在前台. 退出时先置 false, 防止在途的 fetch worker 完成后
-    // 又去 _startTicker() 抢回已交还给邮件通知器的 PORT A.
+    // app 是否在前台. 退出时先置 false, 防止在途的 fetch worker 完成后碰已拆 UI.
     std::atomic<bool>      _app_open {false};
     // 同一时间只允许一个 HTTP 请求，避免刷新边界上重复创建 worker。
     std::atomic<bool>      _fetch_in_flight {false};
@@ -213,28 +196,13 @@ private:
     void*       _gesture_ctx{nullptr};  // opaque SwipeCtx*, defined in app_stocks.cpp
     lv_point_t  _touch_start{0, 0};     // PRESSED 起点, 区分翻页/点击/上拨退出
 
-    // ── LED handles (ESP only) ─────────────────────────────────────────
-#ifndef PLATFORM_BUILD_DESKTOP
-    led_strip_handle_t  _strip         {nullptr};
-    std::mutex          _strip_mu;
-    uint8_t             _brightness    {48};   // 全局亮度 (out of 256) ~19%, 与邮件 LED 一致
-    TaskHandle_t        _ticker_task   {nullptr};
-    std::atomic<bool>   _ticker_running{false};
-    std::atomic<bool>   _ticker_done   {false};
-    int                 _ticker_index  {0};
-    int64_t             _ticker_seg_start_ms {0};
-    int64_t             _ticker_seg_dur_ms {0};  // 当前段滚完一遍的时长 (按文字宽算)
-    int                 _ticker_seg_state {0};  // 0=代码+涨跌幅, 1=代码+现价
-#endif
-
     // ── Methods ─────────────────────────────────────────────────────────
     // 退出唯一出口 (← 返回按钮). 注意: 灯阵/LoRa 同款坑 —— 从工具页 openApp
     // 进来, 返回也走 openApp(工具页), mooncake 不会关闭当前 app, 所以 onClose
-    // 不一定触发. 因此停 ticker / 释放 LED / 把 PORT A 交还邮件通知器的收尾
-    // 必须在这里做, 否则 setPortAOwnedByApp(false) 永不复位, 邮件 LED 永久失灵.
+    // 不一定触发. 因此收尾必须在这里做.
     void _requestClose();
     void _requestExitOnce();   // 上拨退出去重 (GESTURE/RELEASED 双轨 500ms 窗口)
-    void _teardownHardware();  // 停 ticker + 释放 strip + 交还 PORT A (幂等)
+    void _teardownHardware();  // 关门置 _app_open=false (在途 worker 收尾闸, 幂等)
     void _buildUi();
     void _destroyUi();
     void _installSwipeGesture();
@@ -256,19 +224,6 @@ private:
     void _parseStocksJson(const std::string& body);
     void _refreshUiFromItems();
     void _ensureCards(int n);   // 按需创建卡位到滚动容器
-    // 涨绿 / 跌红 / 平灰 — UI 详情卡 + LED ticker 共用, 两平台都要.
+    // 涨绿 / 跌红 / 平灰 — UI 详情卡用, 两平台都要.
     uint32_t _chgColor(float chg);
-
-#ifndef PLATFORM_BUILD_DESKTOP
-    char _ticker_buf[32] = "";  // ticker 当前段文本缓冲
-
-    esp_err_t _stripInit();
-    void      _stripDeinit();
-    void      _setPixelXY(int x, int y, uint8_t r, uint8_t g, uint8_t b);
-    int       _xy2i(int x, int y);
-    void      _startTicker();
-    void      _stopTicker();
-    static void _tickerTask(void* arg);
-    void      _renderTickerFrame(int64_t now_ms);
-#endif
 };
