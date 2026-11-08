@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <bsp/m5stack_tab5.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/event_groups.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
@@ -24,16 +25,31 @@
 // Leave empty — configure via Settings app (stored in NVS).
 #define WIFI_STA_SSID  ""
 #define WIFI_STA_PASS  ""
-#define WIFI_MAX_RETRY 10
 
 // NVS namespace + keys for runtime device config (WiFi + HA server, etc.)
 #define DEVCFG_NS "devcfg"
 
 #define TAG "wifi"
 
-// True once the STA has an IP. Defined here (early) so isWifiConnected() and
-// the event handler below can both see it.
+// Live "STA has an IP" status — flipped true/false by the event handler below
+// so isWifiConnected() reflects reality across router outages.
 static bool s_wifi_initialized = false;
+static bool s_wifi_connected = false;
+// Set once the esp_wifi_init/start boot sequence has run (init-once guard;
+// re-running wifi_init() would esp_wifi_init() twice → ESP_ERROR_CHECK abort).
+static bool s_wifi_started = false;
+
+// ─── Auto-reconnect ───────────────────────────────────────────────────────────
+// esp_wifi does NOT reconnect by itself after a router reboot / AP loss, and a
+// plain "retry N times" handler gives up during longer outages (2026-11-09:
+// WiFi stayed dead forever after router restart). So: the event handler stays
+// registered forever and a persistent worker owns reconnecting — a few fast
+// retries for transient drops, then a slow 30 s cadence indefinitely. Every
+// successful reconnect also re-syncs SNTP (RTC drift / TLS cert validity).
+static SemaphoreHandle_t s_disc_sem = nullptr;   // DISCONNECTED → worker token
+#define WIFI_FAST_RETRIES 5
+#define WIFI_FAST_RETRY_MS 2000
+#define WIFI_SLOW_RETRY_MS 30000
 
 // Make sure NVS flash is initialized exactly once before any nvs_open.
 static void ensure_nvs_ready()
@@ -147,9 +163,36 @@ void sync_network_time();
 
 static EventGroupHandle_t s_wifi_event_group = nullptr;
 #define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT      BIT1
 
-static int s_retry_num = 0;
+// Persistent reconnect worker — see comment above s_disc_sem. Runs forever;
+// woken by a token from the DISCONNECTED handler, retries until GOT_IP.
+static void wifi_reconnect_worker()
+{
+    int fast_left = WIFI_FAST_RETRIES;
+    for (;;) {
+        if (xSemaphoreTake(s_disc_sem, portMAX_DELAY) != pdTRUE) continue;
+        xSemaphoreTake(s_disc_sem, 0);   // collapse burst of disconnect tokens
+        int attempt = 0;
+        while (!s_wifi_connected) {
+            esp_err_t err = esp_wifi_connect();
+            attempt++;
+            int wait_ms = (fast_left > 0) ? WIFI_FAST_RETRY_MS : WIFI_SLOW_RETRY_MS;
+            if (fast_left > 0) fast_left--;
+            ESP_LOGI(TAG, "reconnect attempt %d (next in %ds, %s)", attempt,
+                     wait_ms / 1000, esp_err_to_name(err));
+            int waited = 0;
+            while (!s_wifi_connected && waited < wait_ms) {
+                vTaskDelay(pdMS_TO_TICKS(500));
+                waited += 500;
+            }
+            if (s_wifi_connected) break;
+            xSemaphoreTake(s_disc_sem, 0);   // drop stale tokens before next try
+        }
+        ESP_LOGI(TAG, "wifi reconnected, resync time");
+        fast_left = WIFI_FAST_RETRIES;
+        sync_network_time();
+    }
+}
 
 static void sta_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data)
@@ -158,26 +201,24 @@ static void sta_event_handler(void* arg, esp_event_base_t event_base,
         if (event_id == WIFI_EVENT_STA_START) {
             esp_wifi_connect();
         } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-            if (s_retry_num < WIFI_MAX_RETRY) {
-                esp_wifi_connect();
-                s_retry_num++;
-                ESP_LOGI(TAG, "retry WiFi connect (%d/%d)", s_retry_num, WIFI_MAX_RETRY);
-            } else {
-                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-                ESP_LOGW(TAG, "WiFi connection failed after %d retries", WIFI_MAX_RETRY);
-            }
+            auto* d = (wifi_event_sta_disconnected_t*)event_data;
+            ESP_LOGW(TAG, "STA disconnected, reason=%d", d ? d->reason : -1);
+            s_wifi_connected = false;
+            s_wifi_initialized = false;   // isWifiConnected() reflects reality
+            if (s_disc_sem) xSemaphoreGive(s_disc_sem);
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         auto* event = (ip_event_got_ip_t*)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        s_retry_num = 0;
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        s_wifi_connected = true;
+        s_wifi_initialized = true;
+        if (s_wifi_event_group) xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
 
 bool HalEsp32::wifi_init()
 {
-    if (s_wifi_initialized) return true;
+    if (s_wifi_started) return s_wifi_initialized;
 
     // Runtime credentials from NVS, falling back to the compile-time defaults
     // the first time (before the user sets WiFi via the on-screen Settings app).
@@ -187,6 +228,13 @@ bool HalEsp32::wifi_init()
 
     // NVS required by WiFi (getConfig above already ensured init, but be safe).
     ensure_nvs_ready();
+
+    // Reconnect plumbing must exist before esp_wifi_start(): the first
+    // DISCONNECTED can arrive within milliseconds (router down at boot).
+    s_disc_sem = xSemaphoreCreateBinary();
+    if (!tryRunDetached(wifi_reconnect_worker, 16384)) {
+        ESP_LOGE(TAG, "reconnect worker spawn failed — WiFi won't self-heal");
+    }
 
     s_wifi_event_group = xEventGroupCreate();
 
@@ -204,12 +252,12 @@ bool HalEsp32::wifi_init()
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    esp_event_handler_instance_t inst_any;
-    esp_event_handler_instance_t inst_ip;
+    // Handlers stay registered for the whole session — the reconnect worker
+    // depends on DISCONNECTED/GOT_IP events after wifi_init() returns.
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        WIFI_EVENT, ESP_EVENT_ANY_ID, &sta_event_handler, nullptr, &inst_any));
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &sta_event_handler, nullptr, nullptr));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        IP_EVENT, IP_EVENT_STA_GOT_IP, &sta_event_handler, nullptr, &inst_ip));
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &sta_event_handler, nullptr, nullptr));
 
     wifi_config_t wifi_config = {};
     strncpy((char*)wifi_config.sta.ssid,     ssid.c_str(), sizeof(wifi_config.sta.ssid) - 1);
@@ -219,20 +267,20 @@ bool HalEsp32::wifi_init()
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    s_wifi_started = true;
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // Wait up to 15s for connection
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-                                            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                            pdFALSE, pdFALSE,
-                                            pdMS_TO_TICKS(15000));
+    // Wait up to 15s for connection (the worker keeps retrying after this)
+    xEventGroupWaitBits(s_wifi_event_group,
+                        WIFI_CONNECTED_BIT,
+                        pdFALSE, pdFALSE,
+                        pdMS_TO_TICKS(15000));
 
-    esp_event_handler_instance_unregister(IP_EVENT,  IP_EVENT_STA_GOT_IP, inst_ip);
-    esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,   inst_any);
+    // Boot wait is over; the handler keeps tracking state, only the group goes.
     vEventGroupDelete(s_wifi_event_group);
     s_wifi_event_group = nullptr;
 
-    bool ok = (bits & WIFI_CONNECTED_BIT) != 0;
+    bool ok = s_wifi_connected;   // set by the GOT_IP handler above
     s_wifi_initialized = ok;
 
     if (ok) {
