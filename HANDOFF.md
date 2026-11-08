@@ -1,101 +1,54 @@
-# HANDOFF — SSH 终端语音输入：✅ 已修复并真机验收通过（2026-10-30）
+# HANDOFF — LoRa Chat 全链路日（2026-11-08）
 
-> 遗留问题关闭。订阅制修复（commit 6964242）真机验收数据：
-> - 会话 1：86 opus 包 / 12530 字节 → STT "老安。"（毫秒级返回）
-> - 会话 2：66 opus 包 / 9588 字节 → STT "今天星期几？"
-> - 对照修复前：2 包 / 16 字节 / 10s 超时
-> 本文档留作根因分析与排查参考（tap 断流看门狗/失败模式含义仍在下方）。
+> 本日从「LoRa Chat 卡等待」一路打到三向互通 + 语音输入。**全部结论与坑已同步进长期记忆**
+> （`m5tab5-lora-chat` / `m5tab5-cardputerzero-lora` / `m5tab5-flash-workflow` / `m5tab5-porta-units` / 项目内
+> `memory/m5tab5-cockpit-project.md`），本文是**断点续作指南**：现在到哪儿了、下一步按什么顺序做什么、
+> 现场有什么坑。
 
 ---
 
-## 根因（2026-10-29 23:25 串口日志实锤）
+## ✅ 已达成（全部已刷机已推送）
 
-录音期间每次 `esp_codec_dev_read` 报：
+| # | 事项 | commit | 设备状态 |
+|---|---|---|---|
+| 1 | **PORT A 共存终态**：C6L 侧 TX 开漏（必需）+ Tab5 保持推挽 | `f796a3b` | NFC+LoRa 同 Hub 不拔插，RFID ✓ |
+| 2 | **C6L 固件对齐 CardputerZero**：868/SF12/BW125/sync0x34 + TX 超时 3s→20s | （UnitC6L-LoRa 仓库，非 git） | C6L 经 USB@12401 刷入 |
+| 3 | **C6L BW 编码表修正**：125k 被错映射 0x02(=31.25k)→0x04，全表按 datasheet 重写 | 同上 | **本日最大坑**：SF7/BW500 时代 0x06 碰巧正确掩盖一切 |
+| 4 | **CardputerZero 官方应用 PI4IO bug 补丁**：极性写偶数地址 0x02 被 NACK→放弃 radio 初始化→聋哑；0x2f7f0 `tbz`→NOP | （直接改 Zero 上的二进制） | 备份 `.bak` 同目录；**deb 升级会覆盖需重打** |
+| 5 | **三向互通达成**：Tab5↔C6L↔CardputerZero | — | C6L 控制台 `LoRa→UART: "...CardputerZhello" RSSI=-10` 实锤 |
+| 6 | **LoRa Chat 语音输入**：输入行新增「语音」按钮（大麦克风模式，识别中文填入输入框） | `4697dc4` | 已刷机，**未验收** |
 
-```
-E (125820) i2s_common: i2s_channel_read(1367): The channel is not enabled
-（每 1026ms 一次 × 3，然后 silence timeout 2052ms，只录 2 包 16 字节）
-```
+- Tab5 当前固件 = `5ab4876`（voice 输入 + 白屏加固 + 白屏定性注记），ELF SHA `29a5b516d` 之后的新 build（含 hal 注记回撤）。
+- C6L 当前 = sync0x34 + BW 表修正 + TX 超时 20s（OLED 应显示 `C6L 868M SF12 BW125`）。
+- **C6L↔ADV Cardputer (SF7/BW500) 现在不互通**——回连 = C6L 改 `LORA_BW_KHZ 500`/`LORA_SF 7` 两常量重刷。
 
-IDF 5.5.2 源码里这条错误的**真实语义是 I2S 读序列化二值信号量 1000ms 抢不到**
-（`xSemaphoreTake(handle->binary, timeout)`），不一定是通道真被禁用。时间线精确重构：
-前 2 帧拿到 DMA 积压旧数据，之后每次读超时返回、缓冲保持全零 → 被静音检测当
-"没说话" → 2s 静音超时 → STT 收 16 字节垃圾必然超时。
+## ⏳ 断点：下一步（按序）
 
-「挂起 xiaozhi + 另一任务直读 codec」架构天生不可修：
-- `xiaozhi_suspend` 异步 Schedule，`Stop(kAll)` 用 `vTaskDelete` 硬杀正在读麦克风
-  的 input task（死时可能带着 I2S 读锁 → 永久死锁）
-- 全双工 I2S 的 TX/RX 时钟联动，任何一侧被 esp_codec_dev 内部 set_fmt 禁用都会停摆
-- `Tab5AudioCodec::Read` 无论成败都返回 samples，错误全被吞（这次日志能定位纯属
-  ESP_ERROR_CHECK_WITHOUT_ABORT 恰好打印）
-- sleep 1s 只能等 task 退出，等不回被带走的锁/停掉的时钟
+1. **语音+中文端到端验收**（白屏打断，未做）：
+   - Tab5 → 工具页 → LoRa Chat → 点「语音」→ 说中文 → 停顿 2s 自动识别 → 文字落输入框 → 发送
+   - 看 Tab5 聊天页中文气泡 ✓？
+   - **看 CardputerZero 屏幕显示什么**（中文/乱码/方块）——Zero 官方应用字体编死在二进制里，若乱码则 Zero 端要单独处理（找 M5 源码加 CJK 字体重建，或接受 Tab5 单端中文）
+   - **中文 UART 悬案**：上一轮中文消息在 C6L 端收到乱码（`\xd6k\xd3k` 两字节周期，非合法 UTF-8/GB2312）——当时 BW 表是错的，需重测；若 ASCII 干净而中文必乱 → 查 Tab5 发送编码/UART 信号
+2. **白屏**（间歇性，未结）：刷机后（下载模式 30s + USB 域硬复位）偶发面板无视频=白屏（背光亮、固件正常跑、日志全对）。**恢复=按一下实体复位键（EN），今日 3/3**。已试无效：LCD_RST 双脉冲（BSP 保留）、USB 复位检测+esp_restart 软自愈（数字域清不到 DSI PHY 模拟域，已撤）。**复发先拔 Hub 隔离**（本日一次拔 Hub 实验：USB 复位仍白、EN 键恢复——外设排除）。根治方向=DSI PHY 域级复位（无公开 API，要碰 PCR 寄存器）。
+3. （可选）**向 M5 反馈**：Cap-LoRa-1262 v1.0.1 的 PI4IO 寄存器映射 bug（TCA9535 图对 PI4IO 图芯片）。
 
-## 修复（commit 6964242，2026-10-30，已刷机）
+## ⚠️ 现场坑（断点续作必读）
 
-**订阅制**（原步骤 5 备选架构落地）——xiaozhi 不再挂起，其他 app 向它的输入管线"借"麦克风：
+- **刷机后白屏 → 按一下复位键**（今日 3/3），别浪费轮次排查固件。
+- **C6L 刷机**：USB 插 Mac 枚举在 **12401**（占 Passport 位；先 `esptool --chip esp32c6 chip_id` 验芯片 + `pkill -f usbmodem12401`（我的控制台 reader 占口挡刷机））。C6L 的 ESP_LOG 走 USB 不走 Grove；**排障利器=USB 插 Mac 读控制台**（reader 脚本模式见下）。
+- **C6L UART 全断 → 先 USB 插拔重启 C6L 再深挖**（曾 wedge 一次即愈）。
+- **Zero（192.168.1.115，SSH pi，密码用户提供不入档）**：sshd 限连发（Permission denied 就 sleep 几秒）；应用日志不吐 radio 层——**排障用内核 SPI 追踪**（`/sys/kernel/tracing events/spi/spi_transfer_start`，解码原始命令字节=射频参数终极真相，方法全记在 `m5tab5-cardputerzero-lora`）。
+- **Tab5 串口日志**：`/tmp/radio-watch.log`（logger 已在跑）；**静默≠死机**（管道假死+积压补发假时间线）；刷机前 `pkill -f tab5_serial_log.py` + `lsof -t /dev/cu.usbmodem1301 | xargs kill`。
+- **Tab5 早前遗留**：白屏案定性注记在 `platforms/tab5/main/hal/hal_esp32.cpp`（RESET REASON 附近）。
+- 长期记忆索引：`MEMORY.md`（自动记忆）/ 项目 `memory/MEMORY.md`。
 
-| 文件 | 改动 |
+## 工具/文件速查
+
+| 什么 | 哪里 |
 |---|---|
-| `audio_service.{h,cc}` | 新增 `SetInputTap(cb)` + `AS_EVENT_INPUT_TAP_RUNNING` 事件位；AudioInputTask 新分支把读到的 **16kHz mono**（与唤醒词同源、已重采样）分发出去；input task 保持 codec **唯一读者** |
-| `xiaozhi_ctl.{h,cc}` | 导出 `xiaozhi_set_input_tap(cb/nullptr)`：注册时 `Start(kInputOnly)` 确保 input task 存活 + **暂停唤醒词**（防说话误唤醒、保 tap 全速 10ms 节奏）；注销时恢复唤醒词 |
-| `voice_input_service.{h,cc}` | 采集路径重写：tap 帧 → pcm_backlog（1s 上限，超限丢弃）→ 消费者按 60ms 帧编码；新增 **2s 断流看门狗**（tap 无数据明确报错，不再假装静音）；删掉 suspend/resume/直读 |
-
-顺带修掉：原实现把 24kHz TDM 当 16kHz 喂 opus（1.5 倍速变调）；现在 tap 拿到的就是 16kHz。
-
-启动日志已验证：AFE 唤醒词常开正常、无 I2S 错误。
-
-## 验收要点（看 /tmp/radio-watch.log）
-
-正常应看到：
-```
-voice_input: starting voice input session
-xiaozhi_ctl: input tap armed (wake word paused)
-AudioService: Input tap registered
-voice_input: recording started (max 10000 ms)
-（说话期间不应有 i2s_common 错误）
-voice_input: user-stopped recording with N packets   ← N 应为几十上百
-voice_input: recorded N opus packets (M bytes total) ← M 应为几千字节
-xiaozhi_ctl: input tap released (wake word resumed)
-voice_input: STT result: '...'
-```
-
-失败模式的含义：
-- `mic tap starved for 2000 ms` = tap 没来数据（xiaozhi input task 没跑或被停）→ 查 audio service 状态
-- `recorded 0/2 packets` 复现 = tap 通了但数据是零 → 查 ES7210/通道增益
-- STT 超时但包数正常 → 服务端问题，与采集无关
-
-## 已知边界（未处理，按需再改）
-
-- 录音期间若恰有 xiaozhi 对话进行中（audio processor 在跑），tap 与 processor 分时
-  各半 → 断流看门狗 2s 会明确报错退出（不静默失败）。可接受；要更稳可在 tap 注册
-  前先 AbortSpeaking
-- 回调在 input task（优先级 8）执行，当前只做锁+拷贝，勿在 tap 回调里做重活
-
-## 若验收失败的新排查入口
-
-1. `voice_input` 日志的 packets 数 + bytes 数（区分"没数据"vs"数据是零"）
-2. `AudioService: Input tap registered` 是否出现（没出现=xiaozhi 未初始化）
-3. tap 期间 `Enabling/Disabling wake word detection` 成对出现（唤醒词暂停/恢复）
-
----
-
-## 常用命令（详见 memory/m5tab5-ssh-app.md 与 cockpit 记忆）
-
-```bash
-# 构建（platforms/tab5，ESP_IDF_VERSION 必须设）
-source ~/esp-idf-v5.5.2/export.sh
-export ESP_IDF_VERSION=v5.5.2 IDF_PYTHON_ENV_PATH=~/.espressif/python_env/idf5.5_py3.14_env
-export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
-idf.py build && idf.py -p /dev/cu.usbmodem1301 app-flash   # 组件改动也编进 app 镜像，app-flash 即可
-# 刷机前 pkill -f tab5_serial_log.py；刷后必须 grep "Hash of data verified"；刷完 nohup 拉回日志脚本
-# res 分区（改字库/资源后）：先 python3 tools/pack_assets.py，再 esptool write-flash 0x910000 build/assets.img
-# 串口日志：/tmp/tab5_serial_log.py → /tmp/radio-watch.log（追加写！查崩溃只看最后一个 watcher start 段）
-# 注意：shell 里 grep 被 ugrep 包装带 -I 会跳过含乱码字节的串口日志，查日志用 /usr/bin/grep
-```
-
-## 提醒
-
-- OrangePi 服务改动：本地改 → commit push → Pi 拉取（禁止线上直改）
-- worktree：`/Users/leenzhou/Projects/M5Tab5/M5Tab5-UserDemo-yrobot-cockpit`（分支 tab5-batch-20261026，推 origin/main）
-- 长期记忆：`~/.zcode/cli/memories/projects/m5tab5-userdemo-e3295864c3893a58/memory/`（SSH 详见 m5tab5-ssh-app.md）
-- 2026-10-30 上午 github.com 曾不可达：commit 6964242 已本地提交，push 由后台重试任务补推（/tmp/push_retry.log）
+| C6L 固件源（非 git） | `~/Projects/UnitC6L-LoRa`（main.c=参数/协议，sx1262.c=驱动） |
+| C6L 控制台 reader | `nohup python3 -c "import serial,sys; s=serial.Serial('/dev/cu.usbmodem12401',115200,timeout=2); ..."` → `/tmp/c6l-console.log`（**占口，刷机前 pkill -f usbmodem12401**） |
+| Zero 补丁二进制 | `/usr/share/Cap-LoRa-1262/bin/Cap-LoRa-1262`（备份 `.bak`；补丁=vaddr 0x2f7f0 `a0 05 00 36`→`1f 20 03 d5`） |
+| Zero 昵称 | `~/.config/Cap-LoRa-1262/nickname`（**UI 编辑优先于文件**；当前=用户 UI 里自设） |
+| Tab5 串口 logger | `platforms/tab5/tools/tab5_serial_log.py` → `/tmp/radio-watch.log` |
+| ESP-IDF | v5.5.2 + `IDF_PYTHON_ENV_PATH=~/.espressif/python_env/idf5.5_py3.14_env` + `ESP_IDF_VERSION=v5.5.2`；Tab5 工程 `platforms/tab5`，app 层只 app-flash |
