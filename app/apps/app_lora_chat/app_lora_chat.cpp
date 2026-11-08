@@ -8,7 +8,6 @@
 #include <cbin_font.h>
 #include <driver/uart.h>
 #include <driver/gpio.h>
-#include <hal/gpio_hal.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #else
@@ -391,17 +390,6 @@ void AppLoraChat::_uartInit()
         _setStatus("UART 引脚失败", C_STATUS_NG());
         return;
     }
-
-    // 共线共存 (2026-11-08): TX 改开漏 —— 说话拉低、说完松手靠上拉回高.
-    // 推挽 TX 闲置会把白线(G54=NFC SCL)顶死, NFC 的 I2C 无法拉低应答;
-    // 上拉由 NFC 板载 4.7k + 本侧内部上拉提供, 115200 无损.
-    // ⚠️ 必须用 gpio_ll_od_enable (只设 pad_driver 位) —— 不能用 gpio_config:
-    // 它末尾无条件 func_sel(PIN_FUNC_GPIO), 会把 uart_set_pin 绑定的 UART
-    // 功能撕掉, TX 变成锁存器(默认0)常低开漏 = 线被按死 (2026-11-08 实测:
-    // C6L 收不到消息 + NFC 读寄存器全 0x00 假 ACK).
-    gpio_ll_od_enable(GPIO_HAL_GET_HW(0), (uint32_t)UART_TX_GPIO);
-    gpio_pullup_en((gpio_num_t)UART_TX_GPIO);
-    gpio_pullup_en((gpio_num_t)UART_RX_GPIO);
 
     _uart_ok = true;
     _task_running = true;
