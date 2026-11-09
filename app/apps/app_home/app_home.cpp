@@ -111,7 +111,7 @@ void AppHome::onOpen()
 
     // Create a dedicated screen so other apps can own their own screens
     _scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(0x000000), 0);   // 纯黑(2026-10-26 用户指定, 弃背景图)
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(theme::cur().page), 0);   // 屏底随主题(2026-10-26 弃背景图; 深色主题仍纯黑)
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     // Stable storage for button user_data pointers — must not reallocate after reserve

@@ -29,7 +29,7 @@ private:
 
     // ── Palette ───────────────────────────────────────────────────────────
     // 配色: 实时读全局主题 (utils/theme/theme.h)
-    static uint32_t C_BG()        { return 0x000000; }
+    static uint32_t C_BG()        { return theme::cur().page; }
     static uint32_t C_HEADER()    { return theme::cur().card[1]; }
     static uint32_t C_USER_BUB()  { return theme::cur().card[0]; }  // 自己气泡: 强调一档
     static uint32_t C_PEER_BUB()  { return theme::cur().card[2]; }

@@ -50,7 +50,7 @@ private:
     static constexpr int HEAD_H   = 56;    // 各游戏页头 (难度 chips / 状态 / 重开)
 
     // ── 主题色 (实时读全局主题, app_lottery/stocks 同款) ──
-    static uint32_t C_BG()    { return 0x000000; }
+    static uint32_t C_BG()    { return theme::cur().page; }
     static uint32_t C_CARD()  { return theme::cur().card[1]; }
     static uint32_t C_CARD0() { return theme::cur().card[0]; }
     static uint32_t C_TEXT()  { return theme::cur().text_hi; }

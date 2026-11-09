@@ -126,7 +126,7 @@ private:
 
     // ── Color palette (must match app_home / app_ha) ──────────────────
     // 配色: 实时读全局主题 (utils/theme/theme.h), 函数形式便于调用点零快照
-    static uint32_t C_BG()       { return 0x000000; }
+    static uint32_t C_BG()       { return theme::cur().page; }
     static uint32_t C_HEADER()   { return theme::cur().card[1]; }
     static uint32_t C_TEXT()     { return theme::cur().text_hi; }
     static uint32_t C_DIM()      { return theme::cur().text_dim; }

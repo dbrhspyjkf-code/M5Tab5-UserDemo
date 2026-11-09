@@ -58,7 +58,7 @@ static uint32_t C_BG, C_CARD, C_CARD_ON, C_ACCENT, C_ACCENT_SOFT,
 static void snap_theme()
 {
     const theme::Palette& T = theme::cur();
-    C_BG = 0x000000;          // HA 页背景也统一纯黑(与主页一致)
+    C_BG = T.page;           // HA 页背景随主题
     C_CARD = T.card[1];       C_CARD_ON = T.press;
     C_ACCENT = T.accent;      C_ACCENT_SOFT = T.card[0];
     C_TEXT = T.text_hi;       C_TEXT2 = T.text_dim;

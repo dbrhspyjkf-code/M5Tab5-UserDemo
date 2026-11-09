@@ -154,7 +154,7 @@ void AppCalendar::_buildUi()
 {
     LvglLockGuard lock;
     _scr = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(theme::cur().page), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     // ── 标题行: << < [2026 年][10 月] > >> ──

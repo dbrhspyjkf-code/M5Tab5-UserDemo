@@ -79,7 +79,7 @@ static uint32_t C_BG, C_CARD, C_CARD0, C_ON, C_ACCENT, C_TEXT, C_TEXT2, C_TRACK,
 static void snap_theme()
 {
     const auto& T = theme::cur();
-    C_BG     = 0x000000;
+    C_BG     = T.page;
     C_CARD   = T.card[1];
     C_CARD0  = T.card[0];
     C_ON     = T.press;

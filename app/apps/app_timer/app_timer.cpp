@@ -49,7 +49,7 @@ static uint32_t C_BG, C_CARD, C_ON, C_ACCENT, C_AMBER, C_TEXT, C_TEXT2;
 static void snap_theme()
 {
     const theme::Palette& T = theme::cur();
-    C_BG = 0x000000;
+    C_BG = T.page;
     C_CARD = T.card[1];  C_ON = T.press;  C_ACCENT = T.accent;
     C_AMBER = T.accent;  // 圆环主色随主题强调色
     C_TEXT = T.text_hi;  C_TEXT2 = T.text_dim;

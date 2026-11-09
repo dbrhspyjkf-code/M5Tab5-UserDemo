@@ -46,7 +46,7 @@ private:
     static constexpr int SPANS[3] = {30, 50, 100};
 
     // ── 主题色 (实时读全局主题, app_stocks 同款) ──
-    static uint32_t C_BG()   { return 0x000000; }
+    static uint32_t C_BG()   { return theme::cur().page; }
     static uint32_t C_CARD() { return theme::cur().card[1]; }
     static uint32_t C_TEXT() { return theme::cur().text_hi; }
     static uint32_t C_DIM()  { return theme::cur().text_dim; }

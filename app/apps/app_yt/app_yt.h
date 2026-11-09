@@ -60,7 +60,7 @@ private:
     };
 
     // ── 主题色 ──
-    static uint32_t C_BG()    { return 0x000000; }
+    static uint32_t C_BG()    { return theme::cur().page; }
     static uint32_t C_CARD()  { return theme::cur().card[1]; }
     static uint32_t C_TEXT()  { return theme::cur().text_hi; }
     static uint32_t C_SOFT()  { return theme::cur().text_soft; }

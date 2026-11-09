@@ -161,7 +161,7 @@ static uint32_t C_BG, C_ACCENT, C_CARD, C_CARD_PR, C_TEXT, C_DIM,
 static void snap_theme()
 {
     const theme::Palette& T = theme::cur();
-    C_BG = 0x000000;        // 纯黑(与主页一致)
+    C_BG = T.page;           // 屏底随主题(2026-11-09 加 page 字段)
     C_ACCENT = T.accent;
     C_CARD = T.card[1];     C_CARD_PR = T.card[0];
     C_TEXT = T.text_hi;     C_SHADOW = T.border;
@@ -169,7 +169,7 @@ static void snap_theme()
     C_WARN = T.warn;        // 邮件红旗操作 (语义琥珀)
     C_DANGER = T.danger;    // 红旗标记点
     C_SOFT = T.text_soft;   // 文件夹组头
-    CALC_BG = 0x000000;
+    CALC_BG = T.page;
     CALC_NUM = 0x3A3A3C;    CALC_FUNC = 0x545456;
     CALC_OP = T.accent;     // 运算键随主题强调色
     CALC_TXT = 0xFFFFFF;    CALC_EXPR = T.text_dim;

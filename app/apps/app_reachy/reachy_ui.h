@@ -12,7 +12,7 @@
 // language across pages.
 namespace reachy_ui {
 // 配色: 实时读全局主题 (utils/theme/theme.h) — 函数形式, 默认参数在调用点求值
-inline uint32_t kBg()         { return 0x000000; }
+inline uint32_t kBg()         { return theme::cur().page; }
 inline uint32_t kSurface()    { return theme::cur().card[1]; }
 inline uint32_t kSurfaceAlt() { return theme::cur().card[2]; }
 inline uint32_t kStroke()     { return theme::cur().border; }

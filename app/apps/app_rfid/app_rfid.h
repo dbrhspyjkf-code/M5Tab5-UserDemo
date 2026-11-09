@@ -55,7 +55,7 @@ private:
     static constexpr int SCREEN_H = 720;
     static constexpr int HEADER_H = 72;
     // 配色: 实时读全局主题 (utils/theme/theme.h)
-    static uint32_t C_BG()     { return 0x000000; }
+    static uint32_t C_BG()     { return theme::cur().page; }
     static uint32_t C_HEADER() { return theme::cur().card[1]; }
     static uint32_t C_TEXT()   { return theme::cur().text_hi; }
     static uint32_t C_DIM()    { return theme::cur().text_dim; }
