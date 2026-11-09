@@ -27,9 +27,9 @@ void AppEmailLed::onResume() {}
 void AppEmailLed::onRunning()
 {
 #ifndef PLATFORM_BUILD_DESKTOP
-    // 每 60s 主动刷新一次未读数 (异步, 任意线程安全). 不依赖 home 在前台轮询.
+    // 每 2 分钟主动刷新一次未读数 (异步, 任意线程安全). 不依赖 home 在前台轮询.
     int64_t now_us = esp_timer_get_time();
-    if (_last_poll_us == 0 || now_us - _last_poll_us > 60LL * 1000 * 1000) {
+    if (_last_poll_us == 0 || now_us - _last_poll_us > 120LL * 1000 * 1000) {
         _last_poll_us = now_us;
         AppSettings::fetchEmail();
     }

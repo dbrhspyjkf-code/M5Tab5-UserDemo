@@ -9,7 +9,7 @@
 /**
  * AppEmailLed — 后台邮件状态轮询 + PORT A 仲裁转发 (WorkerAbility, 开机常驻).
  *
- * 每 60s 调 AppSettings::fetchEmail() 刷新未读数 (工具页邮件子页等消费).
+ * 每 2 分钟调 AppSettings::fetchEmail() 刷新未读数 (工具页邮件子页等消费).
  * 「NEW EMAIL」LED 矩阵播放已于 2026-11-08 随灯阵硬件功能一并移除,
  * 类名与文件名沿用历史.
  *

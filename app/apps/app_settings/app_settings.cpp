@@ -210,7 +210,7 @@ std::string       g_fx_source = "static";
 // app_settings.h). Mirrors the g_fx_* pattern above: detached fetch worker
 // writes email_list under email_list_mutex and flips email_updated; the UI
 // loop detects the flag in onRunning() and rebuilds the lv_list. AppHome's
-// status-bar icon polls fetchEmail() every 60s and reads email_unread_total.
+// status-bar icon polls fetchEmail() every 120s and reads email_unread_total.
 std::atomic<int>        AppSettings::email_unread_total{0};  // total, from j["count"]
 std::atomic<int>        AppSettings::email_flagged_total{0}; // 红旗总数
 std::atomic<bool>       AppSettings::email_updated{false};
@@ -2204,6 +2204,13 @@ using PsramJson   = nlohmann::basic_json<std::map, std::vector, PsramString, boo
 
 void AppSettings::fetchEmail()
 {
+    // spawn 失败退避闸 (!spawned 分支设置): 退避期内静默跳过, 既能自愈又不
+    // 形成 16ms 一发的紧循环. (int32_t) 差值比较兼容 lv_tick 回绕.
+    static uint32_t s_retry_not_before = 0;
+    {
+        uint32_t now_tick = lv_tick_get();
+        if (s_retry_not_before != 0 && (int32_t)(now_tick - s_retry_not_before) < 0) return;
+    }
     if (email_fetching.exchange(true)) {
         mclog::tagWarn(_tag, "fetchEmail: already in flight, skip");
         return;
@@ -2235,6 +2242,9 @@ void AppSettings::fetchEmail()
                        resp.ok, resp.status, resp.body.size());
         if (resp.status == 304) {
             mclog::tagInfo(_tag, "emailFetch: unchanged (304), skip parse");
+            // 304 早退也必须清闸, 否则 in-flight 旗标永久卡死, 轮询从此
+            // 全部 "already in flight, skip" 直到重启 (2026-11-09 实锤).
+            email_fetching.store(false);
             return;
         }
         if (resp.ok) {
@@ -2345,12 +2355,13 @@ void AppSettings::fetchEmail()
         mclog::tagWarn(_tag, "emailFetch: tryRunDetached failed (pthread_create?)");
         email_error.store(true);
         email_error_msg = "本地线程创建失败 (内存不足?)";
-        // Do NOT reset email_fetching here — that would allow the next
-        // onRunning frame (~16 ms later) to call fetchEmail() again, creating
-        // a tight retry loop that burns CPU and prevents the idle task from
-        // ever freeing memory. Keep the flag set; the worker (if ever spawned)
-        // will clear it on completion, and the 60 s poll cycle will naturally
-        // retry later.
+        // 复位闸 + 60s 退避 (见函数入口的 s_retry_not_before). 原实现把
+        // email_fetching 永久留 true, 指望「worker 完成时清」— 但这条路径
+        // 根本没有 worker 被创建, 一次 pthread 失败 = 轮询从此全部 skip
+        // 直到重启 (2026-11-09 日志实锤). 复位后靠退避闸防 16ms 紧循环:
+        // 退避期内入口直接 return, 不再创建线程, 内存压力不叠加.
+        email_fetching.store(false);
+        s_retry_not_before = lv_tick_get() + 60 * 1000;
     }
 }
 

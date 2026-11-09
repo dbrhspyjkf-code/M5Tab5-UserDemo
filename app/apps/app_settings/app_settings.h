@@ -91,7 +91,7 @@ public:
     void openYt();       // 工具页 tile → 打开油管 app
 
     // ── Shared email cache (status-bar poll + sub-page both read these) ──
-    // Worker in fetchEmail() writes; the AppHome status bar polls every 60s
+    // Worker in fetchEmail() writes; the AppHome status bar polls every 120s
     // and reads email_unread_total to decide whether to show the icon.
     static std::atomic<int>  email_unread_total;   // total, from j["count"]
     static std::atomic<int>  email_flagged_total;  // 红旗总数, j["flagged_total"]

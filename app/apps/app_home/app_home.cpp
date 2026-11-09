@@ -720,11 +720,11 @@ void AppHome::onRunning()
         }
     }
 
-    // Email — poll the shared cache every 60s. AppSettings::fetchEmail() is
+    // Email — poll the shared cache every 120s. AppSettings::fetchEmail() is
     // in-flight safe (the second call while one is running is a no-op), so
     // it's fine to call it from the UI loop. The actual httpGet runs on a
     // detached worker thread.
-    if (_last_email_ms == 0 || now - _last_email_ms > 60 * 1000) {
+    if (_last_email_ms == 0 || now - _last_email_ms > 120 * 1000) {
         _last_email_ms = now;
         AppSettings::fetchEmail();
     }
