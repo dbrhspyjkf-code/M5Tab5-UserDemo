@@ -156,7 +156,7 @@ extern const lv_font_t font_calc_expr;  // 30px expression line
 // 计算器数字/功能键的中性灰保留(任何主题下都读作"中性")。
 static uint32_t C_BG, C_ACCENT, C_CARD, C_CARD_PR, C_TEXT, C_DIM,
                 CALC_BG, CALC_NUM, CALC_FUNC, CALC_OP, CALC_TXT, CALC_EXPR,
-                C_SHADOW, C_WARN, C_DANGER, C_SOFT;
+                CALC_DISP, C_SHADOW, C_WARN, C_DANGER, C_SOFT;
 
 static void snap_theme()
 {
@@ -172,7 +172,9 @@ static void snap_theme()
     CALC_BG = T.page;
     CALC_NUM = 0x3A3A3C;    CALC_FUNC = 0x545456;
     CALC_OP = T.accent;     // 运算键随主题强调色
-    CALC_TXT = 0xFFFFFF;    CALC_EXPR = T.text_dim;
+    CALC_TXT = 0xFFFFFF;    // 键帽文字(深灰键上恒白)
+    CALC_DISP = T.text_hi;  // 显示区大字/FROM 金额(浅色主题随主题翻深)
+    CALC_EXPR = T.text_soft; // 表达式小字(浅底上 dim 太淡, 2026-11-09)
 }
 
 // ── Currency table + live rate cache ─────────────────────────────────────────
@@ -1015,7 +1017,7 @@ void AppSettings::_openCalculator()
     _calc_res_lbl = lv_label_create(_calc_page);
     lv_label_set_text(_calc_res_lbl, "0");
     lv_obj_set_style_text_font(_calc_res_lbl, &font_calc_big, 0);
-    lv_obj_set_style_text_color(_calc_res_lbl, lv_color_hex(CALC_TXT), 0);
+    lv_obj_set_style_text_color(_calc_res_lbl, lv_color_hex(CALC_DISP), 0);
     lv_obj_align(_calc_res_lbl, LV_ALIGN_TOP_RIGHT, -36, 130);
 
     // ── Button grid: 5 columns × 4 rows ──────────────────────────────────────
@@ -1322,7 +1324,7 @@ void AppSettings::_openFx()
         lv_label_set_text(val, "0");
         lv_obj_set_style_text_font(val, &font_calc_op, 0);
         lv_obj_set_style_text_color(val,
-            lv_color_hex(is_from ? CALC_TXT : C_ACCENT), 0);
+            lv_color_hex(is_from ? CALC_DISP : C_ACCENT), 0);   // FROM 金额在浅卡上随主题
         lv_obj_align(val, LV_ALIGN_RIGHT_MID, -20, 0);
 
         if (is_from) { _fx_from_dd = dd; _fx_amt_lbl = val; }
@@ -1715,7 +1717,7 @@ void AppSettings::_openUnit()
         lv_label_set_text(val, "0");
         lv_obj_set_style_text_font(val, &font_calc_op, 0);
         lv_obj_set_style_text_color(val,
-            lv_color_hex(is_from ? CALC_TXT : C_ACCENT), 0);
+            lv_color_hex(is_from ? CALC_DISP : C_ACCENT), 0);   // FROM 金额在浅卡上随主题
         lv_obj_align(val, LV_ALIGN_RIGHT_MID, -20, 0);
 
         if (is_from) {

@@ -287,8 +287,14 @@ void AppVoiceInput::_createMicButton(lv_obj_t* ta, int keyboard_h) {
     lv_obj_center(label);
 
     // Status label just above the mic button
+    // 白字直浮 layer_top 无衬底, 浅色主题 app 上看不清 → 60% 黑圆角衬垫(2026-11-09)
     _status_label = lv_label_create(lv_layer_top());
     lv_obj_set_style_text_color(_status_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(_status_label, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(_status_label, LV_OPA_60, 0);
+    lv_obj_set_style_radius(_status_label, 10, 0);
+    lv_obj_set_style_pad_hor(_status_label, 14, 0);
+    lv_obj_set_style_pad_ver(_status_label, 6, 0);
     lv_obj_set_style_text_font(_status_label, vi_zh_font(), 0);
     lv_label_set_text(_status_label, "");
     lv_obj_align(_status_label, LV_ALIGN_BOTTOM_MID, 0, -lift - MIC_BTN_SIZE - 4);
@@ -327,8 +333,14 @@ void AppVoiceInput::_createBigMicButton(lv_obj_t* ta) {
     s_focused_ta = ta;
 
     // Hint label above the wave — placed first so the wave sits above it visually.
+    // 同款 60% 黑圆角衬垫(白字在任何背景可读, 2026-11-09)
     _status_label = lv_label_create(lv_layer_top());
     lv_obj_set_style_text_color(_status_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(_status_label, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(_status_label, LV_OPA_60, 0);
+    lv_obj_set_style_radius(_status_label, 10, 0);
+    lv_obj_set_style_pad_hor(_status_label, 14, 0);
+    lv_obj_set_style_pad_ver(_status_label, 6, 0);
     lv_obj_set_style_text_font(_status_label, vi_zh_font(), 0);
     lv_label_set_text(_status_label, "正在说话… 点按任意处停止");
     lv_obj_align(_status_label, LV_ALIGN_BOTTOM_MID, 0, -260);

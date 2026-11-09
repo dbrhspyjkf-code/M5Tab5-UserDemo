@@ -413,7 +413,7 @@ void AppRfid::_buildUi()
     lv_obj_t* off_clr_l = lv_label_create(off_clr);
     lv_label_set_text(off_clr_l, "清空关灯卡");
     lv_obj_set_style_text_font(off_clr_l, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(off_clr_l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(off_clr_l, lv_color_hex(theme::cur().text_hi), 0);  // press 浅底随主题
     lv_obj_center(off_clr_l);
     lv_obj_add_event_cb(off_clr, _clearOffCard_cb, LV_EVENT_CLICKED, this);
 
@@ -894,7 +894,7 @@ void AppRfid::_openPicker()
     lv_obj_t* back_l = lv_label_create(back);
     lv_label_set_text(back_l, "返回");
     lv_obj_set_style_text_font(back_l, zh_font_sm(), 0);
-    lv_obj_set_style_text_color(back_l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(back_l, lv_color_hex(theme::cur().text_hi), 0);  // press 浅底随主题
     lv_obj_center(back_l);
     lv_obj_add_event_cb(back, [](lv_event_t* e) {
         static_cast<AppRfid*>(lv_event_get_user_data(e))->_closePicker();

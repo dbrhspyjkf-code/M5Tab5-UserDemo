@@ -1098,7 +1098,7 @@ void AppLottery::_showSingleResult(const ssq::DrawIssue& d, const ssq::Pick& p)
         snprintf(buf, sizeof(buf), "红中 %d %s · 中%s!", r.red_hits,
                  r.blue_hit ? "+蓝" : "", names[r.level]);
         lv_label_set_text(big, buf);
-        lv_obj_set_style_text_color(big, lv_color_hex(0xFFB300), 0);
+        lv_obj_set_style_text_color(big, lv_color_hex(theme::cur().warn), 0);  // 随主题(浅色卡上 0xFFB300 太淡)
     }
     lv_obj_set_style_text_font(big, zh30(), 0);
     lv_obj_align(big, LV_ALIGN_TOP_MID, 0, 260);
@@ -1530,7 +1530,7 @@ void AppLottery::_confirmModal(const std::vector<ssq::Pick>& bets,
         lv_obj_t* tag = lv_label_create(_result_modal);
         lv_label_set_text(tag, "不完整");
         lv_obj_set_style_text_font(tag, zh20(), 0);
-        lv_obj_set_style_text_color(tag, lv_color_hex(0xE53935), 0);
+        lv_obj_set_style_text_color(tag, lv_color_hex(theme::cur().danger), 0);
         lv_obj_align(tag, LV_ALIGN_TOP_RIGHT, -150, row_y + 8);
         // 「改」: 每钮挂堆拷贝 (modal 删除事件统一回收到 bets_copy, 这里独立释放)
         auto* pick_copy = new ssq::Pick(p);
@@ -1719,7 +1719,7 @@ void AppLottery::_judgeBets(const std::vector<ssq::Pick>& bets)
                 lv_obj_t* l = lv_label_create(_result_modal);
                 lv_label_set_text(l, buf);
                 lv_obj_set_style_text_font(l, zh30(), 0);
-                lv_obj_set_style_text_color(l, lv_color_hex(0xFFB300), 0);
+                lv_obj_set_style_text_color(l, lv_color_hex(theme::cur().warn), 0);
                 lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -32, ly);
                 ly += 38;
                 extra_rows++;
@@ -1743,7 +1743,7 @@ void AppLottery::_judgeBets(const std::vector<ssq::Pick>& bets)
         snprintf(buf, sizeof(buf), "合计 ¥%s%s 投注¥%ld", fmt_thousands(total).c_str(),
                  has_floating ? "※" : "", bet_total);
         lv_label_set_text(total_lbl, buf);
-        lv_obj_set_style_text_color(total_lbl, lv_color_hex(0xFFB300), 0);
+        lv_obj_set_style_text_color(total_lbl, lv_color_hex(theme::cur().warn), 0);
     } else {
         snprintf(buf, sizeof(buf), "未中奖 (投注 ¥%ld)", bet_total);
         lv_label_set_text(total_lbl, buf);
