@@ -151,7 +151,7 @@ void AppSsh::_buildForm()
     const theme::Palette& T = theme::cur();
     if (!_scr) {
         _scr = lv_obj_create(NULL);
-        lv_obj_set_style_bg_color(_scr, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_color(_scr, lv_color_hex(T.page), 0);   // 屏底随主题(终端画布仍黑)
         lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
     }
 

@@ -1,5 +1,6 @@
 #include "app_gallery.h"
 #include "../utils/rgb565_fetch.h"
+#include "../utils/theme/theme.h"   // 2026-11-09 屏底接全局主题
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
@@ -189,20 +190,20 @@ void AppGallery::_teardown()
 void AppGallery::_buildUi()
 {
     _scr = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(COL_BG), 0);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(theme::cur().page), 0);
     lv_obj_set_style_bg_opa(_scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* title = lv_label_create(_scr);
     lv_label_set_text(title, "图库");
     lv_obj_set_style_text_font(title, zh30(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(COL_WHITE), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::cur().text_hi), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 14);
 
     _status_lbl = lv_label_create(_scr);
     lv_label_set_text(_status_lbl, "加载中...");
     lv_obj_set_style_text_font(_status_lbl, zh24(), 0);
-    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(COL_GRAY), 0);
+    lv_obj_set_style_text_color(_status_lbl, lv_color_hex(theme::cur().text_soft), 0);
     lv_obj_align(_status_lbl, LV_ALIGN_TOP_RIGHT, -24, 20);
 
     // 网格滚动容器 (app_health 同款写法)
@@ -320,7 +321,7 @@ void AppGallery::_applyList()
         lv_obj_set_size(card, THUMB_W, THUMB_H);
         lv_obj_set_pos(card, GRID_X0 + (i % GRID_COLS) * (THUMB_W + GRID_GAP),
                        GRID_Y0 + (i / GRID_COLS) * (THUMB_H + GRID_GAP));
-        lv_obj_set_style_bg_color(card, lv_color_hex(COL_CARD), 0);
+        lv_obj_set_style_bg_color(card, lv_color_hex(theme::cur().card[1]), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(card, 0, 0);
         lv_obj_set_style_border_width(card, 0, 0);
@@ -328,7 +329,7 @@ void AppGallery::_applyList()
         lv_obj_set_style_pad_all(card, 0, 0);
         // 按下反馈: 白色半透描边外扩 (工具页 tile 同观感)
         lv_obj_set_style_outline_width(card, 4, LV_STATE_PRESSED);
-        lv_obj_set_style_outline_color(card, lv_color_hex(COL_WHITE), LV_STATE_PRESSED);
+        lv_obj_set_style_outline_color(card, lv_color_hex(theme::cur().accent), LV_STATE_PRESSED);
         lv_obj_set_style_outline_opa(card, LV_OPA_60, LV_STATE_PRESSED);
         lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);

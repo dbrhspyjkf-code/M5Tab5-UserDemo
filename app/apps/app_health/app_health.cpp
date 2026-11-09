@@ -3,6 +3,7 @@
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
 #include "../utils/ui/canvas_draw.h"
+#include "../utils/theme/theme.h"   // 2026-11-09 接入全局主题
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -79,18 +80,19 @@ static const MetricDef kMetrics[] = {
 };
 static constexpr int kMetricCount = (int)(sizeof(kMetrics) / sizeof(kMetrics[0]));
 
-// 深色苹果风调色
-static constexpr uint32_t COL_BG     = 0x000000;  // 屏底
-static constexpr uint32_t COL_CARD   = 0x1C1C1E;  // 卡底
-static constexpr uint32_t COL_WHITE  = 0xFFFFFF;  // 大数值
-static constexpr uint32_t COL_GRAY   = 0x98989F;  // 指标名/单位
-static constexpr uint32_t COL_DIM    = 0x6C6C70;  // 时间
+// 调色 — 实时读全局主题 (2026-11-09 接入, 原深色苹果风常量);
+// 详情页两枚深灰按钮 (0x2C2C2E) 上的文字保留字面白, 不走 COL_WHITE。
+static uint32_t COL_BG()       { return theme::cur().page; }      // 屏底/详情页底
+static uint32_t COL_CARD()     { return theme::cur().card[1]; }   // 卡底
+static uint32_t COL_WHITE()    { return theme::cur().text_hi; }   // 大数值/标题
+static uint32_t COL_GRAY()     { return theme::cur().text_soft; } // 指标名/单位
+static uint32_t COL_DIM()      { return theme::cur().text_dim; }  // 时间/脚注
 
 // 走势图画布调色 (canvas 1280x656, 顶栏 64px 之外)
-static constexpr uint32_t COL_CHART_BG = 0x0D0D10;  // 图底
-static constexpr uint32_t COL_GRID     = 0x26262B;  // 网格
-static constexpr uint32_t COL_AXIS     = 0x4A4A52;  // 基线
-static constexpr uint32_t COL_MA7      = 0xF1C40F;  // 7 日均线 (黄)
+static uint32_t COL_CHART_BG() { return theme::cur().track; }     // 图底(内嵌底色)
+static uint32_t COL_GRID()     { return theme::cur().border; }    // 网格
+static uint32_t COL_AXIS()     { return theme::cur().text_dim; }  // 基线
+static uint32_t COL_MA7()      { return theme::cur().warn; }      // 7 日均线 (琥珀, 浅底可读)
 
 // 布局: 顶栏 64 + 网格区 656; 3 列卡 402x138 (2026-10-31 用户指定一行 3 列,
 // 11 卡 4 行一屏全显, 无需滚动 — 底缘上拨手势零冲突)
@@ -311,20 +313,20 @@ void AppHealth::onClose()
 void AppHealth::_buildUi()
 {
     _scr = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(_scr, lv_color_hex(COL_BG), 0);
+    lv_obj_set_style_bg_color(_scr, lv_color_hex(COL_BG()), 0);
     lv_obj_set_style_bg_opa(_scr, LV_OPA_COVER, 0);
 
     // 顶栏: 「健康」+ 更新时间
     lv_obj_t* title = lv_label_create(_scr);
     lv_label_set_text(title, "健康");
     lv_obj_set_style_text_font(title, zh30(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(COL_WHITE), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(COL_WHITE()), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 14);
 
     _updated_lbl = lv_label_create(_scr);
     lv_label_set_text(_updated_lbl, "更新 --:--");
     lv_obj_set_style_text_font(_updated_lbl, zh20(), 0);
-    lv_obj_set_style_text_color(_updated_lbl, lv_color_hex(COL_GRAY), 0);
+    lv_obj_set_style_text_color(_updated_lbl, lv_color_hex(COL_GRAY()), 0);
     lv_obj_align(_updated_lbl, LV_ALIGN_TOP_RIGHT, -24, 22);
 
     // 滚动容器 (app_home _dash_scroll 写法)
@@ -348,7 +350,7 @@ void AppHealth::_buildUi()
         lv_obj_set_size(card, CARD_W, CARD_H);
         lv_obj_set_pos(card, CARD_X0 + col * (CARD_W + CARD_GAP_X),
                        CARD_Y0 + row * (CARD_H + CARD_GAP_Y));
-        lv_obj_set_style_bg_color(card, lv_color_hex(COL_CARD), 0);
+        lv_obj_set_style_bg_color(card, lv_color_hex(COL_CARD()), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(card, 20, 0);
         lv_obj_set_style_border_width(card, 0, 0);
@@ -374,7 +376,7 @@ void AppHealth::_buildUi()
         lv_image_set_src(ic, kGlyphs[m.glyph]);
         lv_image_set_scale(ic, 128);   // 50%: 88 → 44
         lv_obj_align(ic, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_set_style_image_recolor(ic, lv_color_hex(COL_WHITE), 0);
+        lv_obj_set_style_image_recolor(ic, lv_color_hex(COL_WHITE()), 0);
         lv_obj_set_style_image_recolor_opa(ic, LV_OPA_COVER, 0);
         lv_obj_clear_flag(ic, LV_OBJ_FLAG_CLICKABLE);   // 勿吞卡片长按
 
@@ -382,27 +384,27 @@ void AppHealth::_buildUi()
         lv_obj_t* name = lv_label_create(card);
         lv_label_set_text(name, m.name);
         lv_obj_set_style_text_font(name, zh24(), 0);
-        lv_obj_set_style_text_color(name, lv_color_hex(COL_GRAY), 0);
+        lv_obj_set_style_text_color(name, lv_color_hex(COL_GRAY()), 0);
         lv_obj_align(name, LV_ALIGN_TOP_LEFT, 74, 26);
 
         // 大数值 (montserrat_38) + 单位 (占位用 ASCII "-", montserrat 无 U+2014)
         _val_lbl[i] = lv_label_create(card);
         lv_label_set_text(_val_lbl[i], "-");
         lv_obj_set_style_text_font(_val_lbl[i], &lv_font_montserrat_38, 0);
-        lv_obj_set_style_text_color(_val_lbl[i], lv_color_hex(COL_WHITE), 0);
+        lv_obj_set_style_text_color(_val_lbl[i], lv_color_hex(COL_WHITE()), 0);
         lv_obj_align(_val_lbl[i], LV_ALIGN_BOTTOM_LEFT, 22, -14);
 
         _unit_lbl[i] = lv_label_create(card);
         lv_label_set_text(_unit_lbl[i], m.unit);
         lv_obj_set_style_text_font(_unit_lbl[i], zh20(), 0);
-        lv_obj_set_style_text_color(_unit_lbl[i], lv_color_hex(COL_GRAY), 0);
+        lv_obj_set_style_text_color(_unit_lbl[i], lv_color_hex(COL_GRAY()), 0);
         lv_obj_align_to(_unit_lbl[i], _val_lbl[i], LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -6);
 
         // 时间 (右下)
         _time_lbl[i] = lv_label_create(card);
         lv_label_set_text(_time_lbl[i], "");
         lv_obj_set_style_text_font(_time_lbl[i], &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_color(_time_lbl[i], lv_color_hex(COL_DIM), 0);
+        lv_obj_set_style_text_color(_time_lbl[i], lv_color_hex(COL_DIM()), 0);
         lv_obj_align(_time_lbl[i], LV_ALIGN_BOTTOM_RIGHT, -20, -22);
     }
 }
@@ -531,7 +533,7 @@ void AppHealth::_openDetail(int idx)
     _detail_modal = lv_obj_create(_scr);
     lv_obj_set_size(_detail_modal, 1280, 720);
     lv_obj_set_pos(_detail_modal, 0, 0);
-    lv_obj_set_style_bg_color(_detail_modal, lv_color_hex(COL_BG), 0);
+    lv_obj_set_style_bg_color(_detail_modal, lv_color_hex(COL_BG()), 0);
     lv_obj_set_style_bg_opa(_detail_modal, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(_detail_modal, 0, 0);
     lv_obj_set_style_radius(_detail_modal, 0, 0);
@@ -553,14 +555,14 @@ void AppHealth::_openDetail(int idx)
     lv_obj_t* val = lv_label_create(_detail_modal);
     lv_label_set_text(val, cur.c_str());
     lv_obj_set_style_text_font(val, &lv_font_montserrat_38, 0);
-    lv_obj_set_style_text_color(val, lv_color_hex(COL_WHITE), 0);
+    lv_obj_set_style_text_color(val, lv_color_hex(COL_WHITE()), 0);
     lv_obj_align_to(val, name, LV_ALIGN_OUT_RIGHT_MID, 24, 4);
     _detail_val = val;   // 详情先于摘要到时, _applyHistory 补填
 
     lv_obj_t* unit = lv_label_create(_detail_modal);
     lv_label_set_text(unit, m.unit);
     lv_obj_set_style_text_font(unit, zh20(), 0);
-    lv_obj_set_style_text_color(unit, lv_color_hex(COL_GRAY), 0);
+    lv_obj_set_style_text_color(unit, lv_color_hex(COL_GRAY()), 0);
     lv_obj_align_to(unit, val, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -4);
 
     // canvas: ARGB8888 大块 — 设备端 SPIRAM_USE_MALLOC=y, malloc 自动落 PSRAM;
@@ -580,7 +582,7 @@ void AppHealth::_openDetail(int idx)
     _detail_status = lv_label_create(_detail_modal);
     lv_label_set_text(_detail_status, "走势加载中…");
     lv_obj_set_style_text_font(_detail_status, zh20(), 0);
-    lv_obj_set_style_text_color(_detail_status, lv_color_hex(COL_GRAY), 0);
+    lv_obj_set_style_text_color(_detail_status, lv_color_hex(COL_GRAY()), 0);
     lv_obj_align(_detail_status, LV_ALIGN_TOP_MID, 0, 64 + DET_H / 2 - 10);
 
     // ＋/－ 调整可视天数窗口 (app_stocks 同款左下角大按钮)
@@ -600,7 +602,7 @@ void AppHealth::_openDetail(int idx)
             lv_obj_t* l = lv_label_create(b);
             lv_label_set_text(l, txt);
             lv_obj_set_style_text_font(l, &lv_font_montserrat_36, 0);
-            lv_obj_set_style_text_color(l, lv_color_hex(COL_WHITE), 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
             lv_obj_center(l);
         };
         mk_zoom("-", 28, -7);              // 缩小窗口 = 放大细节
@@ -612,14 +614,14 @@ void AppHealth::_openDetail(int idx)
     _detail_hilo = lv_label_create(_detail_modal);
     lv_label_set_text(_detail_hilo, "");
     lv_obj_set_style_text_font(_detail_hilo, zh20(), 0);
-    lv_obj_set_style_text_color(_detail_hilo, lv_color_hex(COL_GRAY), 0);
+    lv_obj_set_style_text_color(_detail_hilo, lv_color_hex(COL_GRAY()), 0);
     // y=122: 避开顶部轴刻度 (顶档刻度在网格线下方 y≈94), 挤在一起读不清
     lv_obj_align(_detail_hilo, LV_ALIGN_TOP_RIGHT, -16, 122);
 
     _detail_leg = lv_label_create(_detail_modal);
     lv_label_set_text(_detail_leg, "");
     lv_obj_set_style_text_font(_detail_leg, zh20(), 0);
-    lv_obj_set_style_text_color(_detail_leg, lv_color_hex(COL_MA7), 0);
+    lv_obj_set_style_text_color(_detail_leg, lv_color_hex(COL_MA7()), 0);
     lv_obj_align(_detail_leg, LV_ALIGN_TOP_LEFT, 16, 66);
 
     lv_obj_t* close_btn = lv_button_create(_detail_modal);
@@ -630,7 +632,7 @@ void AppHealth::_openDetail(int idx)
     lv_obj_t* cl = lv_label_create(close_btn);
     lv_label_set_text(cl, "关闭");
     lv_obj_set_style_text_font(cl, zh20(), 0);
-    lv_obj_set_style_text_color(cl, lv_color_hex(COL_WHITE), 0);
+    lv_obj_set_style_text_color(cl, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(cl);
     lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
         static_cast<AppHealth*>(lv_event_get_user_data(e))->_closeDetail();
@@ -855,11 +857,11 @@ void AppHealth::_drawDetailChart()
     }
     const double yscale = (double)(PB - PT) / vmax;
 
-    canvas_draw::px_fill(_detail_pixels, DET_W, DET_H, COL_CHART_BG);
+    canvas_draw::px_fill(_detail_pixels, DET_W, DET_H, COL_CHART_BG());
     for (int g = 0; g <= 4; g++) {   // 网格 5 档
         const int y = PB - (int)((double)(PB - PT) * g / 4.0 + 0.5);
         canvas_draw::px_line(_detail_pixels, DET_W, DET_H, PL, y, PR, y,
-                             g == 0 ? COL_AXIS : COL_GRID);
+                             g == 0 ? COL_AXIS() : COL_GRID());
     }
 
     // 柱: 历史柱向底色调暗, 最新一天全色突出
@@ -867,7 +869,7 @@ void AppHealth::_drawDetailChart()
     int bw = (int)(slot * 0.66);
     if (bw < 2) bw = 2;
     if (bw > 160) bw = 160;   // 天数很少时柱不过宽 (单日满屏成色块)
-    const uint32_t bar_past = canvas_draw::px_blend(m.color, COL_CHART_BG, 0.45f);
+    const uint32_t bar_past = canvas_draw::px_blend(m.color, COL_CHART_BG(), 0.45f);
     double wmax = -1e18, wmin = 1e18;
     std::vector<int> cx(win);
     for (int i = 0; i < win; i++) {
@@ -896,7 +898,7 @@ void AppHealth::_drawDetailChart()
             const int y = PB - (int)(s / 7.0 * yscale + 0.5);
             if (has_prev) {
                 canvas_draw::px_line(_detail_pixels, DET_W, DET_H,
-                                     pvx, pvy, cx[i], y, COL_MA7);
+                                     pvx, pvy, cx[i], y, COL_MA7());
             }
             pvx = cx[i];
             pvy = y;
@@ -920,7 +922,7 @@ void AppHealth::_drawDetailChart()
         lv_obj_t* l = lv_label_create(_detail_modal);
         lv_label_set_text(l, t);
         lv_obj_set_style_text_font(l, zh20(), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(COL_DIM), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(COL_DIM()), 0);
         lv_obj_align(l, LV_ALIGN_TOP_LEFT, PR + 8, ly);
         _detail_xt.push_back(l);
     }
@@ -933,7 +935,7 @@ void AppHealth::_drawDetailChart()
             lv_obj_t* l = lv_label_create(_detail_modal);
             lv_label_set_text(l, t);
             lv_obj_set_style_text_font(l, &lv_font_montserrat_20, 0);
-            lv_obj_set_style_text_color(l, lv_color_hex(COL_DIM), 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(COL_DIM()), 0);
             const int tw = (int)lv_txt_get_width(t, (uint32_t)strlen(t),
                                                  &lv_font_montserrat_20, 0);
             lv_obj_align(l, LV_ALIGN_TOP_LEFT, cx[i] - tw / 2, 64 + PB + 8);
