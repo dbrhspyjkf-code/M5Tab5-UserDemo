@@ -60,7 +60,7 @@ static void snap_theme()
     const theme::Palette& T = theme::cur();
     C_BG = T.page;           // HA 页背景随主题
     C_CARD = T.card[1];       C_CARD_ON = T.press;
-    C_ACCENT = T.accent;      C_ACCENT_SOFT = T.card[0];
+    C_ACCENT = T.accent;      C_ACCENT_SOFT = T.press;   // 图标圆底=软强调(原设计淡强调色; card[0] 浅色主题下≈纯白隐形)
     C_TEXT = T.text_hi;       C_TEXT2 = T.text_dim;
     C_GREEN = T.ok;           C_AMBER = T.warn;  C_RED = T.danger;
     C_TRACK = T.track;        C_DIM_ICON = T.text_dim;
@@ -197,7 +197,7 @@ static void _build_device_card(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_style_radius(ic, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(ic, 0, 0);
     lv_obj_set_style_bg_color(ic, lv_color_hex(card.is_offline ? C_TRACK
-                                  : (card.is_on ? C_ACCENT_SOFT : C_CARD)), 0);
+                                  : (card.is_on ? C_ACCENT_SOFT : C_TRACK)), 0);  // OFF 圆底=内嵌中性(原 C_CARD 与卡同色隐形)
     lv_obj_align(ic, LV_ALIGN_LEFT_MID, 14, 0);
     lv_obj_clear_flag(ic, LV_OBJ_FLAG_SCROLLABLE);
 
