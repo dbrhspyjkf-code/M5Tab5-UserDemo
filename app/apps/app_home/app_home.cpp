@@ -158,7 +158,7 @@ void AppHome::onOpen()
         lv_obj_t* lbl = lv_label_create(btn);
         lv_label_set_text(lbl, _apps[i].name.c_str());
         lv_obj_set_align(lbl, LV_ALIGN_CENTER);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(theme::cur().text_hi), 0);  // 随主题(浅色主题深字)
         lv_obj_set_style_text_font(lbl, zh_font_md(), 0);  // 24px×1.25=30px 视觉
         lv_obj_set_style_transform_scale(lbl, 320, 0);   // ≈1.25x: 按钮文字再大一点 (用户指定)
         // Subtle dark text shadow for legibility over the bright gradient.
@@ -1295,8 +1295,10 @@ inline uint32_t T_DANGER() { return theme::cur().danger; }
 inline uint32_t T_WARN()   { return theme::cur().warn; }
 
 // Styled pill button. cb is a captureless lambda; `self` is passed as user_data.
+// txt_color: 按钮文字色, 默认白(配 accent/danger/warn 深底); T_BTN() 浅色底按钮
+// (取消/主题/扫描) 传 theme::cur().text_hi, 否则浅色主题下白字看不见。
 lv_obj_t* mk_btn(lv_obj_t* parent, const char* text, uint32_t color, int w, int h,
-                 lv_event_cb_t cb, void* self)
+                 lv_event_cb_t cb, void* self, uint32_t txt_color = 0xFFFFFF)
 {
     lv_obj_t* b = lv_obj_create(parent);
     lv_obj_set_size(b, w, h);
@@ -1309,7 +1311,7 @@ lv_obj_t* mk_btn(lv_obj_t* parent, const char* text, uint32_t color, int w, int 
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, text);
     lv_obj_center(l);
-    lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(txt_color), 0);
     lv_obj_set_style_text_font(l, zh_font_lg(), 0);
     return b;
 }
@@ -1506,7 +1508,7 @@ void AppHome::_openPowerDialog()
     lv_obj_t* b_cancel = mk_btn(card, "取消", T_BTN(), BW, BH,
         [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))->_closeModal();
-        }, this);
+        }, this, theme::cur().text_hi);   // 浅色主题下深字
     lv_obj_align(b_cancel, LV_ALIGN_BOTTOM_LEFT, x0 + 2 * (BW + GAP), -32);
 }
 
@@ -1683,7 +1685,8 @@ void AppHome::_openQuickSettings()
 
     // 主题循环切换（松绿→暖橙→海蓝→岩紫…）：立即重建主页，其他 app 下次
     // 打开生效。按钮文字显示当前主题名。
-    _qs_theme_lbl = mk_btn(card, "", T_BTN(), 300, 60, _qsTheme_cb, this);
+    _qs_theme_lbl = mk_btn(card, "", T_BTN(), 300, 60, _qsTheme_cb, this,
+                           theme::cur().text_hi);   // 浅色主题下深字
     _refreshThemeBtn();
     lv_obj_align(_qs_theme_lbl, LV_ALIGN_BOTTOM_LEFT, 40, -28);
 
@@ -1706,9 +1709,11 @@ void AppHome::_qsTheme_cb(lv_event_t* e)
 {
     auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
     theme::cycle();                 // 切换并持久化到 NVS
-    self->_refreshThemeBtn();
+    // 弹窗常驻（2026-11-09 用户要求切主题不关窗）：弹窗挂在 layer_top
+    // 不随屏幕销毁，先关旧的再重建主页，新屏上原位重开（自带新主题名）。
     self->_closeModal();
     self->rebuild();                // 主页立即换装
+    self->_openQuickSettings();
 }
 
 void AppHome::rebuild()
@@ -1892,7 +1897,7 @@ void AppHome::_openNetworkDialog()
     lv_obj_t* scan = mk_btn(card, "扫描", T_BTN(), 124, ROW_H - 10,
         [](lv_event_t* e) {
             static_cast<AppHome*>(lv_event_get_user_data(e))->_doNetworkScan();
-        }, this);
+        }, this, theme::cur().text_hi);   // 浅色主题下深字
     lv_obj_set_pos(scan, FLD_X + FLD_W - 124, y);
     y += ROW_H;
 
