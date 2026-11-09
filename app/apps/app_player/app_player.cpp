@@ -679,6 +679,15 @@ void AppPlayer::onClose()
         lv_obj_delete(_scr);
         _scr = nullptr;
     }
+    // 子对象指针必须随屏清空 (2026-11-09 崩溃定案): _lyr_now 残留悬挂,
+    // 二次 onOpen 里 `if (_lyr_now) lv_label_set_text(...)` 先于建屏执行,
+    // 对已释放标签 UAF → Load access fault 重启 (coredump 实锤).
+    _page_lbl = _hint_lbl = _state_chip = nullptr;
+    _title_lbl = _artist_lbl = _play_lbl = nullptr;
+    _vol_slider = _vol_lbl = nullptr;
+    _prog_slider = _prog_lbl = _prog_total = nullptr;
+    _lyr_now = _lyr_next = nullptr;
+    _cover_img = _cover_card = nullptr;
 }
 
 // ─── 封面拉取(detached 线程;PSRAM 直读,零解码) ──────────────────────────

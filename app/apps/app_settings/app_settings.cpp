@@ -325,8 +325,15 @@ void AppSettings::onClose()
     mclog::tagInfo(_tag, "close");
     _removeSwipeGesture();
     if (_scr) {
+        // 删屏前先切临时屏: 工具页关屏常发生在活动屏上, 直接删会让
+        // LVGL act_screen 悬空一帧 ("lv_obj_delete: the active screen
+        // was deleted" 警告实录), 与所有 app onRunning 每帧钩子叠加是
+        // UAF 面 (2026-11-09 player 同类 UAF 崩溃定案后补齐).
+        lv_obj_t* tmp = lv_obj_create(NULL);
+        lv_screen_load(tmp);
         lv_obj_delete(_scr);
         _scr = nullptr;
+        lv_obj_delete_async(tmp);
     }
     _tools_page = _calc_page = _fx_page = _unit_page = nullptr;
     _calc_expr_lbl = _calc_res_lbl = nullptr;
@@ -2173,36 +2180,8 @@ void AppSettings::_closeEmail()
 // PSRAM 阈值): 307 封 × 7 字段 ≈ 4K 个节点, 每分钟 churn 两次把内部堆搅碎
 // (27KB 空闲分不出 181B → WiFi SDIO 断言, 2026-11-07)。自定义分配器让
 // 节点+字符串整棵落 PSRAM; 解析出的紧凑 email_list 仍走内部堆 (常驻小体量)。
-#ifdef PLATFORM_BUILD_DESKTOP
-// 桌面/网页构建: 直接用标准 json (web 定义 DESKTOP 一并排除, 不为冻结的
-// web 端引入任何新代码)
-using PsramString = std::string;
-using PsramJson   = nlohmann::json;
-#else
-template <class T>
-struct PsramAllocator
-{
-    using value_type = T;
-    PsramAllocator() noexcept = default;
-    template <class U> PsramAllocator(const PsramAllocator<U>&) noexcept {}
-    T* allocate(std::size_t n)
-    {
-        auto* p = static_cast<T*>(heap_caps_malloc(n * sizeof(T),
-                                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        if (!p) throw std::bad_alloc();
-        return p;
-    }
-    void deallocate(T* p, std::size_t) noexcept { heap_caps_free(p); }
-};
-template <class T, class U>
-bool operator==(const PsramAllocator<T>&, const PsramAllocator<U>&) noexcept { return true; }
-template <class T, class U>
-bool operator!=(const PsramAllocator<T>&, const PsramAllocator<U>&) noexcept { return false; }
-
-using PsramString = std::basic_string<char, std::char_traits<char>, PsramAllocator<char>>;
-using PsramJson   = nlohmann::basic_json<std::map, std::vector, PsramString, bool,
-                                         std::int64_t, std::uint64_t, double, PsramAllocator>;
-#endif
+// (2026-11-09 提为共享头 utils/psram_json.h, 供 ha_client /api/states 同款)
+#include "../utils/psram_json.h"
 
 void AppSettings::fetchEmail()
 {

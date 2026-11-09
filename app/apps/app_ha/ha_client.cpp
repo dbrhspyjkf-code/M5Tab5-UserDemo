@@ -2,6 +2,7 @@
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include <chrono>
 #include <algorithm>
 
@@ -268,21 +269,27 @@ void HaClient::_fetch_states()
     }
 
     try {
-        auto arr = json::parse(resp.body);
+        // DOM 整棵落 PSRAM (2026-11-09): /api/states 483 实体 DOM≈body 的 3-5 倍,
+        // 原标准 nlohmann 每个轮询周期在内部堆反复构建/销毁 = 碎片化主力.
+        // 取出的 HaEntity 字符串仍落内部堆(常驻小体量).
+        auto arr = PsramJson::parse(resp.body);
+        auto to_std = [](const PsramString& s) {
+            return std::string(s.data(), s.size());
+        };
         std::vector<HaEntity> entities;
         for (auto& item : arr) {
             HaEntity e;
-            e.entity_id     = item.value("entity_id", "");
-            e.state         = item.value("state", "");
+            e.entity_id     = to_std(item.value("entity_id", PsramString("")));
+            e.state         = to_std(item.value("state", PsramString("")));
             auto& attrs     = item["attributes"];
-            e.friendly_name = attrs.value("friendly_name", "");
-            e.unit          = attrs.value("unit_of_measurement", "");
+            e.friendly_name = to_std(attrs.value("friendly_name", PsramString("")));
+            e.unit          = to_std(attrs.value("unit_of_measurement", PsramString("")));
             // Store all scalar attributes as strings
             for (auto& [k, v] : attrs.items()) {
-                if (v.is_string())  e.attributes[k] = v.get<std::string>();
-                else if (v.is_number_integer()) e.attributes[k] = std::to_string(v.get<int>());
-                else if (v.is_number_float())   e.attributes[k] = std::to_string(v.get<double>());
-                else if (v.is_boolean())        e.attributes[k] = v.get<bool>() ? "true" : "false";
+                if (v.is_string())  e.attributes[to_std(k)] = to_std(v.get_ref<const PsramString&>());
+                else if (v.is_number_integer()) e.attributes[to_std(k)] = std::to_string(v.get<int>());
+                else if (v.is_number_float())   e.attributes[to_std(k)] = std::to_string(v.get<double>());
+                else if (v.is_boolean())        e.attributes[to_std(k)] = v.get<bool>() ? "true" : "false";
             }
             // Store last_changed as pseudo-attribute for lock cards
             if (item.contains("last_changed") && item["last_changed"].is_string())
