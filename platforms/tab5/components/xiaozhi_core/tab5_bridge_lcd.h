@@ -35,9 +35,6 @@ public:
     // ── Called by LVGL timer (no extra locking needed) ─────────────────────────
     void UpdateInfoBar();
 
-    // Idle screensaver: drift the emotion face to random spots while idle.
-    static void EmojiWanderTimerCb(lv_timer_t* t);
-
 private:
     // ── Layout helpers ──────────────────────────────────────────────────────────
     void BuildRichUi();

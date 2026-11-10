@@ -362,59 +362,13 @@ void Tab5BridgeLcdDisplay::BuildEmotionArea()
     // 2026-11-10: 官方 Twemoji64 表情包替代 font_awesome 字形 (64×64 RGB565A8
     // 带透明, 直读 flash)。2× 显示 (512=2×256, 128px), 双线性抗锯齿由 LVGL
     // image 默认开启。锚点=屏幕正中偏下 (640,420), pivot 设图心保持居中。
+    // 用户定稿: 位置固定, 空闲不再漫游 (原 EmojiWanderTimerCb 已删)。
     emotion_img_ = lv_image_create(scr_);
     lv_image_set_src(emotion_img_, &emoji_1f636_64);
     lv_image_set_scale(emotion_img_, 512);
     lv_image_set_pivot(emotion_img_, 32, 32);
     lv_obj_clear_flag(emotion_img_, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
     lv_obj_align(emotion_img_, LV_ALIGN_CENTER, 0, 60);
-
-    // Idle "screensaver" — drift the face to random spots inside the blurred
-    // top region while idle, and snap back to the center when a conversation
-    // starts. translate styles shift it visually without changing its layout
-    // anchor, so SetEmotion / recenter stay simple.
-    // Slow cadence + instant moves (below). This device is resource-tight: the
-    // always-on wake-word AFE shares CPU with display rendering, so a continuous
-    // animation here starved the audio pipeline (couldn't wake / no response).
-    lv_timer_create(EmojiWanderTimerCb, 5000, this);
-}
-
-void Tab5BridgeLcdDisplay::EmojiWanderTimerCb(lv_timer_t* t)
-{
-    auto* self = static_cast<Tab5BridgeLcdDisplay*>(lv_timer_get_user_data(t));
-    if (!self || !self->emotion_img_) return;
-
-    lv_obj_t* e = self->emotion_img_;
-    bool idle = (Application::GetInstance().GetDeviceState() == kDeviceStateIdle);
-
-    if (idle) {
-        // Float above chat/status ONCE (move_foreground reorders → full redraw;
-        // doing it every tick was part of what starved the audio). After that
-        // the label stays topmost.
-        static bool fg_done = false;
-        if (!fg_done) { lv_obj_move_foreground(e); fg_done = true; }
-
-        // Instant hop to a random spot — a single small redraw every 5 s,
-        // negligible load, instead of 90 animated frames. Base anchor is the
-        // screen center shifted down 60px (y≈420, 正中偏下). ~60px visual
-        // half-height at 4×; keep the face inside the blurred top region
-        // (0..540) with margin so it never covers the bottom message strip.
-        int half  = 90;                                   // face half-height + margin
-        int max_x = self->width_ / 2 - half;
-        int min_y = -(self->height_ / 2 + 60 - half);
-        int max_y = (self->height_ * 3 / 4 - half) - (self->height_ / 2 + 60);
-        if (max_x < 1) max_x = 1;
-        if (max_y < min_y + 1) max_y = min_y + 1;
-        int tx = (int)(esp_random() % (uint32_t)(2 * max_x + 1)) - max_x;
-        int ty = min_y + (int)(esp_random() % (uint32_t)(max_y - min_y + 1));
-        lv_obj_set_style_translate_x(e, tx, 0);
-        lv_obj_set_style_translate_y(e, ty, 0);
-    } else if (lv_obj_get_style_translate_x(e, 0) != 0 ||
-               lv_obj_get_style_translate_y(e, 0) != 0) {
-        // Snap back to the top band for the conversation.
-        lv_obj_set_style_translate_x(e, 0, 0);
-        lv_obj_set_style_translate_y(e, 0, 0);
-    }
 }
 
 void Tab5BridgeLcdDisplay::BuildBottomStrip()
