@@ -93,9 +93,9 @@ void AppXiaoZhi::onRunning()
         }
     }
 
-    // ── 3s 自动退出 (2026-11-10 定稿): 两种情况 ──
-    // ① 唤醒后 3s 内用户没说话 (Listening 期间 VAD 没检测到人声, 识别文本也
-    //    没回传) → 退出; ② 小智回答完后 3s 没接话 (回到 Idle) → 退出。
+    // ── 5s 自动退出 (2026-11-10 定稿, 用户由 3s 调宽): 两种情况 ──
+    // ① 唤醒后 5s 内用户没说话 (Listening 期间 VAD 没检测到人声, 识别文本也
+    //    没回传) → 退出; ② 小智回答完后 5s 没接话 (回到 Idle) → 退出。
     // 听到过用户说话的 Listening (等 STT/LLM/TTS) 与 Speaking/Connecting 不计时。
     // VAD 来自 audio_service 的轻量能量检测 (本板 AFE 处理器被裁, 原 VAD 恒
     // false; 弹窗提示音已在底层 700ms 屏蔽窗内), STT 回传时间戳做兜底。
@@ -118,10 +118,10 @@ void AppXiaoZhi::onRunning()
             _last_voice_ms = now_ms;
         }
     }
-    bool silent3s = (now_ms - _last_voice_ms > 3000);
-    if ((st == kDeviceStateListening && !_heard_user && silent3s) ||
-        (_answered && st == kDeviceStateIdle && silent3s)) {
-        mclog::tagInfo(TAG, "auto-exit: 3s rule (st=%d heard=%d answered=%d)",
+    bool silent5s = (now_ms - _last_voice_ms > 5000);
+    if ((st == kDeviceStateListening && !_heard_user && silent5s) ||
+        (_answered && st == kDeviceStateIdle && silent5s)) {
+        mclog::tagInfo(TAG, "auto-exit: 5s rule (st=%d heard=%d answered=%d)",
                        st, (int)_heard_user, (int)_answered);
         close();
         return;
