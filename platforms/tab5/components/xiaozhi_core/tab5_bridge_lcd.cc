@@ -83,10 +83,8 @@ static void info_timer_cb(lv_timer_t* t)
     static_cast<Tab5BridgeLcdDisplay*>(lv_timer_get_user_data(t))->UpdateInfoBar();
 }
 
-static void scr_tap_cb(lv_event_t* /*e*/)
-{
-    Application::GetInstance().ToggleChatState();
-}
+// 2026-11-10: 点按说话已移除 —— 触碰小智界面即退出 (AppXiaoZhi 在 indev 层
+// 处理 CLICKED, 见 app_xiaozhi.cpp; 语音直聊, 无需点按交互)。
 
 // ─── Construction / destruction ───────────────────────────────────────────────
 
@@ -263,8 +261,7 @@ void Tab5BridgeLcdDisplay::BuildRichUi()
     lv_obj_set_style_bg_color(scr_, lv_color_hex(0x000000), 0);
     lv_obj_set_style_pad_all(scr_, 0, 0);
     lv_obj_clear_flag(scr_, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(scr_, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(scr_, scr_tap_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(scr_, LV_OBJ_FLAG_CLICKABLE);   // 点按不说话, 触碰退出在 AppXiaoZhi indev 层
 
     // 分层(创建顺序即 z 序, 底→顶): 模糊背景 → 表情 → 底部消息条 → 状态栏。
     // 背景在每次 ActivateScreen 时由 CaptureBlurredBackdrop 填充, 首次成功前隐藏。

@@ -90,6 +90,13 @@ void xiaozhi_note_user_stt(void);
 int64_t xiaozhi_last_user_stt_ms(void);
 
 /**
+ * 结束当前语音会话 (小智页退出时调用): Speaking 先 AbortSpeaking 丢掉剩余
+ * TTS 音频, 再关音频通道 → 状态机走 OnAudioChannelClosed → Idle + 重新开
+ * 唤醒词。Idle 时调用为 no-op。异步 (Schedule 到 xiaozhi 主任务, 立即返回)。
+ */
+void xiaozhi_end_conversation(void);
+
+/**
  * True after the xiaozhi Application task has been started and initialized
  * (i.e. the audio codec + event group are ready). Safe to call before
  * xiaozhi_start_task() — will return false.

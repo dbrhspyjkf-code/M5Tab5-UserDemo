@@ -183,6 +183,21 @@ extern "C" int64_t xiaozhi_last_user_stt_ms(void)
     return s_last_user_stt_ms;
 }
 
+extern "C" void xiaozhi_end_conversation(void)
+{
+    if (!s_initialized) return;
+    auto& app = Application::GetInstance();
+    app.Schedule([&app]() {
+        if (app.GetDeviceState() == kDeviceStateSpeaking) {
+            app.AbortSpeaking(kAbortReasonNone);
+        }
+        auto* p = app.GetProtocol();
+        if (p != nullptr && p->IsAudioChannelOpened()) {
+            p->CloseAudioChannel();   // → OnAudioChannelClosed → Idle + 唤醒词重开
+        }
+    });
+}
+
 extern "C" bool xiaozhi_is_initialized(void)
 {
     return s_initialized;

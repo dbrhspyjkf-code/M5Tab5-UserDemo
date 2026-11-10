@@ -1,6 +1,8 @@
 #include "audio_service.h"
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include <esp_timer.h>
+#include <cmath>
 #include <cstring>
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
@@ -100,6 +102,38 @@ void AudioService::Initialize(AudioCodec* codec) {
 #endif
 
     audio_processor_->OnOutput([this](std::vector<int16_t>&& data) {
+        /* 轻量能量人声检测 (2026-11-10, Tab5): 本板组件 CMakeLists 手工关闭
+         * CONFIG_USE_AUDIO_PROCESSOR (内部 RAM 仅剩 ~43KB, 养不起 AFE 处理器),
+         * AfeAudioProcessor 的 VAD 回调永不触发 → voice_detected_ 恒 false,
+         * 上层 "唤醒后 3s 没说话退出" 没有实时人声信号可用 (唤醒→STT 回传要
+         * 4.3~5.1s, 靠识别文本必迟到)。这里对 Listening 期每帧算 RMS:
+         * 自适应噪声底 + 开启后 700ms 屏蔽窗(唤醒提示音会被麦克风拾到,
+         * 不屏蔽必假触发) + 600ms 保持。开销 ~1K 次乘加/帧, 可忽略。 */
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - voice_proc_start_us_ < 700000) {
+            voice_detected_ = false;   // 提示音屏蔽窗: 强制无语音
+        } else {
+            double sum_sq = 0;
+            for (int16_t s : data) sum_sq += (double)s * s;
+            float rms = (float)sqrt(sum_sq / (double)data.size());
+            float th = noise_floor_rms_ * 2.5f + 150.0f;
+            if (rms >= th) {
+                if (!voice_detected_) {
+                    ESP_LOGI(TAG, "voice detected (rms=%.0f floor=%.0f th=%.0f)",
+                             (double)rms, (double)noise_floor_rms_, (double)th);
+                }
+                last_voice_frame_us_ = now_us;
+                voice_detected_ = true;
+            } else {
+                // 静音帧缓慢抬噪声底 (说话帧不更新, 防连续说话把底噪推高)
+                noise_floor_rms_ += (rms - noise_floor_rms_) * 0.05f;
+                if (noise_floor_rms_ < 20.0f)  noise_floor_rms_ = 20.0f;
+                if (noise_floor_rms_ > 600.0f) noise_floor_rms_ = 600.0f;
+                if (voice_detected_ && now_us - last_voice_frame_us_ > 600000) {
+                    voice_detected_ = false;
+                }
+            }
+        }
         PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
     });
 
@@ -728,9 +762,14 @@ void AudioService::EnableVoiceProcessing(bool enable) {
             }
         }
         audio_processor_->Start();
+        // 能量 VAD 复位 + 提示音屏蔽窗起点 (见 OnOutput 回调注释)
+        voice_detected_ = false;
+        last_voice_frame_us_ = 0;
+        voice_proc_start_us_ = esp_timer_get_time();
         xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
     } else {
         audio_processor_->Stop();
+        voice_detected_ = false;
         xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
     }
 }

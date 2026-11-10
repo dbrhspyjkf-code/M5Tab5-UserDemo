@@ -24,6 +24,7 @@ bool xiaozhi_is_active(void) { return false; }
 bool xiaozhi_is_voice_detected(void) { return false; }
 void xiaozhi_note_user_stt(void) {}
 long long xiaozhi_last_user_stt_ms(void) { return 0; }
+void xiaozhi_end_conversation(void) {}
 
 // C++ only stubs
 void xiaozhi_register_stt_callback(std::function<void(const std::string&)> cb) {}

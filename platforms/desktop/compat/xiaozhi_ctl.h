@@ -29,6 +29,7 @@ bool xiaozhi_is_active(void);
 bool xiaozhi_is_voice_detected(void);  // 桌面 stub: 恒 false
 void xiaozhi_note_user_stt(void);      // 桌面 stub: no-op
 long long xiaozhi_last_user_stt_ms(void);  // 桌面 stub: 恒 0
+void xiaozhi_end_conversation(void);   // 桌面 stub: no-op
 
 #ifdef __cplusplus
 }

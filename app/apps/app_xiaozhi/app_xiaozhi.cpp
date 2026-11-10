@@ -93,21 +93,36 @@ void AppXiaoZhi::onRunning()
         }
     }
 
-    // ── 回答完成后 3s 无接话自动退出 (2026-11-10 用户定稿) ──
-    // 只有小智完整回答过至少一次(_answered: 状态离开 Speaking)后, 回到 Idle
-    // 再静默 3s 才退出; 唤醒后等用户开口的 Listening / 连接中 Connecting /
-    // 回答间隙一律不计时 —— 画面刚显示就开始倒计时是错误行为(用户明确纠正)。
-    // 每次状态跳转都重置静默计时(进入 Idle / 重新唤醒都从零起算)。
+    // ── 3s 自动退出 (2026-11-10 定稿): 两种情况 ──
+    // ① 唤醒后 3s 内用户没说话 (Listening 期间 VAD 没检测到人声, 识别文本也
+    //    没回传) → 退出; ② 小智回答完后 3s 没接话 (回到 Idle) → 退出。
+    // 听到过用户说话的 Listening (等 STT/LLM/TTS) 与 Speaking/Connecting 不计时。
+    // VAD 来自 audio_service 的轻量能量检测 (本板 AFE 处理器被裁, 原 VAD 恒
+    // false; 弹窗提示音已在底层 700ms 屏蔽窗内), STT 回传时间戳做兜底。
     int st = xiaozhi_get_device_state();
     if (st != _last_state) {
         if (_last_state == kDeviceStateSpeaking && st != kDeviceStateSpeaking) {
             _answered = true;   // 一次回答播完
         }
+        if (st == kDeviceStateListening) {
+            _heard_user = false;
+            _stt_at_listen_start = xiaozhi_last_user_stt_ms();
+        }
         _last_voice_ms = now_ms;
         _last_state = st;
     }
-    if (_answered && st == kDeviceStateIdle && now_ms - _last_voice_ms > 3000) {
-        mclog::tagInfo(TAG, "auto-exit: 3s no follow-up after answer");
+    if (st == kDeviceStateListening) {
+        if (xiaozhi_is_voice_detected() ||
+            xiaozhi_last_user_stt_ms() != _stt_at_listen_start) {
+            _heard_user = true;
+            _last_voice_ms = now_ms;
+        }
+    }
+    bool silent3s = (now_ms - _last_voice_ms > 3000);
+    if ((st == kDeviceStateListening && !_heard_user && silent3s) ||
+        (_answered && st == kDeviceStateIdle && silent3s)) {
+        mclog::tagInfo(TAG, "auto-exit: 3s rule (st=%d heard=%d answered=%d)",
+                       st, (int)_heard_user, (int)_answered);
         close();
         return;
     }
@@ -117,6 +132,10 @@ void AppXiaoZhi::onClose()
 {
     xiaozhi_deactivate_screen();
     _removeSwipeGesture();
+    // 退出即结束会话: Speaking 丢掉剩余 TTS、Listening 关通道回 Idle+重开唤醒词。
+    // 否则关掉画面后后台还在听 (服务端静默超时 ~66s), 旁人说话会被当指令应答。
+    // Idle 时调用为 no-op (回答完自动退出场景)。
+    xiaozhi_end_conversation();
     if (_return_scr) {
         // 回到唤醒前的画面 (同样在 LvglLockGuard 内; app 屏幕常驻, 指针有效)
         lv_screen_load(_return_scr);
@@ -152,6 +171,17 @@ void AppXiaoZhi::_installSwipeGesture()
                 if (code == LV_EVENT_PRESSED) {
                     lv_point_t p; lv_indev_get_point(dev, &p);
                     s_gpress = p;
+                    return;
+                }
+                if (code == LV_EVENT_CLICKED) {
+                    // 触碰小智界面即退出 (2026-11-10 用户定稿; 点按说话已移除)。
+                    // 前台守卫同上拨: indev 事件全局广播, 别的 app 里点按不得触发
+                    // close() → restoreScreen 拉走页面 (2026-10-27 同款教训)。
+                    if (!xiaozhi_screen_is_active()) return;
+                    lv_async_call([](void* udata) {
+                        auto* app = static_cast<AppXiaoZhi*>(udata);
+                        if (app) app->close();
+                    }, lv_event_get_user_data(e));
                     return;
                 }
                 if (code != LV_EVENT_GESTURE) return;

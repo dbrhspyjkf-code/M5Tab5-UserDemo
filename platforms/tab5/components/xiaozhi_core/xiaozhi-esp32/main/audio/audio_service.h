@@ -205,6 +205,11 @@ private:
     bool wake_word_initialized_ = false;
     bool audio_processor_initialized_ = false;
     bool voice_detected_ = false;
+    // 轻量能量 VAD 状态 (本板 CONFIG_USE_AUDIO_PROCESSOR=0, AFE VAD 缺失;
+    // 见 audio_service.cc OnOutput 回调注释)
+    int64_t voice_proc_start_us_ = 0;   // 本轮 voice processing 开启时刻 (提示音屏蔽窗起点)
+    int64_t last_voice_frame_us_ = 0;   // 最近一帧超阈值的时刻 (600ms 保持)
+    float noise_floor_rms_ = 100.0f;    // 自适应噪声底 (仅静音帧更新)
     bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
 
