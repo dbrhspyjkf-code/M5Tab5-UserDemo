@@ -9,6 +9,7 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <atomic>
 #include <vector>
 #include <algorithm>
@@ -166,6 +167,20 @@ extern "C" bool xiaozhi_is_voice_detected(void)
     // AFE WebRTC VAD 实时值 (AudioService::IsVoiceDetected)。
     // 仅在 Listening(音频处理器运行)期间有实时值; 其余状态恒 false。
     return Application::GetInstance().GetAudioService().IsVoiceDetected();
+}
+
+// 最近一次服务端 STT 回传用户文本的时间戳 (桥层 SetChatMessage("user") 盖章)。
+// 小智页用它区分 "本轮已听到用户说话(等回复, 不退出)" vs "唤醒后没说话(3s 退出)"。
+static int64_t s_last_user_stt_ms = 0;
+
+extern "C" void xiaozhi_note_user_stt(void)
+{
+    s_last_user_stt_ms = esp_timer_get_time() / 1000;
+}
+
+extern "C" int64_t xiaozhi_last_user_stt_ms(void)
+{
+    return s_last_user_stt_ms;
 }
 
 extern "C" bool xiaozhi_is_initialized(void)

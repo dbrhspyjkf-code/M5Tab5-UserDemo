@@ -93,18 +93,32 @@ void AppXiaoZhi::onRunning()
         }
     }
 
-    // ── 3s 无用户语音自动退出 (2026-11-10 定稿) ──
-    // 计时重置: 设备状态发生跳转, 或 Listening 期间 AFE VAD 听到人声。
-    // 只在 Idle(会话结束空转) / Listening(已唤醒但没说话、或回复间隙) 计静默;
-    // Speaking(小智在说) / Connecting(连接中) 不计时 → 不会截断对话或回答。
+    // ── 3s 无用户语音自动退出 (2026-11-10 定稿, 轮次感知) ──
+    // 进入 Listening = 新一轮: 清 _heard_user 并记 STT 基线;
+    // VAD 听到人声, 或服务端回传了本轮 STT 文本 → _heard_user=true。
+    // 只对 Idle(回答完没接话) 和 "Listening 且没听到用户说话" 计 3s 静默;
+    // 听到过用户说话的 Listening(等 STT/LLM/TTS 间隙)与 Speaking/Connecting
+    // 不计时 → 用户说完到小智开口再慢也不会误退 (用户反馈修复: 之前 LLM
+    // 思考间隙被当静默, 回复还没出画面就关了)。
     int st = xiaozhi_get_device_state();
-    if (st != _last_state ||
-        (st == kDeviceStateListening && xiaozhi_is_voice_detected())) {
+    if (st != _last_state) {
+        if (st == kDeviceStateListening) {
+            _heard_user = false;
+            _stt_at_listen_start = xiaozhi_last_user_stt_ms();
+        }
         _last_voice_ms = now_ms;
         _last_state = st;
     }
-    if ((st == kDeviceStateIdle || st == kDeviceStateListening) &&
-        now_ms - _last_voice_ms > 3000) {
+    if (st == kDeviceStateListening) {
+        if (xiaozhi_is_voice_detected() ||
+            xiaozhi_last_user_stt_ms() != _stt_at_listen_start) {
+            _heard_user = true;
+            _last_voice_ms = now_ms;
+        }
+    }
+    bool counting = (st == kDeviceStateIdle) ||
+                    (st == kDeviceStateListening && !_heard_user);
+    if (counting && now_ms - _last_voice_ms > 3000) {
         mclog::tagInfo(TAG, "auto-exit after 3s silence");
         close();
         return;

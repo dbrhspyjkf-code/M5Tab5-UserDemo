@@ -27,6 +27,8 @@ void xiaozhi_set_speaker_volume(int volume);
 int  xiaozhi_get_speaker_volume(void);
 bool xiaozhi_is_active(void);
 bool xiaozhi_is_voice_detected(void);  // 桌面 stub: 恒 false
+void xiaozhi_note_user_stt(void);      // 桌面 stub: no-op
+long long xiaozhi_last_user_stt_ms(void);  // 桌面 stub: 恒 0
 
 #ifdef __cplusplus
 }

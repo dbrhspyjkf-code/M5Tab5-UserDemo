@@ -78,6 +78,18 @@ bool xiaozhi_is_active(void);
 bool xiaozhi_is_voice_detected(void);
 
 /**
+ * 服务端 STT 回传用户文本时由桥层盖章 (Tab5BridgeLcdDisplay::SetChatMessage,
+ * role=user)。配合 xiaozhi_last_user_stt_ms 实现 "等回复期间不退出"。
+ */
+void xiaozhi_note_user_stt(void);
+
+/**
+ * 最近一次服务端 STT 回传用户文本的 esp_timer 毫秒时间戳 (0=从未)。
+ * 用于判定 "本轮 Listening 是否已收到过用户说话"。
+ */
+int64_t xiaozhi_last_user_stt_ms(void);
+
+/**
  * True after the xiaozhi Application task has been started and initialized
  * (i.e. the audio codec + event group are ready). Safe to call before
  * xiaozhi_start_task() — will return false.

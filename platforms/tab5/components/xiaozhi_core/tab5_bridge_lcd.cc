@@ -540,6 +540,7 @@ void Tab5BridgeLcdDisplay::SetChatMessage(const char* role, const char* content)
     // 只显示当前一条: 每条新消息直接替换标签文本。
     // 用户话=主题色, 小智=白色 (深色 scrim 上都保持可读)。
     bool is_user = (role && strcmp(role, "user") == 0);
+    if (is_user) xiaozhi_note_user_stt();   // 服务端已回传识别文本 → 盖章给 3s 退出判定
     lv_obj_set_style_text_color(msg_lbl_, lv_color_hex(is_user ? XZ_ACCENT : 0xFFFFFF), 0);
 
     // Drop emoji / symbol code-points the font doesn't carry (avoids LVGL
