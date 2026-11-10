@@ -6,6 +6,7 @@
 #include <esp_log.h>
 #include <esp_wifi.h>
 #include <esp_random.h>
+#include <esp_timer.h>
 #include <ctime>
 #include <cstring>
 #include "theme/theme.h"
@@ -104,16 +105,142 @@ Tab5BridgeLcdDisplay::~Tab5BridgeLcdDisplay()
     // Must be within LVGL lock since the timer runs in LVGL context.
     DisplayLockGuard lock(this);
     if (info_timer_) { lv_timer_delete(info_timer_); info_timer_ = nullptr; }
+    if (bg_buf_)    { lv_draw_buf_destroy(bg_buf_);  bg_buf_ = nullptr; }
+    if (blur_tmp_)  { free(blur_tmp_);               blur_tmp_ = nullptr; }
     // Null out borrowed handles so ~LcdDisplay() doesn't double-free them.
     display_  = nullptr;
     panel_    = nullptr;
     panel_io_ = nullptr;
 }
 
+// ─── Backdrop blur (RGB565 in-place) ─────────────────────────────────────────
+// 8× 盒滤波降采样(本身即强模糊) + 双线性放大回写同一缓冲。一次性成本 <100ms(P4),
+// 仅在小智打开瞬间跑一次。scratch 布局: [tw*th*2 降采样缓冲][tw*2 行混合缓冲]。
+static void _blur_rgb565(lv_draw_buf_t* buf, uint8_t* scratch, int tw, int th)
+{
+    const int w = buf->header.w;
+    const int h = buf->header.h;
+    const int stride_px = buf->header.stride / 2;   // stride 换算成 uint16 个数
+    auto* px    = (uint16_t*)buf->data;
+    auto* small = (uint16_t*)scratch;               // tw*th
+    auto* vrow  = (uint16_t*)(scratch + (size_t)tw * th * 2);  // tw (行混合结果)
+    constexpr int FP = 16;
+    const int32_t ONE = 1 << FP;
+
+    // 1) 盒滤波降采样 w×h → tw×th (RGB565 分量均值)
+    for (int ty = 0; ty < th; ty++) {
+        int y0 = (int)((int64_t)ty * h / th), y1 = (int)((int64_t)(ty + 1) * h / th);
+        if (y1 <= y0) y1 = y0 + 1;
+        for (int tx = 0; tx < tw; tx++) {
+            int x0 = (int)((int64_t)tx * w / tw), x1 = (int)((int64_t)(tx + 1) * w / tw);
+            if (x1 <= x0) x1 = x0 + 1;
+            uint32_t rs = 0, gs = 0, bs = 0;
+            for (int y = y0; y < y1; y++) {
+                const uint16_t* row = px + (size_t)y * stride_px;
+                for (int x = x0; x < x1; x++) {
+                    uint16_t p = row[x];
+                    rs += (p >> 11) & 0x1F;
+                    gs += (p >> 5)  & 0x3F;
+                    bs +=  p        & 0x1F;
+                }
+            }
+            uint32_t n = (uint32_t)((y1 - y0) * (x1 - x0));
+            small[(size_t)ty * tw + tx] =
+                (uint16_t)(((rs / n) << 11) | ((gs / n) << 5) | (bs / n));
+        }
+    }
+
+    // 2) 双线性放大 tw×th → w×h (定点 16.16; 源坐标逐像素递增, 无除法)
+    const int32_t dy_step = (int32_t)(((int64_t)th * ONE) / h);   // 每输出行的源行步进
+    const int32_t dx_step = (int32_t)(((int64_t)tw * ONE) / w);   // 每输出列的源列步进
+    for (int y = 0; y < h; y++) {
+        int32_t syf = dy_step * (2 * y + 1) / 2 - ONE / 2;        // (y+0.5)*th/h - 0.5
+        int y0 = syf >> FP;
+        if (y0 < 0) y0 = 0;
+        if (y0 > th - 1) y0 = th - 1;
+        int y1 = y0 + 1; if (y1 > th - 1) y1 = th - 1;
+        int32_t wy = syf - (y0 << FP);
+        if (wy < 0) wy = 0;
+        if (wy > ONE) wy = ONE;
+        const uint16_t* srow0 = small + (size_t)y0 * tw;
+        const uint16_t* srow1 = small + (size_t)y1 * tw;
+        for (int i = 0; i < tw; i++) {          // 行混合预计算, 逐像素只剩一次列混合
+            uint16_t pa = srow0[i], pb = srow1[i];
+            uint32_t ra = (pa >> 11) & 0x1F, ga = (pa >> 5) & 0x3F, ba = pa & 0x1F;
+            uint32_t rb = (pb >> 11) & 0x1F, gb = (pb >> 5) & 0x3F, bb = pb & 0x1F;
+            uint32_t r = ra + (((int32_t)(rb - ra) * wy) >> FP);
+            uint32_t g = ga + (((int32_t)(gb - ga) * wy) >> FP);
+            uint32_t b = ba + (((int32_t)(bb - ba) * wy) >> FP);
+            vrow[i] = (uint16_t)((r << 11) | (g << 5) | b);
+        }
+        uint16_t* out = px + (size_t)y * stride_px;
+        int32_t sxf = dx_step / 2 - ONE / 2;
+        for (int x = 0; x < w; x++) {
+            int x0 = sxf >> FP;
+            if (x0 < 0) x0 = 0;
+            if (x0 > tw - 1) x0 = tw - 1;
+            int x1 = x0 + 1; if (x1 > tw - 1) x1 = tw - 1;
+            int32_t wx = sxf - (x0 << FP);
+            if (wx < 0) wx = 0;
+            if (wx > ONE) wx = ONE;
+            uint16_t pa = vrow[x0], pb = vrow[x1];
+            uint32_t ra = (pa >> 11) & 0x1F, ga = (pa >> 5) & 0x3F, ba = pa & 0x1F;
+            uint32_t rb = (pb >> 11) & 0x1F, gb = (pb >> 5) & 0x3F, bb = pb & 0x1F;
+            uint32_t r = ra + (((int32_t)(rb - ra) * wx) >> FP);
+            uint32_t g = ga + (((int32_t)(gb - ga) * wx) >> FP);
+            uint32_t b = ba + (((int32_t)(bb - ba) * wx) >> FP);
+            out[x] = (uint16_t)((r << 11) | (g << 5) | b);
+            sxf += dx_step;
+        }
+    }
+}
+
+// 快照当前活动屏 → 模糊 → 设为全屏背景。必须在 lv_screen_load(scr_) 之前调
+// (此时活动屏还是前一画面)。已在小智页时跳过(重开唤醒不重拍, 保留原背景)。
+void Tab5BridgeLcdDisplay::CaptureBlurredBackdrop()
+{
+    lv_obj_t* prev = lv_screen_active();
+    if (!prev || prev == scr_) return;
+
+    if (!bg_buf_) {
+        // 1.84MB 常驻复用: lv_malloc → 系统堆 → 大块自动落 PSRAM
+        bg_buf_ = lv_draw_buf_create(width_, height_, LV_COLOR_FORMAT_RGB565, 0);
+        const int TW = width_ / 8, TH = height_ / 8;   // 1280x720 → 160x90
+        blur_tmp_ = malloc((size_t)TW * TH * 2 + TW * 2);
+    }
+    if (!bg_buf_ || !blur_tmp_) {
+        ESP_LOGW(TAG, "backdrop buffers alloc failed, keep plain bg");
+        return;
+    }
+
+    int64_t t0 = esp_timer_get_time();
+    if (lv_snapshot_take_to_draw_buf(prev, LV_COLOR_FORMAT_RGB565, bg_buf_) != LV_RESULT_OK) {
+        ESP_LOGW(TAG, "snapshot failed, keep plain bg");
+        return;
+    }
+    _blur_rgb565(bg_buf_, (uint8_t*)blur_tmp_, width_ / 8, height_ / 8);
+
+    bg_dsc_.header.magic  = LV_IMAGE_HEADER_MAGIC;
+    bg_dsc_.header.cf     = LV_COLOR_FORMAT_RGB565;
+    bg_dsc_.header.w      = bg_buf_->header.w;
+    bg_dsc_.header.h      = bg_buf_->header.h;
+    bg_dsc_.header.stride = bg_buf_->header.stride;
+    bg_dsc_.data_size     = bg_buf_->data_size;
+    bg_dsc_.data          = (const uint8_t*)bg_buf_->data;
+
+    if (bg_img_) {
+        lv_image_set_src(bg_img_, &bg_dsc_);
+        lv_obj_clear_flag(bg_img_, LV_OBJ_FLAG_HIDDEN);
+    }
+    ESP_LOGI(TAG, "backdrop captured+blurred in %lld ms",
+             (long long)((esp_timer_get_time() - t0) / 1000));
+}
+
 void Tab5BridgeLcdDisplay::ActivateScreen()
 {
     if (!scr_) return;
     DisplayLockGuard lock(this);
+    CaptureBlurredBackdrop();   // 加载前快照前一画面做模糊背景
     lv_screen_load(scr_);
 }
 
@@ -139,12 +266,18 @@ void Tab5BridgeLcdDisplay::BuildRichUi()
     lv_obj_add_flag(scr_, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr_, scr_tap_cb, LV_EVENT_CLICKED, nullptr);
 
+    // 分层(创建顺序即 z 序, 底→顶): 模糊背景 → 表情 → 底部消息条 → 状态栏。
+    // 背景在每次 ActivateScreen 时由 CaptureBlurredBackdrop 填充, 首次成功前隐藏。
+    bg_img_ = lv_image_create(scr_);
+    lv_obj_set_pos(bg_img_, 0, 0);
+    lv_obj_clear_flag(bg_img_, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_add_flag(bg_img_, LV_OBJ_FLAG_HIDDEN);
+
     // The top info bar (clock/WiFi/battery) now lives on the home screen, so
-    // xiaozhi runs full-screen with no top bar. The bottom status bar (the
-    // listening/speaking state dot) stays.
-    BuildEmotionArea(); // y=12,  h=136
-    BuildChatScroll();  // y=152, h=512
-    BuildStatusBar();   // y=664, h=56  → total=720
+    // xiaozhi runs full-screen with no top bar.
+    BuildEmotionArea();   // 居中 ≈(640,270), 4×
+    BuildBottomStrip();   // y=540, h=180 (消息区 540..664 + 状态栏区 664..720)
+    BuildStatusBar();
 }
 
 void Tab5BridgeLcdDisplay::BuildInfoBar()
@@ -196,21 +329,25 @@ void Tab5BridgeLcdDisplay::BuildInfoBar()
 
 void Tab5BridgeLcdDisplay::BuildEmotionArea()
 {
-    // The face lives directly on the screen (not a small band) so it can wander
-    // the WHOLE screen while idle. Resting position is the top band, above chat.
-    // Font-awesome icon scaled ~2× (512 ≈ 2× in LVGL 9, 256 = 1×). Was 768/3×
-    // but the icon's glyph padding made the bottom get clipped by the chat
-    // scroll area starting at y=152. y=30 keeps the icon fully within 0..152.
+    // 2026-11-10 redesign: face is the hero element, centered in the blurred
+    // top region (screen center shifted up 90px → y≈270), scaled 4×
+    // (1024 = 4×256 in LVGL 9). Pivot set to the glyph center so the scaled
+    // icon stays centered on its anchor.
     emotion_icon_lbl_ = lv_label_create(scr_);
     lv_obj_set_style_text_font(emotion_icon_lbl_, &font_awesome_30_4, 0);
     lv_obj_set_style_text_color(emotion_icon_lbl_, lv_color_hex(XZ_ACCENT), 0);
     lv_label_set_text(emotion_icon_lbl_, FONT_AWESOME_NEUTRAL);
-    lv_obj_align(emotion_icon_lbl_, LV_ALIGN_TOP_MID, 0, 30);
-    lv_obj_set_style_transform_scale_x(emotion_icon_lbl_, 512, 0);
-    lv_obj_set_style_transform_scale_y(emotion_icon_lbl_, 512, 0);
+    lv_obj_align(emotion_icon_lbl_, LV_ALIGN_CENTER, 0, -90);
+    lv_obj_update_layout(emotion_icon_lbl_);
+    lv_obj_set_style_transform_pivot_x(emotion_icon_lbl_,
+                                       lv_obj_get_width(emotion_icon_lbl_) / 2, 0);
+    lv_obj_set_style_transform_pivot_y(emotion_icon_lbl_,
+                                       lv_obj_get_height(emotion_icon_lbl_) / 2, 0);
+    lv_obj_set_style_transform_scale_x(emotion_icon_lbl_, 1024, 0);
+    lv_obj_set_style_transform_scale_y(emotion_icon_lbl_, 1024, 0);
 
-    // Idle "screensaver" — drift the face to random spots across the whole
-    // screen while idle, and glide back to the top band when a conversation
+    // Idle "screensaver" — drift the face to random spots inside the blurred
+    // top region while idle, and snap back to the center when a conversation
     // starts. translate styles shift it visually without changing its layout
     // anchor, so SetEmotion / recenter stay simple.
     // Slow cadence + instant moves (below). This device is resource-tight: the
@@ -235,11 +372,14 @@ void Tab5BridgeLcdDisplay::EmojiWanderTimerCb(lv_timer_t* t)
         if (!fg_done) { lv_obj_move_foreground(e); fg_done = true; }
 
         // Instant hop to a random spot — a single small redraw every 5 s,
-        // negligible load, instead of 90 animated frames. Base anchor is
-        // top-mid (x centered, y=70).
-        int max_x = self->width_ / 2 - 90;
-        int min_y = -50;
-        int max_y = self->height_ - 70 - 110;
+        // negligible load, instead of 90 animated frames. Base anchor is the
+        // center of the blurred top region (x centered, y = height/2 - 90).
+        // ~60px visual half-height at 4×; keep the face inside the top 3/4
+        // (0..540) with margin so it never covers the bottom message strip.
+        int half  = 90;                                   // face half-height + margin
+        int max_x = self->width_ / 2 - half;
+        int min_y = -(self->height_ / 2 - 90 - half);
+        int max_y = (self->height_ * 3 / 4 - half) - (self->height_ / 2 - 90);
         if (max_x < 1) max_x = 1;
         if (max_y < min_y + 1) max_y = min_y + 1;
         int tx = (int)(esp_random() % (uint32_t)(2 * max_x + 1)) - max_x;
@@ -254,42 +394,45 @@ void Tab5BridgeLcdDisplay::EmojiWanderTimerCb(lv_timer_t* t)
     }
 }
 
-void Tab5BridgeLcdDisplay::BuildChatScroll()
+void Tab5BridgeLcdDisplay::BuildBottomStrip()
 {
-    chat_scroll_ = lv_obj_create(scr_);
-    lv_obj_set_pos(chat_scroll_, 0, 152);
-    lv_obj_set_size(chat_scroll_, width_, 512);
-    lv_obj_set_style_bg_color(chat_scroll_, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(chat_scroll_, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(chat_scroll_, 0, 0);
-    lv_obj_set_style_pad_left(chat_scroll_, 40, 0);
-    lv_obj_set_style_pad_right(chat_scroll_, 40, 0);
-    lv_obj_set_style_pad_top(chat_scroll_, 20, 0);
-    lv_obj_set_style_pad_bottom(chat_scroll_, 20, 0);
-    lv_obj_set_style_pad_row(chat_scroll_, 12, 0);
-    lv_obj_set_flex_flow(chat_scroll_, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(chat_scroll_, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_scroll_dir(chat_scroll_, LV_DIR_VER);
+    // 底部 1/4 (y=540..720): 半透明黑 scrim 压住模糊背景, 盖住消息区与状态栏区。
+    // 只显示当前一条消息(无泡泡, 每条新消息替换上一条); 状态栏文字直接落在 scrim 上。
+    lv_obj_t* strip = lv_obj_create(scr_);
+    lv_obj_set_pos(strip, 0, 540);
+    lv_obj_set_size(strip, width_, height_ - 540);   // 180
+    lv_obj_set_style_bg_color(strip, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(strip, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(strip, 0, 0);
+    lv_obj_set_style_pad_all(strip, 0, 0);
+    lv_obj_clear_flag(strip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
-    // Placeholder hint
-    hint_lbl_ = lv_label_create(chat_scroll_);
+    // 当前消息标签 — 垂直居中于消息区 540..664 (条中心上移 28px)
+    msg_lbl_ = lv_label_create(strip);
+    lv_obj_set_style_text_font(msg_lbl_, zh_font(), 0);
+    lv_obj_set_style_text_color(msg_lbl_, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_align(msg_lbl_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(msg_lbl_, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(msg_lbl_, width_ - 80);
+    lv_label_set_text(msg_lbl_, "");
+    lv_obj_align(msg_lbl_, LV_ALIGN_CENTER, 0, -28);
+
+    // 空闲提示 (首条消息出现后隐藏, ClearChatMessages 恢复)
+    hint_lbl_ = lv_label_create(strip);
     lv_obj_set_style_text_font(hint_lbl_, zh_font(), 0);
     lv_obj_set_style_text_color(hint_lbl_, lv_color_hex(XZ_DIM), 0);
     lv_obj_set_style_text_align(hint_lbl_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(hint_lbl_, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint_lbl_, width_ - 80);
-    lv_label_set_text(hint_lbl_, "点击屏幕开始对话\nTap screen to talk");
-    lv_obj_set_style_margin_top(hint_lbl_, 140, 0);
+    lv_label_set_text(hint_lbl_, "点击屏幕开始对话");
+    lv_obj_align(hint_lbl_, LV_ALIGN_CENTER, 0, -28);
 }
 
 void Tab5BridgeLcdDisplay::BuildStatusBar()
 {
+    // 2026-11-10: 不再自带底色, 直接落在底部 scrim 上(与消息区一体)
     lv_obj_t* bar = lv_obj_create(scr_);
     lv_obj_set_pos(bar, 0, 664);
     lv_obj_set_size(bar, width_, 56);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(XZ_TRACK), 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(bar, 0, 0);
     lv_obj_set_style_pad_all(bar, 0, 0);
     lv_obj_clear_flag(bar, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
@@ -351,70 +494,7 @@ static std::string _strip_unsupported_glyphs(const char* in)
     return s;
 }
 
-// ─── Chat bubble helper ───────────────────────────────────────────────────────
-
-void Tab5BridgeLcdDisplay::AddChatBubble(const char* role, const char* content)
-{
-    bool is_user = (role && strcmp(role, "user") == 0);
-
-    // Remove hint on first message
-    if (hint_lbl_) {
-        lv_obj_delete(hint_lbl_);
-        hint_lbl_ = nullptr;
-    }
-
-    // Evict oldest if at cap
-    if ((int)chat_bubbles_.size() >= MAX_BUBBLES) {
-        lv_obj_delete(chat_bubbles_.front());
-        chat_bubbles_.pop_front();
-    }
-
-    int bubble_max_w = width_ * 3 / 4; // 75 % of screen
-
-    // Outer row (full width flex item) — holds the bubble aligned left or right
-    lv_obj_t* row = lv_obj_create(chat_scroll_);
-    lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Bubble background
-    lv_obj_t* bubble = lv_obj_create(row);
-    lv_color_t bg = is_user ? lv_color_hex(XZ_PRESS) : lv_color_hex(XZ_CARD);
-    lv_obj_set_style_bg_color(bubble, bg, 0);
-    lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(bubble, 18, 0);
-    lv_obj_set_style_border_width(bubble, 0, 0);
-    lv_obj_set_style_pad_all(bubble, 18, 0);
-    lv_obj_set_width(bubble, LV_SIZE_CONTENT);
-    lv_obj_set_height(bubble, LV_SIZE_CONTENT);
-
-    // Drop emoji / symbol code-points the font doesn't carry (avoids LVGL
-    // 'glyph dsc. not found' warning storms that tripped Stack protection
-    // fault on 2026-06-19). The emoji_table.h whitelist is preserved but
-    // not consulted — see header comment on _strip_unsupported_glyphs.
-    std::string filtered = _strip_unsupported_glyphs(content);
-
-    // Message label
-    lv_obj_t* lbl = lv_label_create(bubble);
-    lv_obj_set_style_text_font(lbl, zh_font(), 0);
-    lv_color_t tc = is_user ? lv_color_hex(XZ_HI) : lv_color_hex(XZ_HI);
-    lv_obj_set_style_text_color(lbl, tc, 0);
-    lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(lbl, LV_SIZE_CONTENT);
-    lv_obj_set_style_max_width(lbl, bubble_max_w - 36, 0);
-    lv_label_set_text(lbl, filtered.c_str());
-
-    // Align bubble within row
-    lv_obj_align(bubble, is_user ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID, 0, 0);
-
-    chat_bubbles_.push_back(row);
-
-    // Auto-scroll to bottom
-    lv_obj_scroll_to_y(chat_scroll_, LV_COORD_MAX, LV_ANIM_ON);
-}
+// ─── 当前消息 (单标签, 无泡泡) ────────────────────────────────────────────────
 
 // ─── LVGL timer: info bar refresh ─────────────────────────────────────────────
 
@@ -506,16 +586,26 @@ void Tab5BridgeLcdDisplay::SetChatMessage(const char* role, const char* content)
 {
     if (!content || content[0] == '\0') return;
     DisplayLockGuard lock(this);
-    AddChatBubble(role ? role : "assistant", content);
+    if (!msg_lbl_) return;
+
+    if (hint_lbl_) lv_obj_add_flag(hint_lbl_, LV_OBJ_FLAG_HIDDEN);
+
+    // 只显示当前一条: 每条新消息直接替换标签文本。
+    // 用户话=主题色, 小智=白色 (深色 scrim 上都保持可读)。
+    bool is_user = (role && strcmp(role, "user") == 0);
+    lv_obj_set_style_text_color(msg_lbl_, lv_color_hex(is_user ? XZ_ACCENT : 0xFFFFFF), 0);
+
+    // Drop emoji / symbol code-points the font doesn't carry (avoids LVGL
+    // 'glyph dsc. not found' warning storms) — see _strip_unsupported_glyphs.
+    std::string filtered = _strip_unsupported_glyphs(content);
+    lv_label_set_text(msg_lbl_, filtered.c_str());
 }
 
 void Tab5BridgeLcdDisplay::ClearChatMessages()
 {
     DisplayLockGuard lock(this);
-    for (auto* obj : chat_bubbles_) {
-        lv_obj_delete(obj);
-    }
-    chat_bubbles_.clear();
+    if (msg_lbl_) lv_label_set_text(msg_lbl_, "");
+    if (hint_lbl_) lv_obj_clear_flag(hint_lbl_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void Tab5BridgeLcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> /*image*/)

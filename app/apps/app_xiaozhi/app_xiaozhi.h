@@ -31,6 +31,9 @@ private:
     int64_t _opened_at_ms = 0;  // timestamp of last onOpen, for min-display grace period
     lv_indev_t* _gesture_indev = nullptr;
     lv_obj_t* _scr = nullptr;   // web 占位屏 (PLATFORM_BUILD_WEB only)
+    // 唤醒时正在显示的画面 (设备路径): 模糊背景显示它, 关闭时也回到它;
+    // 为空时兜底走 _close_cb (home->restoreScreen 回主页)
+    lv_obj_t* _return_scr = nullptr;
 
     void _installSwipeGesture();
     void _removeSwipeGesture();

@@ -1,18 +1,18 @@
 #pragma once
 #include "display/lcd_display.h"
 #include <lvgl.h>
-#include <deque>
 
 /**
  * Tab5BridgeLcdDisplay - wraps the lv_display_t* already created by
  * Tab5-UserDemo's BSP.  Does NOT reinitialize any LCD hardware or LVGL.
  *
- * Provides a rich UI with:
- *   - Info bar (clock, WiFi RSSI icon, battery %)
- *   - Emotion area (2x font_awesome icon)
- *   - Scrollable chat bubble history (user = right/blue, AI = left/dark)
- *   - Status bar (colored dot + Chinese state text)
- *   - Tap-to-talk on the full screen
+ * Layout (2026-11-10 redesign):
+ *   - Top 3/4: blurred snapshot of the screen that was visible before
+ *     xiaozhi was invoked (captured on every ActivateScreen)
+ *   - Middle: emotion face (4x font_awesome icon, wanders while idle)
+ *   - Bottom 1/4: semi-transparent scrim showing ONLY the current message
+ *     (each new message replaces the previous one, no bubble history)
+ *   - Status bar (colored dot + Chinese state text), tap-to-talk anywhere
  */
 class Tab5BridgeLcdDisplay : public LcdDisplay {
 public:
@@ -20,7 +20,7 @@ public:
     ~Tab5BridgeLcdDisplay() override;
 
     void ActivateScreen();
-    void DeactivateScreen();  // restores control to Mooncake (screen restored by AppHome callback)
+    void DeactivateScreen();  // restores control to Mooncake (screen restored by AppXiaoZhi close callback)
     lv_obj_t* GetScreen() const { return scr_; }
 
     // ── Overrides ──────────────────────────────────────────────────────────────
@@ -43,15 +43,17 @@ private:
     void BuildRichUi();
     void BuildInfoBar();
     void BuildEmotionArea();
-    void BuildChatScroll();
+    void BuildBottomStrip();
     void BuildStatusBar();
-    void AddChatBubble(const char* role, const char* content);
+
+    // Snapshot the outgoing screen into bg_buf_, blur it, and show it as the
+    // fullscreen backdrop. Called from ActivateScreen BEFORE lv_screen_load,
+    // while the previous screen is still the active one.
+    void CaptureBlurredBackdrop();
 
     // ── State ───────────────────────────────────────────────────────────────────
     enum class State { IDLE, CONNECTING, LISTENING, THINKING, SPEAKING };
     State state_ = State::IDLE;
-
-    static constexpr int MAX_BUBBLES = 8;
 
     // ── LVGL objects ────────────────────────────────────────────────────────────
     lv_obj_t* scr_            = nullptr;
@@ -62,13 +64,18 @@ private:
     lv_obj_t* batt_icon_      = nullptr;
     lv_obj_t* batt_pct_lbl_   = nullptr;
 
+    // Blurred backdrop (fullscreen image; hidden until first snapshot)
+    lv_obj_t* bg_img_         = nullptr;
+    lv_draw_buf_t* bg_buf_    = nullptr;   // persistent 1280x720 RGB565 snapshot buffer
+    lv_image_dsc_t bg_dsc_    = {};        // header pointing into bg_buf_
+    void* blur_tmp_           = nullptr;   // downsample scratch (allocated with bg_buf_)
+
     // Emotion area
     lv_obj_t* emotion_icon_lbl_ = nullptr;
 
-    // Chat
-    lv_obj_t* chat_scroll_    = nullptr;
+    // Bottom strip: current message (single label, no bubbles)
+    lv_obj_t* msg_lbl_        = nullptr;
     lv_obj_t* hint_lbl_       = nullptr;
-    std::deque<lv_obj_t*> chat_bubbles_;
 
     // Status bar
     lv_obj_t* state_dot_lbl_  = nullptr;

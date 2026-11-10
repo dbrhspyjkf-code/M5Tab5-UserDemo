@@ -59,6 +59,11 @@ void AppXiaoZhi::onOpen()
     lv_screen_load(_scr);
 #else
     xiaozhi_start_task();
+    // 记录唤醒前的画面 (onOpen 在 LvglLockGuard 内由 mooncake update 调用):
+    // 模糊背景显示它, 关闭时也回到它。已在小智屏上时保留原记录不覆盖。
+    if (!xiaozhi_screen_is_active()) {
+        _return_scr = lv_screen_active();
+    }
     xiaozhi_activate_screen();
     _was_active = false;
     _opened_at_ms = esp_timer_get_time() / 1000;
@@ -107,8 +112,12 @@ void AppXiaoZhi::onClose()
 {
     xiaozhi_deactivate_screen();
     _removeSwipeGesture();
-    if (_close_cb) {
-        _close_cb();
+    if (_return_scr) {
+        // 回到唤醒前的画面 (同样在 LvglLockGuard 内; app 屏幕常驻, 指针有效)
+        lv_screen_load(_return_scr);
+        _return_scr = nullptr;
+    } else if (_close_cb) {
+        _close_cb();   // 兜底: 无记录时回主页 (home->restoreScreen)
     }
 }
 #else
