@@ -160,6 +160,14 @@ extern "C" bool xiaozhi_is_active(void)
         || st == kDeviceStateSpeaking;
 }
 
+extern "C" bool xiaozhi_is_voice_detected(void)
+{
+    if (!s_initialized) return false;
+    // AFE WebRTC VAD 实时值 (AudioService::IsVoiceDetected)。
+    // 仅在 Listening(音频处理器运行)期间有实时值; 其余状态恒 false。
+    return Application::GetInstance().GetAudioService().IsVoiceDetected();
+}
+
 extern "C" bool xiaozhi_is_initialized(void)
 {
     return s_initialized;

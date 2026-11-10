@@ -71,6 +71,13 @@ int  xiaozhi_get_speaker_volume(void);
 bool xiaozhi_is_active(void);
 
 /**
+ * AFE WebRTC VAD 实时语音活动 (AudioService::IsVoiceDetected)。
+ * 仅在 Listening(音频处理器运行)期间有实时值, 其余状态恒 false。
+ * 用于小智页 "3s 无用户语音自动退出" 的静默判定 (2026-11-10)。
+ */
+bool xiaozhi_is_voice_detected(void);
+
+/**
  * True after the xiaozhi Application task has been started and initialized
  * (i.e. the audio codec + event group are ready). Safe to call before
  * xiaozhi_start_task() — will return false.

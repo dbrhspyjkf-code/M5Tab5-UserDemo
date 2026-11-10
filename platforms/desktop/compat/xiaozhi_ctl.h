@@ -26,6 +26,7 @@ bool xiaozhi_codec_write(const int16_t* data, int samples);  // 桌面 stub: 无
 void xiaozhi_set_speaker_volume(int volume);
 int  xiaozhi_get_speaker_volume(void);
 bool xiaozhi_is_active(void);
+bool xiaozhi_is_voice_detected(void);  // 桌面 stub: 恒 false
 
 #ifdef __cplusplus
 }

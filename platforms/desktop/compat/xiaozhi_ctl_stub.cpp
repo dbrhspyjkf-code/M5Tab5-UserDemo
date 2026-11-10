@@ -21,6 +21,7 @@ bool xiaozhi_codec_write(const int16_t*, int) { return false; }  // 桌面无音
 void xiaozhi_set_speaker_volume(int volume) { s_volume = volume; }
 int  xiaozhi_get_speaker_volume(void) { return s_volume; }
 bool xiaozhi_is_active(void) { return false; }
+bool xiaozhi_is_voice_detected(void) { return false; }
 
 // C++ only stubs
 void xiaozhi_register_stt_callback(std::function<void(const std::string&)> cb) {}

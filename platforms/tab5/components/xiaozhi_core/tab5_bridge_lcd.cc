@@ -274,10 +274,10 @@ void Tab5BridgeLcdDisplay::BuildRichUi()
     lv_obj_add_flag(bg_img_, LV_OBJ_FLAG_HIDDEN);
 
     // The top info bar (clock/WiFi/battery) now lives on the home screen, so
-    // xiaozhi runs full-screen with no top bar.
-    BuildEmotionArea();   // 居中 ≈(640,270), 4×
-    BuildBottomStrip();   // y=540, h=180 (消息区 540..664 + 状态栏区 664..720)
-    BuildStatusBar();
+    // xiaozhi runs full-screen with no top bar. 底部状态行(聆听中)也已移除
+    // (2026-11-10 定稿: 语音直聊, 底部只留当前消息)。
+    BuildEmotionArea();   // 屏幕正中偏下 ≈(640,420), 4×
+    BuildBottomStrip();   // y=540, h=180, 只显示当前消息
 }
 
 void Tab5BridgeLcdDisplay::BuildInfoBar()
@@ -329,15 +329,15 @@ void Tab5BridgeLcdDisplay::BuildInfoBar()
 
 void Tab5BridgeLcdDisplay::BuildEmotionArea()
 {
-    // 2026-11-10 redesign: face is the hero element, centered in the blurred
-    // top region (screen center shifted up 90px → y≈270), scaled 4×
-    // (1024 = 4×256 in LVGL 9). Pivot set to the glyph center so the scaled
-    // icon stays centered on its anchor.
+    // 2026-11-10 redesign: face is the hero element, at the screen center-x,
+    // slightly BELOW the vertical middle (center +60px → y≈420, above the
+    // bottom message strip at y=540), scaled 4× (1024 = 4×256 in LVGL 9).
+    // Pivot set to the glyph center so the scaled icon stays centered.
     emotion_icon_lbl_ = lv_label_create(scr_);
     lv_obj_set_style_text_font(emotion_icon_lbl_, &font_awesome_30_4, 0);
     lv_obj_set_style_text_color(emotion_icon_lbl_, lv_color_hex(XZ_ACCENT), 0);
     lv_label_set_text(emotion_icon_lbl_, FONT_AWESOME_NEUTRAL);
-    lv_obj_align(emotion_icon_lbl_, LV_ALIGN_CENTER, 0, -90);
+    lv_obj_align(emotion_icon_lbl_, LV_ALIGN_CENTER, 0, 60);
     lv_obj_update_layout(emotion_icon_lbl_);
     lv_obj_set_style_transform_pivot_x(emotion_icon_lbl_,
                                        lv_obj_get_width(emotion_icon_lbl_) / 2, 0);
@@ -373,13 +373,13 @@ void Tab5BridgeLcdDisplay::EmojiWanderTimerCb(lv_timer_t* t)
 
         // Instant hop to a random spot — a single small redraw every 5 s,
         // negligible load, instead of 90 animated frames. Base anchor is the
-        // center of the blurred top region (x centered, y = height/2 - 90).
-        // ~60px visual half-height at 4×; keep the face inside the top 3/4
+        // screen center shifted down 60px (y≈420, 正中偏下). ~60px visual
+        // half-height at 4×; keep the face inside the blurred top region
         // (0..540) with margin so it never covers the bottom message strip.
         int half  = 90;                                   // face half-height + margin
         int max_x = self->width_ / 2 - half;
-        int min_y = -(self->height_ / 2 - 90 - half);
-        int max_y = (self->height_ * 3 / 4 - half) - (self->height_ / 2 - 90);
+        int min_y = -(self->height_ / 2 + 60 - half);
+        int max_y = (self->height_ * 3 / 4 - half) - (self->height_ / 2 + 60);
         if (max_x < 1) max_x = 1;
         if (max_y < min_y + 1) max_y = min_y + 1;
         int tx = (int)(esp_random() % (uint32_t)(2 * max_x + 1)) - max_x;
@@ -396,8 +396,9 @@ void Tab5BridgeLcdDisplay::EmojiWanderTimerCb(lv_timer_t* t)
 
 void Tab5BridgeLcdDisplay::BuildBottomStrip()
 {
-    // 底部 1/4 (y=540..720): 半透明黑 scrim 压住模糊背景, 盖住消息区与状态栏区。
-    // 只显示当前一条消息(无泡泡, 每条新消息替换上一条); 状态栏文字直接落在 scrim 上。
+    // 底部 1/4 (y=540..720): 半透明黑 scrim 压住模糊背景。
+    // 只显示当前一条消息(无泡泡, 每条新消息替换上一条)。
+    // 2026-11-10 定稿: 无「聆听中」状态行、无「点击屏幕开始对话」提示(语音直聊)。
     lv_obj_t* strip = lv_obj_create(scr_);
     lv_obj_set_pos(strip, 0, 540);
     lv_obj_set_size(strip, width_, height_ - 540);   // 180
@@ -407,7 +408,7 @@ void Tab5BridgeLcdDisplay::BuildBottomStrip()
     lv_obj_set_style_pad_all(strip, 0, 0);
     lv_obj_clear_flag(strip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
-    // 当前消息标签 — 垂直居中于消息区 540..664 (条中心上移 28px)
+    // 当前消息标签 — 垂直居中于整条 (无状态行占用下半)
     msg_lbl_ = lv_label_create(strip);
     lv_obj_set_style_text_font(msg_lbl_, zh_font(), 0);
     lv_obj_set_style_text_color(msg_lbl_, lv_color_hex(0xFFFFFF), 0);
@@ -415,39 +416,7 @@ void Tab5BridgeLcdDisplay::BuildBottomStrip()
     lv_label_set_long_mode(msg_lbl_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(msg_lbl_, width_ - 80);
     lv_label_set_text(msg_lbl_, "");
-    lv_obj_align(msg_lbl_, LV_ALIGN_CENTER, 0, -28);
-
-    // 空闲提示 (首条消息出现后隐藏, ClearChatMessages 恢复)
-    hint_lbl_ = lv_label_create(strip);
-    lv_obj_set_style_text_font(hint_lbl_, zh_font(), 0);
-    lv_obj_set_style_text_color(hint_lbl_, lv_color_hex(XZ_DIM), 0);
-    lv_obj_set_style_text_align(hint_lbl_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(hint_lbl_, "点击屏幕开始对话");
-    lv_obj_align(hint_lbl_, LV_ALIGN_CENTER, 0, -28);
-}
-
-void Tab5BridgeLcdDisplay::BuildStatusBar()
-{
-    // 2026-11-10: 不再自带底色, 直接落在底部 scrim 上(与消息区一体)
-    lv_obj_t* bar = lv_obj_create(scr_);
-    lv_obj_set_pos(bar, 0, 664);
-    lv_obj_set_size(bar, width_, 56);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(bar, 0, 0);
-    lv_obj_set_style_pad_all(bar, 0, 0);
-    lv_obj_clear_flag(bar, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-
-    state_dot_lbl_ = lv_label_create(bar);
-    lv_obj_set_style_text_font(state_dot_lbl_, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(state_dot_lbl_, lv_color_hex(XZ_DIM), 0);
-    lv_label_set_text(state_dot_lbl_, "●");
-    lv_obj_align(state_dot_lbl_, LV_ALIGN_LEFT_MID, 36, 0);
-
-    state_text_lbl_ = lv_label_create(bar);
-    lv_obj_set_style_text_font(state_text_lbl_, zh_font(), 0);
-    lv_obj_set_style_text_color(state_text_lbl_, lv_color_hex(XZ_SOFT), 0);
-    lv_label_set_text(state_text_lbl_, "待命");
-    lv_obj_align(state_text_lbl_, LV_ALIGN_LEFT_MID, 68, 0);
+    lv_obj_align(msg_lbl_, LV_ALIGN_CENTER, 0, 0);
 }
 
 // Strip emoji / symbol code-points that the bundled cbin font (puhui_common)
@@ -549,30 +518,10 @@ void Tab5BridgeLcdDisplay::SetupUI()
     setup_ui_called_ = true; // suppress xiaozhi's heavy default UI
 }
 
-void Tab5BridgeLcdDisplay::SetStatus(const char* status)
+void Tab5BridgeLcdDisplay::SetStatus(const char* /*status*/)
 {
-    if (!status) return;
-    DisplayLockGuard lock(this);
-
-    // Derive state from status string (zh-CN)
-    State new_state = State::THINKING;
-    if (strstr(status, "聆听"))  new_state = State::LISTENING;
-    else if (strstr(status, "说话"))  new_state = State::SPEAKING;
-    else if (strstr(status, "待命"))  new_state = State::IDLE;
-    else if (strstr(status, "连接"))  new_state = State::CONNECTING;
-    state_ = new_state;
-
-    // Status bar dot color
-    lv_color_t dot_color;
-    switch (state_) {
-        case State::LISTENING:   dot_color = lv_color_hex(XZ_ACCENT); break;
-        case State::SPEAKING:    dot_color = lv_color_hex(XZ_OK); break;
-        case State::CONNECTING:  dot_color = lv_color_hex(XZ_WARN); break;
-        case State::THINKING:    dot_color = lv_color_hex(0x9B59B6); break;
-        default:                 dot_color = lv_color_hex(XZ_DIM); break;
-    }
-    if (state_dot_lbl_)  lv_obj_set_style_text_color(state_dot_lbl_, dot_color, 0);
-    if (state_text_lbl_) lv_label_set_text(state_text_lbl_, status);
+    // 2026-11-10 定稿: 底部状态行(●聆听中/说话中)已移除 — 语音直聊无需状态提示,
+    // 底部只显示当前消息。上游 application.cc 仍会调用本回调, 保留空实现。
 }
 
 void Tab5BridgeLcdDisplay::SetEmotion(const char* emotion)
@@ -587,8 +536,6 @@ void Tab5BridgeLcdDisplay::SetChatMessage(const char* role, const char* content)
     if (!content || content[0] == '\0') return;
     DisplayLockGuard lock(this);
     if (!msg_lbl_) return;
-
-    if (hint_lbl_) lv_obj_add_flag(hint_lbl_, LV_OBJ_FLAG_HIDDEN);
 
     // 只显示当前一条: 每条新消息直接替换标签文本。
     // 用户话=主题色, 小智=白色 (深色 scrim 上都保持可读)。
@@ -605,7 +552,6 @@ void Tab5BridgeLcdDisplay::ClearChatMessages()
 {
     DisplayLockGuard lock(this);
     if (msg_lbl_) lv_label_set_text(msg_lbl_, "");
-    if (hint_lbl_) lv_obj_clear_flag(hint_lbl_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void Tab5BridgeLcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> /*image*/)

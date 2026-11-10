@@ -44,16 +44,11 @@ private:
     void BuildInfoBar();
     void BuildEmotionArea();
     void BuildBottomStrip();
-    void BuildStatusBar();
 
     // Snapshot the outgoing screen into bg_buf_, blur it, and show it as the
     // fullscreen backdrop. Called from ActivateScreen BEFORE lv_screen_load,
     // while the previous screen is still the active one.
     void CaptureBlurredBackdrop();
-
-    // ── State ───────────────────────────────────────────────────────────────────
-    enum class State { IDLE, CONNECTING, LISTENING, THINKING, SPEAKING };
-    State state_ = State::IDLE;
 
     // ── LVGL objects ────────────────────────────────────────────────────────────
     lv_obj_t* scr_            = nullptr;
@@ -73,13 +68,9 @@ private:
     // Emotion area
     lv_obj_t* emotion_icon_lbl_ = nullptr;
 
-    // Bottom strip: current message (single label, no bubbles)
+    // Bottom strip: current message (single label, no bubbles, no status text —
+    // 2026-11-10 语音直聊定稿: 无「聆听中」状态行, 无「点击屏幕开始对话」提示)
     lv_obj_t* msg_lbl_        = nullptr;
-    lv_obj_t* hint_lbl_       = nullptr;
-
-    // Status bar
-    lv_obj_t* state_dot_lbl_  = nullptr;
-    lv_obj_t* state_text_lbl_ = nullptr;
 
     // ── Timers ─────────────────────────────────────────────────────────────────
     lv_timer_t* info_timer_   = nullptr;

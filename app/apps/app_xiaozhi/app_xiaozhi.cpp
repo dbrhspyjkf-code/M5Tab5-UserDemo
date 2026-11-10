@@ -65,8 +65,8 @@ void AppXiaoZhi::onOpen()
         _return_scr = lv_screen_active();
     }
     xiaozhi_activate_screen();
-    _was_active = false;
-    _opened_at_ms = esp_timer_get_time() / 1000;
+    _last_voice_ms = esp_timer_get_time() / 1000;
+    _last_state = xiaozhi_get_device_state();
     _installSwipeGesture();
 #endif
 }
@@ -93,18 +93,21 @@ void AppXiaoZhi::onRunning()
         }
     }
 
-    // Auto-dismiss when conversation ends (state→Idle after being active).
-    // 3 s minimum display time prevents the initial wake-word echo from
-    // closing the app before the user can interact.
-    if (_was_active && now_ms - _opened_at_ms > 3000) {
-        if (xiaozhi_get_device_state() == kDeviceStateIdle) {
-            mclog::tagInfo(TAG, "auto-dismiss after conversation ended");
-            close();
-            return;
-        }
+    // ── 3s 无用户语音自动退出 (2026-11-10 定稿) ──
+    // 计时重置: 设备状态发生跳转, 或 Listening 期间 AFE VAD 听到人声。
+    // 只在 Idle(会话结束空转) / Listening(已唤醒但没说话、或回复间隙) 计静默;
+    // Speaking(小智在说) / Connecting(连接中) 不计时 → 不会截断对话或回答。
+    int st = xiaozhi_get_device_state();
+    if (st != _last_state ||
+        (st == kDeviceStateListening && xiaozhi_is_voice_detected())) {
+        _last_voice_ms = now_ms;
+        _last_state = st;
     }
-    if (xiaozhi_is_active()) {
-        _was_active = true;
+    if ((st == kDeviceStateIdle || st == kDeviceStateListening) &&
+        now_ms - _last_voice_ms > 3000) {
+        mclog::tagInfo(TAG, "auto-exit after 3s silence");
+        close();
+        return;
     }
 }
 
