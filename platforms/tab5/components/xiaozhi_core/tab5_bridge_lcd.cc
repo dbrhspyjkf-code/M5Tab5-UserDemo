@@ -25,6 +25,59 @@ static const char* TAG = "Tab5BridgeLcd";
 
 LV_FONT_DECLARE(font_awesome_30_4);
 
+// ─── 官方 Twemoji64 表情包 (xiaozhi-fonts 组件, RGB565A8 带透明, 64×64) ───────
+// 情绪名映射与上游 emoji_collection.cc Twemoji64 一致; 服务端情绪串直接查表。
+extern "C" const lv_image_dsc_t emoji_1f636_64;  // neutral
+extern "C" const lv_image_dsc_t emoji_1f642_64;  // happy
+extern "C" const lv_image_dsc_t emoji_1f606_64;  // laughing
+extern "C" const lv_image_dsc_t emoji_1f602_64;  // funny
+extern "C" const lv_image_dsc_t emoji_1f614_64;  // sad
+extern "C" const lv_image_dsc_t emoji_1f620_64;  // angry
+extern "C" const lv_image_dsc_t emoji_1f62d_64;  // crying
+extern "C" const lv_image_dsc_t emoji_1f60d_64;  // loving
+extern "C" const lv_image_dsc_t emoji_1f633_64;  // embarrassed
+extern "C" const lv_image_dsc_t emoji_1f62f_64;  // surprised
+extern "C" const lv_image_dsc_t emoji_1f631_64;  // shocked
+extern "C" const lv_image_dsc_t emoji_1f914_64;  // thinking
+extern "C" const lv_image_dsc_t emoji_1f609_64;  // winking
+extern "C" const lv_image_dsc_t emoji_1f60e_64;  // cool
+extern "C" const lv_image_dsc_t emoji_1f60c_64;  // relaxed
+extern "C" const lv_image_dsc_t emoji_1f924_64;  // delicious
+extern "C" const lv_image_dsc_t emoji_1f618_64;  // kissy
+extern "C" const lv_image_dsc_t emoji_1f60f_64;  // confident
+extern "C" const lv_image_dsc_t emoji_1f634_64;  // sleepy
+extern "C" const lv_image_dsc_t emoji_1f61c_64;  // silly
+extern "C" const lv_image_dsc_t emoji_1f644_64;  // confused
+
+static const lv_image_dsc_t* emotion_to_emoji(const char* e)
+{
+    if (!e)                       return &emoji_1f636_64;
+    if (!strcmp(e, "neutral"))    return &emoji_1f636_64;
+    if (!strcmp(e, "happy"))      return &emoji_1f642_64;
+    if (!strcmp(e, "laughing"))   return &emoji_1f606_64;
+    if (!strcmp(e, "funny"))      return &emoji_1f602_64;
+    if (!strcmp(e, "excited"))    return &emoji_1f606_64;   // 同上游映射
+    if (!strcmp(e, "sad"))        return &emoji_1f614_64;
+    if (!strcmp(e, "angry"))      return &emoji_1f620_64;
+    if (!strcmp(e, "crying"))     return &emoji_1f62d_64;
+    if (!strcmp(e, "loving"))     return &emoji_1f60d_64;
+    if (!strcmp(e, "embarrassed"))return &emoji_1f633_64;
+    if (!strcmp(e, "surprised"))  return &emoji_1f62f_64;
+    if (!strcmp(e, "shocked"))    return &emoji_1f631_64;
+    if (!strcmp(e, "thinking"))   return &emoji_1f914_64;
+    if (!strcmp(e, "winking"))    return &emoji_1f609_64;
+    if (!strcmp(e, "cool"))       return &emoji_1f60e_64;
+    if (!strcmp(e, "relaxed"))    return &emoji_1f60c_64;
+    if (!strcmp(e, "delicious"))  return &emoji_1f924_64;
+    if (!strcmp(e, "kissy"))      return &emoji_1f618_64;
+    if (!strcmp(e, "confident"))  return &emoji_1f60f_64;
+    if (!strcmp(e, "sleepy"))     return &emoji_1f634_64;
+    if (!strcmp(e, "silly"))      return &emoji_1f61c_64;
+    if (!strcmp(e, "confused"))   return &emoji_1f644_64;
+    // microchip_ai 等无对应图: 回落 neutral (与上游 GetEmojiImage 缺失行为一致)
+    return &emoji_1f636_64;
+}
+
 // ─── Fonts ────────────────────────────────────────────────────────────────────
 // GB2312 common ~3500 glyphs, referenced in-place from flash (no big RAM copy).
 extern const uint8_t font_puhui_common_30_4_bin_start[]
@@ -37,26 +90,6 @@ static const lv_font_t* zh_font()
 }
 
 // ─── Helper mappings ──────────────────────────────────────────────────────────
-
-static const char* emotion_to_icon(const char* e)
-{
-    if (!e)                        return FONT_AWESOME_NEUTRAL;
-    if (!strcmp(e, "happy"))       return FONT_AWESOME_HAPPY;
-    if (!strcmp(e, "laughing"))    return FONT_AWESOME_LAUGHING;
-    if (!strcmp(e, "funny"))       return FONT_AWESOME_FUNNY;
-    if (!strcmp(e, "sad"))         return FONT_AWESOME_SAD;
-    if (!strcmp(e, "angry"))       return FONT_AWESOME_ANGRY;
-    if (!strcmp(e, "crying"))      return FONT_AWESOME_CRYING;
-    if (!strcmp(e, "loving"))      return FONT_AWESOME_LOVING;
-    if (!strcmp(e, "thinking"))    return FONT_AWESOME_THINKING;
-    if (!strcmp(e, "confused"))    return FONT_AWESOME_CONFUSED;
-    if (!strcmp(e, "surprised"))   return FONT_AWESOME_SURPRISED;
-    if (!strcmp(e, "cool"))        return FONT_AWESOME_COOL;
-    if (!strcmp(e, "excited"))     return FONT_AWESOME_LAUGHING;
-    if (!strcmp(e, "winking"))     return FONT_AWESOME_WINKING;
-    if (!strcmp(e, "microchip_ai")) return FONT_AWESOME_MICROCHIP_AI;
-    return FONT_AWESOME_NEUTRAL;
-}
 
 static const char* rssi_to_icon(int rssi)
 {
@@ -326,22 +359,15 @@ void Tab5BridgeLcdDisplay::BuildInfoBar()
 
 void Tab5BridgeLcdDisplay::BuildEmotionArea()
 {
-    // 2026-11-10 redesign: face is the hero element, at the screen center-x,
-    // slightly BELOW the vertical middle (center +60px → y≈420, above the
-    // bottom message strip at y=540), scaled 4× (1024 = 4×256 in LVGL 9).
-    // Pivot set to the glyph center so the scaled icon stays centered.
-    emotion_icon_lbl_ = lv_label_create(scr_);
-    lv_obj_set_style_text_font(emotion_icon_lbl_, &font_awesome_30_4, 0);
-    lv_obj_set_style_text_color(emotion_icon_lbl_, lv_color_hex(XZ_ACCENT), 0);
-    lv_label_set_text(emotion_icon_lbl_, FONT_AWESOME_NEUTRAL);
-    lv_obj_align(emotion_icon_lbl_, LV_ALIGN_CENTER, 0, 60);
-    lv_obj_update_layout(emotion_icon_lbl_);
-    lv_obj_set_style_transform_pivot_x(emotion_icon_lbl_,
-                                       lv_obj_get_width(emotion_icon_lbl_) / 2, 0);
-    lv_obj_set_style_transform_pivot_y(emotion_icon_lbl_,
-                                       lv_obj_get_height(emotion_icon_lbl_) / 2, 0);
-    lv_obj_set_style_transform_scale_x(emotion_icon_lbl_, 1024, 0);
-    lv_obj_set_style_transform_scale_y(emotion_icon_lbl_, 1024, 0);
+    // 2026-11-10: 官方 Twemoji64 表情包替代 font_awesome 字形 (64×64 RGB565A8
+    // 带透明, 直读 flash)。2× 显示 (512=2×256, 128px), 双线性抗锯齿由 LVGL
+    // image 默认开启。锚点=屏幕正中偏下 (640,420), pivot 设图心保持居中。
+    emotion_img_ = lv_image_create(scr_);
+    lv_image_set_src(emotion_img_, &emoji_1f636_64);
+    lv_image_set_scale(emotion_img_, 512);
+    lv_image_set_pivot(emotion_img_, 32, 32);
+    lv_obj_clear_flag(emotion_img_, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_align(emotion_img_, LV_ALIGN_CENTER, 0, 60);
 
     // Idle "screensaver" — drift the face to random spots inside the blurred
     // top region while idle, and snap back to the center when a conversation
@@ -356,9 +382,9 @@ void Tab5BridgeLcdDisplay::BuildEmotionArea()
 void Tab5BridgeLcdDisplay::EmojiWanderTimerCb(lv_timer_t* t)
 {
     auto* self = static_cast<Tab5BridgeLcdDisplay*>(lv_timer_get_user_data(t));
-    if (!self || !self->emotion_icon_lbl_) return;
+    if (!self || !self->emotion_img_) return;
 
-    lv_obj_t* e = self->emotion_icon_lbl_;
+    lv_obj_t* e = self->emotion_img_;
     bool idle = (Application::GetInstance().GetDeviceState() == kDeviceStateIdle);
 
     if (idle) {
@@ -525,7 +551,7 @@ void Tab5BridgeLcdDisplay::SetEmotion(const char* emotion)
 {
     if (!emotion) return;
     DisplayLockGuard lock(this);
-    if (emotion_icon_lbl_) lv_label_set_text(emotion_icon_lbl_, emotion_to_icon(emotion));
+    if (emotion_img_) lv_image_set_src(emotion_img_, emotion_to_emoji(emotion));
 }
 
 void Tab5BridgeLcdDisplay::SetChatMessage(const char* role, const char* content)

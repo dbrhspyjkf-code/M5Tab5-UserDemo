@@ -65,8 +65,8 @@ private:
     lv_image_dsc_t bg_dsc_    = {};        // header pointing into bg_buf_
     void* blur_tmp_           = nullptr;   // downsample scratch (allocated with bg_buf_)
 
-    // Emotion area
-    lv_obj_t* emotion_icon_lbl_ = nullptr;
+    // Emotion area (官方 Twemoji64 表情包, 2026-11-10 替换 font_awesome 字形)
+    lv_obj_t* emotion_img_ = nullptr;
 
     // Bottom strip: current message (single label, no bubbles, no status text —
     // 2026-11-10 语音直聊定稿: 无「聆听中」状态行, 无「点击屏幕开始对话」提示)
