@@ -87,7 +87,7 @@ struct GlSwipeCtx {
 // ── 生命周期 ────────────────────────────────────────────────────────────────
 AppGallery::AppGallery()
 {
-    setAppInfo().name = "图库";
+    setAppInfo().name = "照片";
 }
 
 void AppGallery::onOpen()
@@ -195,7 +195,7 @@ void AppGallery::_buildUi()
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* title = lv_label_create(_scr);
-    lv_label_set_text(title, "图库");
+    lv_label_set_text(title, "照片");
     lv_obj_set_style_text_font(title, zh30(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(theme::cur().text_hi), 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 14);

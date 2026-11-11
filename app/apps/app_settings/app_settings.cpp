@@ -824,7 +824,7 @@ void AppSettings::_buildToolsPage()
 
     // 第 3 行第 4 列: 图库 (共享相簿「壁纸」浏览, hermes :8766/gallery/*)
     //   图标走 kind=13 分支: 相框 + 双山 + 太阳; 2026-11-02 补最后空位
-    make_tile(3, 2, nullptr, 130, "图  库", _toolGallery_cb, 256, 12, -1, 13);
+    make_tile(3, 2, nullptr, 130, "照  片", _toolGallery_cb, 256, 12, -1, 13);
 
     // 第 4 行第 1 列: 计时器 (2026-11-05 入口从主页迁入, 主页按钮位让给「想法」;
     //   页面纵向可滚动, 第 4 行直接滚出来) 图标走 kind=14 秒表分支
