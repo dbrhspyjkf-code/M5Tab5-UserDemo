@@ -6,8 +6,11 @@
  * 复用 app_ha 的 HaClient(独立实例,4s 轮询,随 app 开关创建/销毁):
  *   - 客厅 SONOS  = media_player.ke_ting_2(Music Assistant 实体;原生 Sonos
  *     集成已从 HA 消失,MA 实体既是状态源也是控制目标 —— M5DIAL 2026-10-22 结论)
- *   - 起居室 HOMEPOD = media_player.qi_ju_shi_2(MA 的 RAOP/AirPlay1 送不了
- *     AirPlay2 音频,必须控制 HomePod 自身实体 —— 同上结论)
+ *   - 起居室 HOMEPOD = media_player.qi_ju_shi(MA 的 RAOP/AirPlay1 送不了
+ *     AirPlay2 音频,必须控制 HomePod 自身实体 —— 同上结论。
+ *     2026-11-11: MA 里删掉重加 HomePod 播放器 → 实体 id 从 qi_ju_shi_2
+ *     变回 qi_ju_shi,旧 id 成孤儿永不再更新;再遇「不显示正在播」先核对
+ *     HA 实体 id 是否又变了 —— hermes _cover_art.py 的 pod 同步受影响)
  *
  * UI(1280×720 触摸): 顶部页签二选一 + 大字 now-playing + 上一曲/播放暂停/
  * 下一曲 触摸键 + 音量滑条;上拨手势退出(app_radio 同款)。

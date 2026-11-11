@@ -95,7 +95,7 @@ static void snap_theme()
 // 页配置: 实体结论见头注释(M5DIAL 2026-10-22 验证)
 const AppPlayer::PageCfg AppPlayer::_pages[kPageCount] = {
     {"客厅 SONOS",   "media_player.ke_ting_2"},
-    {"起居室 HOMEPOD", "media_player.qi_ju_shi_2"},
+    {"起居室 HOMEPOD", "media_player.qi_ju_shi"},
 };
 
 AppPlayer::AppPlayer()
