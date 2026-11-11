@@ -259,10 +259,10 @@ void AppIdea::onRunning()
     // 临时状态提示超时 → 恢复默认 (2026-11-05: 修「播放中/删除中」等挂留不消失)
     if (_status_reset_ms && (int32_t)(GetHAL()->millis() - _status_reset_ms) >= 0) {
         _status_reset_ms = 0;
-        _setStatus("上拨退出", C_TEXT2);
+        _setStatus("", C_TEXT2);
     }
     if (_op_done.exchange(false)) {
-        _setStatus("上拨退出", C_TEXT2);   // 删除/清空完成立即恢复
+        _setStatus("", C_TEXT2);   // 删除/清空完成立即恢复
         _status_reset_ms = 0;
     }
 
@@ -340,7 +340,7 @@ void AppIdea::onRunning()
             _play_fill = nullptr;
             _play_btn_lbl = nullptr;
             _play_id.clear();
-            _setStatus("上拨退出", C_TEXT2);   // 播放结束, 「播放中…」不挂留
+            _setStatus("", C_TEXT2);   // 播放结束, 「播放中…」不挂留
             _status_reset_ms = 0;
         }
     }
@@ -554,7 +554,7 @@ void AppIdea::_buildUi()
     lv_obj_center(tl);
 
     _status_lbl = lv_label_create(card);
-    lv_label_set_text(_status_lbl, "上拨退出");
+    lv_label_set_text(_status_lbl, "");   // 用户定稿: 默认不显提示 (2026-11-12)
     lv_obj_set_style_text_font(_status_lbl, zh_font_md(), 0);
     lv_obj_set_style_text_color(_status_lbl, lv_color_hex(C_TEXT2), 0);
     lv_label_set_long_mode(_status_lbl, LV_LABEL_LONG_DOT);
@@ -778,14 +778,14 @@ void AppIdea::_renderList()
         lv_obj_align(tm, LV_ALIGN_TOP_LEFT, 108, 8);
 
         // 右侧删除区: 左拨卡片露出 (满程 216px), 点击直接删 (用户定稿: 不再弹
-        // 确认窗 — 滑开是明确意图)。垂直居中于卡片 (卡片高度先布局量出)。
+        // 确认窗 — 滑开是明确意图)。与卡片等高同形 (布局后量卡高, 2026-11-12)。
         lv_obj_update_layout(card);
         const int cw = lv_obj_get_width(card);
         const int ch = lv_obj_get_height(card);
-        int zh_ = (ch < 104) ? ch - 8 : 96;      // zone 高 clamp (卡片矮时不溢出)
         lv_obj_t* zone = lv_obj_create(row);
-        lv_obj_set_size(zone, 200, zh_);
-        lv_obj_set_pos(zone, cw + 16, (ch - zh_) / 2);
+        lv_obj_set_size(zone, 200, ch);
+        lv_obj_set_pos(zone, cw + 16, 0);
+        lv_obj_set_style_radius(zone, 16, 0);
         lv_obj_set_style_bg_color(zone, lv_color_hex(theme::cur().danger), 0);
         lv_obj_set_style_radius(zone, 16, 0);
         lv_obj_set_style_border_width(zone, 0, 0);
