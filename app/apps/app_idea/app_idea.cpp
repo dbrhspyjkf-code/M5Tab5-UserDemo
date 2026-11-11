@@ -778,15 +778,16 @@ void AppIdea::_renderList()
         lv_obj_align(tm, LV_ALIGN_TOP_LEFT, 108, 8);
 
         // 右侧删除区: 左拨卡片露出 (满程 216px), 点击直接删 (用户定稿: 不再弹
-        // 确认窗 — 滑开是明确意图)。与卡片等高同形 (布局后量卡高, 2026-11-12)。
+        // 确认窗 — 滑开是明确意图)。与卡片同底色同圆角连成一体 (2026-11-12
+        // 用户定稿: 不是独立红钮) — x=cw-16 向左搭接一个圆角半径, 接缝被同色
+        // 表面盖住; 文字用 danger 色保留删除暗示。
         lv_obj_update_layout(card);
         const int cw = lv_obj_get_width(card);
         const int ch = lv_obj_get_height(card);
         lv_obj_t* zone = lv_obj_create(row);
         lv_obj_set_size(zone, 200, ch);
-        lv_obj_set_pos(zone, cw + 16, 0);
-        lv_obj_set_style_radius(zone, 16, 0);
-        lv_obj_set_style_bg_color(zone, lv_color_hex(theme::cur().danger), 0);
+        lv_obj_set_pos(zone, cw - 16, 0);
+        lv_obj_set_style_bg_color(zone, lv_color_hex(C_CARD), 0);
         lv_obj_set_style_radius(zone, 16, 0);
         lv_obj_set_style_border_width(zone, 0, 0);
         lv_obj_set_style_shadow_width(zone, 0, 0);
@@ -806,7 +807,7 @@ void AppIdea::_renderList()
         lv_obj_t* dl = lv_label_create(zone);
         lv_label_set_text(dl, "删除");
         lv_obj_set_style_text_font(dl, zh_font_md(), 0);
-        lv_obj_set_style_text_color(dl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_color(dl, lv_color_hex(theme::cur().danger), 0);
         lv_obj_center(dl);
 
         // 单开原则: 按下本行时合拢已开的旧行 (邮件 _emailRowPressed_cb 同款)
