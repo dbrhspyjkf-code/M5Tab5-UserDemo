@@ -247,9 +247,9 @@ void AppHome::onOpen()
     lv_obj_set_style_transform_pivot_y(_status_wcond, LV_PCT(50), 0);
 
     // Helper: make a hero-card item tappable. tag routes the click:
-    // 1 = battery → power dialog, 2 = wifi → network dialog,
-    // 3 = gear → quick settings, 4 = weather → weather detail,
-    // 5 = mail → settings email sub-page.
+    // 2 = wifi → network dialog, 3 = gear → quick settings,
+    // 4 = weather → weather detail, 5 = mail → settings email sub-page.
+    // (tag 1 = power dialog 曾挂电池图标, 2026-11-11 电池显示移除后暂无入口)
     auto make_tappable = [&](lv_obj_t* item, int tag) {
         lv_obj_add_flag(item, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_ext_click_area(item, 18);  // enlarge touch target
@@ -386,16 +386,12 @@ void AppHome::onOpen()
     lv_label_set_text(_status_tools, LV_SYMBOL_SETTINGS);
     make_tappable(_status_tools, 3);
 
-    _status_batt = lv_label_create(irow);
-    lv_obj_set_style_text_font(_status_batt, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(_status_batt, lv_color_hex(INK), 0);
-    lv_label_set_text(_status_batt, LV_SYMBOL_BATTERY_FULL " --%");
-    make_tappable(_status_batt, 1);
+    // 电池显示已移除 (2026-11-11, 用户改用市电; 原电池图标点开的电源弹窗
+    // 暂无入口, 定时开关机仍走齿轮设置)
 
 #ifdef PLATFORM_BUILD_WEB
-    // web 版: WiFi 配置与电池均为 Tab5 硬件专属, 隐藏入口 (隐藏对象不占 flex 位)
+    // web 版: WiFi 配置为 Tab5 硬件专属, 隐藏入口 (隐藏对象不占 flex 位)
     lv_obj_add_flag(_status_wifi, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(_status_batt, LV_OBJ_FLAG_HIDDEN);
 #endif
 
     // ── Right column: video-style info rows + OPi wide card ───────────────
@@ -616,7 +612,6 @@ void AppHome::onOpen()
     }
     _last_dash_ms = 0;  // force first fetch on next onRunning tick
     _last_status_ms = 0;
-    _last_batt_ms   = 0;
 
     lv_screen_load(_scr);
 }
@@ -668,36 +663,6 @@ void AppHome::onRunning()
     // WiFi (light ink on the deep-green hero card; warm red when offline)
     bool wifi = GetHAL()->isWifiConnected();
     lv_obj_set_style_text_color(_status_wifi, lv_color_hex(wifi ? theme::cur().text_hi : theme::cur().danger), 0);
-
-    // Battery — read the (slower) power monitor about every 10 s
-    if (_last_batt_ms == 0 || now - _last_batt_ms > 10000) {
-        _last_batt_ms = now;
-        auto* hal = GetHAL();
-        hal->updatePowerMonitorData();
-        float v = hal->powerMonitorData.busVoltage;
-        int pct = -1;
-        if (v > 0.5f) {                       // NP-F550 7.4V pack: 8.4V=100%, 6.0V=0%
-            if      (v >= 8.4f) pct = 100;
-            else if (v <= 6.0f) pct = 0;
-            else                pct = (int)((v - 6.0f) / 2.4f * 100.0f);
-        }
-        const char* icon = pct < 0   ? LV_SYMBOL_BATTERY_EMPTY
-                         : pct >= 80  ? LV_SYMBOL_BATTERY_FULL
-                         : pct >= 55  ? LV_SYMBOL_BATTERY_3
-                         : pct >= 30  ? LV_SYMBOL_BATTERY_2
-                         : pct >= 10  ? LV_SYMBOL_BATTERY_1
-                         :              LV_SYMBOL_BATTERY_EMPTY;
-        char bb[24];
-        if (pct >= 0) snprintf(bb, sizeof(bb), "%s %d%%", icon, pct);
-        else          snprintf(bb, sizeof(bb), "%s --%%", icon);
-        lv_label_set_text(_status_batt, bb);
-        // Light ink tiers on deep green: warm red < 20%, amber < 40%, ink above
-        uint32_t c = pct < 0  ? theme::cur().text_dim
-                   : pct < 20 ? theme::cur().danger
-                   : pct < 40 ? theme::cur().warn
-                   :            theme::cur().text_hi;
-        lv_obj_set_style_text_color(_status_batt, lv_color_hex(c), 0);
-    }
 
     // Weather — refetch every 15 min; copy the latest cached text each tick.
     if (_last_weather_ms == 0 || now - _last_weather_ms > 15 * 60 * 1000) {
@@ -1262,7 +1227,6 @@ void AppHome::onClose()
     _status_wtemp = nullptr;
     _status_wcond = nullptr;
     _status_wifi  = nullptr;
-    _status_batt  = nullptr;
     _status_tools = nullptr;
     _status_email = nullptr;
     _np_lbl       = nullptr;

@@ -67,7 +67,9 @@ private:
 
     // Hero card on the home screen (orange, video-style, 2026-10-26). It
     // replaces the old top status bar: clock / date / lunar / weather lines
-    // plus the wifi / mail / gear / battery icon row at the card bottom.
+    // plus the wifi / mail / gear icon row at the card bottom.
+    // (2026-11-11: 电池显示移除, 用户改用市电供电; 电源弹窗 _openPowerDialog
+    // 保留但暂无入口, 定时开关机在齿轮设置里)
     lv_obj_t* _status_time    = nullptr;
     lv_obj_t* _status_date    = nullptr;
     lv_obj_t* _status_lunar   = nullptr;  // 农历 line under the date
@@ -76,12 +78,10 @@ private:
     lv_obj_t* _hero_sent_en   = nullptr;  // 每日一句英文 (hero 天气下方, 2026-10-30)
     lv_obj_t* _hero_sent_cn   = nullptr;  // 每日一句中文
     lv_obj_t* _status_wifi    = nullptr;
-    lv_obj_t* _status_batt    = nullptr;
     uint32_t  _last_status_ms = 0;
-    uint32_t  _last_batt_ms    = 0;
     uint32_t  _last_weather_ms = 0;
 
-    lv_obj_t* _status_tools   = nullptr;  // gear/quick-settings icon (left of battery)
+    lv_obj_t* _status_tools   = nullptr;  // gear/quick-settings icon
     lv_obj_t* _status_email   = nullptr;
     lv_obj_t* _np_lbl         = nullptr;  // 收音机后台播放中 ♪ 图标 (点按回收音机)
     lv_obj_t* _np_yt_lbl      = nullptr;  // 油管后台播放中 ♪YT 图标 (点按回油管播放页)

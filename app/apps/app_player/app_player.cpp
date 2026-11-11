@@ -493,7 +493,7 @@ void AppPlayer::_startLyricsFetch(const std::string& title, const std::string& a
     }
     if (_lyr_now) lv_label_set_text(_lyr_now, "");
     if (_lyr_fetching.exchange(true)) return;   // 在途任务会捡起新期望
-    GetHAL()->tryRunDetached([this]() {
+    GetHAL()->tryRunDetached([this]() {   // 16*1024 → hal 走 PSRAM 栈(见 _startArtFetch)
         for (int attempt = 0; attempt < 4; attempt++) {
             std::string title, artist;
             int dur;
@@ -567,7 +567,7 @@ void AppPlayer::_startLyricsFetch(const std::string& title, const std::string& a
         // 注: store(false) 前几微秒若 UI 恰好请求新歌(exchange 失败被拒),
         // 该首会暂时无词(显示已清空, 不会"定住"), 下次切歌即恢复 —— 概率极小,
         // 用 4 轮重拉循环覆盖了其余全部切歌窗口。
-    });
+    }, 16 * 1024);
 }
 
 // 按播放位置刷新歌词行(当前行亮 + 下一行暗)
@@ -697,9 +697,10 @@ void AppPlayer::onClose()
 void AppPlayer::_startArtFetch()
 {
     if (_art_fetching.exchange(true)) return;   // 上一张还在拉
-    // tryRunDetached(8KB 栈, 失败返回 false)——std::thread 默认 16KB 内部栈,
-    // 低内存时创建抛 system_error, 未捕获即 abort 重启(2026-10-26 实锤)
-    if (!GetHAL()->tryRunDetached([this]() { _artFetchTask(this); })) {
+    // tryRunDetached 失败返回 false——曾用 8KB 内部栈, 内部 RAM 碎片化低谷
+    // pthread_create 必败(2026-11-11 实锤: 串口成串 "pthread: Failed to
+    // create task!", 封面永远黑卡) → 16*1024 走 hal PSRAM 栈路径, 免疫碎片化
+    if (!GetHAL()->tryRunDetached([this]() { _artFetchTask(this); }, 16 * 1024)) {
         _art_fetching.store(false);   // 拉取失败: 允许下次重试
     }
 }
