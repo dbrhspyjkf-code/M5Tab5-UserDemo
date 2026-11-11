@@ -779,16 +779,15 @@ void AppIdea::_renderList()
         lv_obj_set_style_text_color(tm, lv_color_hex(C_TEXT2), 0);
         lv_obj_align(tm, LV_ALIGN_TOP_LEFT, 108, 8);
 
-        // 右侧删除钮 (邮件 mk_zone 同款风格): C_CARD 圆角钮 + danger 文字,
-        // 与卡片留 16px 缝, 与卡片同高; 左拨露出 (满程 216), 点击直接删
-        // (用户定稿: 不再弹确认窗)。
+        // 右侧删除钮: danger 红底圆角钮 (18) + 白字, 与卡片留 16px 缝,
+        // 与卡片同高; 左拨露出 (满程 216), 点击直接删 (用户定稿: 不再弹确认窗)。
         lv_obj_update_layout(card);
         const int cw = lv_obj_get_width(card);
         const int ch = lv_obj_get_height(card);
         lv_obj_t* zone = lv_obj_create(row);
         lv_obj_set_size(zone, 200, ch);
         lv_obj_set_pos(zone, cw + 16, 0);
-        lv_obj_set_style_bg_color(zone, lv_color_hex(C_CARD), 0);
+        lv_obj_set_style_bg_color(zone, lv_color_hex(theme::cur().danger), 0);   // 红底 (2026-11-12 定稿)
         lv_obj_set_style_radius(zone, 18, 0);
         lv_obj_set_style_border_width(zone, 0, 0);
         lv_obj_set_style_shadow_width(zone, 0, 0);
@@ -808,7 +807,7 @@ void AppIdea::_renderList()
         lv_obj_t* dl = lv_label_create(zone);
         lv_label_set_text(dl, "删除");
         lv_obj_set_style_text_font(dl, zh_font_md(), 0);
-        lv_obj_set_style_text_color(dl, lv_color_hex(theme::cur().danger), 0);   // 邮件钮风格: 彩字
+        lv_obj_set_style_text_color(dl, lv_color_hex(0xFFFFFF), 0);   // 红底白字
         lv_obj_center(dl);
 
         // 单开原则: 按下本行时合拢已开的旧行 (邮件 _emailRowPressed_cb 同款)
