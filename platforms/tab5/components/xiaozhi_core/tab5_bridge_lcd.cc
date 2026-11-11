@@ -6,7 +6,6 @@
 #include <esp_log.h>
 #include <esp_wifi.h>
 #include <esp_random.h>
-#include <esp_timer.h>
 #include <ctime>
 #include <cstring>
 #include "theme/theme.h"
@@ -136,142 +135,19 @@ Tab5BridgeLcdDisplay::~Tab5BridgeLcdDisplay()
     // Must be within LVGL lock since the timer runs in LVGL context.
     DisplayLockGuard lock(this);
     if (info_timer_) { lv_timer_delete(info_timer_); info_timer_ = nullptr; }
-    if (bg_buf_)    { lv_draw_buf_destroy(bg_buf_);  bg_buf_ = nullptr; }
-    if (blur_tmp_)  { free(blur_tmp_);               blur_tmp_ = nullptr; }
     // Null out borrowed handles so ~LcdDisplay() doesn't double-free them.
     display_  = nullptr;
     panel_    = nullptr;
     panel_io_ = nullptr;
 }
 
-// ─── Backdrop blur (RGB565 in-place) ─────────────────────────────────────────
-// 8× 盒滤波降采样(本身即强模糊) + 双线性放大回写同一缓冲。一次性成本 <100ms(P4),
-// 仅在小智打开瞬间跑一次。scratch 布局: [tw*th*2 降采样缓冲][tw*2 行混合缓冲]。
-static void _blur_rgb565(lv_draw_buf_t* buf, uint8_t* scratch, int tw, int th)
-{
-    const int w = buf->header.w;
-    const int h = buf->header.h;
-    const int stride_px = buf->header.stride / 2;   // stride 换算成 uint16 个数
-    auto* px    = (uint16_t*)buf->data;
-    auto* small = (uint16_t*)scratch;               // tw*th
-    auto* vrow  = (uint16_t*)(scratch + (size_t)tw * th * 2);  // tw (行混合结果)
-    constexpr int FP = 16;
-    const int32_t ONE = 1 << FP;
-
-    // 1) 盒滤波降采样 w×h → tw×th (RGB565 分量均值)
-    for (int ty = 0; ty < th; ty++) {
-        int y0 = (int)((int64_t)ty * h / th), y1 = (int)((int64_t)(ty + 1) * h / th);
-        if (y1 <= y0) y1 = y0 + 1;
-        for (int tx = 0; tx < tw; tx++) {
-            int x0 = (int)((int64_t)tx * w / tw), x1 = (int)((int64_t)(tx + 1) * w / tw);
-            if (x1 <= x0) x1 = x0 + 1;
-            uint32_t rs = 0, gs = 0, bs = 0;
-            for (int y = y0; y < y1; y++) {
-                const uint16_t* row = px + (size_t)y * stride_px;
-                for (int x = x0; x < x1; x++) {
-                    uint16_t p = row[x];
-                    rs += (p >> 11) & 0x1F;
-                    gs += (p >> 5)  & 0x3F;
-                    bs +=  p        & 0x1F;
-                }
-            }
-            uint32_t n = (uint32_t)((y1 - y0) * (x1 - x0));
-            small[(size_t)ty * tw + tx] =
-                (uint16_t)(((rs / n) << 11) | ((gs / n) << 5) | (bs / n));
-        }
-    }
-
-    // 2) 双线性放大 tw×th → w×h (定点 16.16; 源坐标逐像素递增, 无除法)
-    const int32_t dy_step = (int32_t)(((int64_t)th * ONE) / h);   // 每输出行的源行步进
-    const int32_t dx_step = (int32_t)(((int64_t)tw * ONE) / w);   // 每输出列的源列步进
-    for (int y = 0; y < h; y++) {
-        int32_t syf = dy_step * (2 * y + 1) / 2 - ONE / 2;        // (y+0.5)*th/h - 0.5
-        int y0 = syf >> FP;
-        if (y0 < 0) y0 = 0;
-        if (y0 > th - 1) y0 = th - 1;
-        int y1 = y0 + 1; if (y1 > th - 1) y1 = th - 1;
-        int32_t wy = syf - (y0 << FP);
-        if (wy < 0) wy = 0;
-        if (wy > ONE) wy = ONE;
-        const uint16_t* srow0 = small + (size_t)y0 * tw;
-        const uint16_t* srow1 = small + (size_t)y1 * tw;
-        for (int i = 0; i < tw; i++) {          // 行混合预计算, 逐像素只剩一次列混合
-            uint16_t pa = srow0[i], pb = srow1[i];
-            uint32_t ra = (pa >> 11) & 0x1F, ga = (pa >> 5) & 0x3F, ba = pa & 0x1F;
-            uint32_t rb = (pb >> 11) & 0x1F, gb = (pb >> 5) & 0x3F, bb = pb & 0x1F;
-            uint32_t r = ra + (((int32_t)(rb - ra) * wy) >> FP);
-            uint32_t g = ga + (((int32_t)(gb - ga) * wy) >> FP);
-            uint32_t b = ba + (((int32_t)(bb - ba) * wy) >> FP);
-            vrow[i] = (uint16_t)((r << 11) | (g << 5) | b);
-        }
-        uint16_t* out = px + (size_t)y * stride_px;
-        int32_t sxf = dx_step / 2 - ONE / 2;
-        for (int x = 0; x < w; x++) {
-            int x0 = sxf >> FP;
-            if (x0 < 0) x0 = 0;
-            if (x0 > tw - 1) x0 = tw - 1;
-            int x1 = x0 + 1; if (x1 > tw - 1) x1 = tw - 1;
-            int32_t wx = sxf - (x0 << FP);
-            if (wx < 0) wx = 0;
-            if (wx > ONE) wx = ONE;
-            uint16_t pa = vrow[x0], pb = vrow[x1];
-            uint32_t ra = (pa >> 11) & 0x1F, ga = (pa >> 5) & 0x3F, ba = pa & 0x1F;
-            uint32_t rb = (pb >> 11) & 0x1F, gb = (pb >> 5) & 0x3F, bb = pb & 0x1F;
-            uint32_t r = ra + (((int32_t)(rb - ra) * wx) >> FP);
-            uint32_t g = ga + (((int32_t)(gb - ga) * wx) >> FP);
-            uint32_t b = ba + (((int32_t)(bb - ba) * wx) >> FP);
-            out[x] = (uint16_t)((r << 11) | (g << 5) | b);
-            sxf += dx_step;
-        }
-    }
-}
-
-// 快照当前活动屏 → 模糊 → 设为全屏背景。必须在 lv_screen_load(scr_) 之前调
-// (此时活动屏还是前一画面)。已在小智页时跳过(重开唤醒不重拍, 保留原背景)。
-void Tab5BridgeLcdDisplay::CaptureBlurredBackdrop()
-{
-    lv_obj_t* prev = lv_screen_active();
-    if (!prev || prev == scr_) return;
-
-    if (!bg_buf_) {
-        // 1.84MB 常驻复用: lv_malloc → 系统堆 → 大块自动落 PSRAM
-        bg_buf_ = lv_draw_buf_create(width_, height_, LV_COLOR_FORMAT_RGB565, 0);
-        const int TW = width_ / 8, TH = height_ / 8;   // 1280x720 → 160x90
-        blur_tmp_ = malloc((size_t)TW * TH * 2 + TW * 2);
-    }
-    if (!bg_buf_ || !blur_tmp_) {
-        ESP_LOGW(TAG, "backdrop buffers alloc failed, keep plain bg");
-        return;
-    }
-
-    int64_t t0 = esp_timer_get_time();
-    if (lv_snapshot_take_to_draw_buf(prev, LV_COLOR_FORMAT_RGB565, bg_buf_) != LV_RESULT_OK) {
-        ESP_LOGW(TAG, "snapshot failed, keep plain bg");
-        return;
-    }
-    _blur_rgb565(bg_buf_, (uint8_t*)blur_tmp_, width_ / 8, height_ / 8);
-
-    bg_dsc_.header.magic  = LV_IMAGE_HEADER_MAGIC;
-    bg_dsc_.header.cf     = LV_COLOR_FORMAT_RGB565;
-    bg_dsc_.header.w      = bg_buf_->header.w;
-    bg_dsc_.header.h      = bg_buf_->header.h;
-    bg_dsc_.header.stride = bg_buf_->header.stride;
-    bg_dsc_.data_size     = bg_buf_->data_size;
-    bg_dsc_.data          = (const uint8_t*)bg_buf_->data;
-
-    if (bg_img_) {
-        lv_image_set_src(bg_img_, &bg_dsc_);
-        lv_obj_clear_flag(bg_img_, LV_OBJ_FLAG_HIDDEN);
-    }
-    ESP_LOGI(TAG, "backdrop captured+blurred in %lld ms",
-             (long long)((esp_timer_get_time() - t0) / 1000));
-}
+// ─── Backdrop blur / snapshot 已撤 (2026-11-11 用户定稿: 背景不虚化不透明,
+// ─── 只保留底部实底对话条; LV_USE_SNAPSHOT 同步关回)。
 
 void Tab5BridgeLcdDisplay::ActivateScreen()
 {
     if (!scr_) return;
     DisplayLockGuard lock(this);
-    CaptureBlurredBackdrop();   // 加载前快照前一画面做模糊背景
     lv_screen_load(scr_);
 }
 
@@ -296,12 +172,8 @@ void Tab5BridgeLcdDisplay::BuildRichUi()
     lv_obj_clear_flag(scr_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(scr_, LV_OBJ_FLAG_CLICKABLE);   // 点按不说话, 触碰退出在 AppXiaoZhi indev 层
 
-    // 分层(创建顺序即 z 序, 底→顶): 模糊背景 → 表情 → 底部消息条 → 状态栏。
-    // 背景在每次 ActivateScreen 时由 CaptureBlurredBackdrop 填充, 首次成功前隐藏。
-    bg_img_ = lv_image_create(scr_);
-    lv_obj_set_pos(bg_img_, 0, 0);
-    lv_obj_clear_flag(bg_img_, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-    lv_obj_add_flag(bg_img_, LV_OBJ_FLAG_HIDDEN);
+    // 分层(创建顺序即 z 序, 底→顶): 表情 → 底部消息条。
+    // 2026-11-11 用户定稿: 整页纯黑背景(不虚化不透明), 只有底部对话条有实底。
 
     // The top info bar (clock/WiFi/battery) now lives on the home screen, so
     // xiaozhi runs full-screen with no top bar. 底部状态行(聆听中)也已移除
@@ -373,22 +245,21 @@ void Tab5BridgeLcdDisplay::BuildEmotionArea()
 
 void Tab5BridgeLcdDisplay::BuildBottomStrip()
 {
-    // 底部 1/4 (y=540..720): 半透明黑 scrim 压住模糊背景。
-    // 只显示当前一条消息(无泡泡, 每条新消息替换上一条)。
-    // 2026-11-10 定稿: 无「聆听中」状态行、无「点击屏幕开始对话」提示(语音直聊)。
+    // 底部 1/4 (y=540..720): 实底消息条 (2026-11-11 用户定稿: 不透明, 主题
+    // track 色; 整页其余纯黑无背景)。只显示当前一条消息(无泡泡, 新消息替换)。
     lv_obj_t* strip = lv_obj_create(scr_);
     lv_obj_set_pos(strip, 0, 540);
     lv_obj_set_size(strip, width_, height_ - 540);   // 180
-    lv_obj_set_style_bg_color(strip, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(strip, LV_OPA_70, 0);
+    lv_obj_set_style_bg_color(strip, lv_color_hex(XZ_TRACK), 0);
+    lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(strip, 0, 0);
     lv_obj_set_style_pad_all(strip, 0, 0);
     lv_obj_clear_flag(strip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
 
-    // 当前消息标签 — 垂直居中于整条 (无状态行占用下半)
+    // 当前消息标签 — 垂直居中于整条 (默认主题文字色, 深浅主题都可读)
     msg_lbl_ = lv_label_create(strip);
     lv_obj_set_style_text_font(msg_lbl_, zh_font(), 0);
-    lv_obj_set_style_text_color(msg_lbl_, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(msg_lbl_, lv_color_hex(XZ_HI), 0);
     lv_obj_set_style_text_align(msg_lbl_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(msg_lbl_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(msg_lbl_, width_ - 80);
@@ -515,10 +386,11 @@ void Tab5BridgeLcdDisplay::SetChatMessage(const char* role, const char* content)
     if (!msg_lbl_) return;
 
     // 只显示当前一条: 每条新消息直接替换标签文本。
-    // 用户话=主题色, 小智=白色 (深色 scrim 上都保持可读)。
+    // 用户话=主题 accent, 小智=主题正文色 (2026-11-11 实底 track 条上,
+    // 深浅主题都随 theme 快照保证可读)。
     bool is_user = (role && strcmp(role, "user") == 0);
-    if (is_user) xiaozhi_note_user_stt();   // 服务端已回传识别文本 → 盖章给 3s 退出判定
-    lv_obj_set_style_text_color(msg_lbl_, lv_color_hex(is_user ? XZ_ACCENT : 0xFFFFFF), 0);
+    if (is_user) xiaozhi_note_user_stt();   // 服务端已回传识别文本 → 盖章给退出判定
+    lv_obj_set_style_text_color(msg_lbl_, lv_color_hex(is_user ? XZ_ACCENT : XZ_HI), 0);
 
     // Drop emoji / symbol code-points the font doesn't carry (avoids LVGL
     // 'glyph dsc. not found' warning storms) — see _strip_unsupported_glyphs.
