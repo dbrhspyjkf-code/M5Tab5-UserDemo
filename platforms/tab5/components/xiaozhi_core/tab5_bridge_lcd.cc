@@ -190,7 +190,7 @@ void Tab5BridgeLcdDisplay::BuildRichUi()
     // xiaozhi runs full-screen with no top bar. 底部状态行(聆听中)也已移除
     // (2026-11-10 定稿: 语音直聊, 底部只留当前消息)。
     BuildEmotionArea();   // Twemoji64 表情 2x=128px, 固定中心偏下
-    BuildBottomStrip();   // y=540, h=180 实底, 只显示当前消息
+    BuildBottomStrip();   // y=630, h=90 实底, 只显示当前消息
 }
 
 void Tab5BridgeLcdDisplay::BuildInfoBar()
@@ -246,21 +246,22 @@ void Tab5BridgeLcdDisplay::BuildEmotionArea()
     // 带透明, 直读 flash)。2× 显示 (512=2×256, 128px), 双线性抗锯齿由 LVGL
     // image 默认开启。锚点=屏幕正中偏下 (640,420), pivot 设图心保持居中。
     // 用户定稿: 位置固定, 空闲不再漫游 (原 EmojiWanderTimerCb 已删)。
+    // 2026-11-11: 下移贴近对话条 (中心 y≈550, 脸底距条顶 ~16px)。
     emotion_img_ = lv_image_create(overlay_);
     lv_image_set_src(emotion_img_, &emoji_1f636_64);
     lv_image_set_scale(emotion_img_, 512);
     lv_image_set_pivot(emotion_img_, 32, 32);
     lv_obj_clear_flag(emotion_img_, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-    lv_obj_align(emotion_img_, LV_ALIGN_CENTER, 0, 60);
+    lv_obj_align(emotion_img_, LV_ALIGN_CENTER, 0, 190);
 }
 
 void Tab5BridgeLcdDisplay::BuildBottomStrip()
 {
-    // 底部 1/4 (y=540..720): 实底消息条 (2026-11-11 用户定稿: 不透明, 主题
-    // track 色; 整页其余纯黑无背景)。只显示当前一条消息(无泡泡, 新消息替换)。
+    // 底部消息条 (2026-11-11 用户定稿: 高度减半 y=630..720; 不透明, 主题
+    // track 色)。只显示当前一条消息(无泡泡, 新消息替换)。
     lv_obj_t* strip = lv_obj_create(overlay_);
-    lv_obj_set_pos(strip, 0, 540);
-    lv_obj_set_size(strip, width_, height_ - 540);   // 180
+    lv_obj_set_pos(strip, 0, 630);
+    lv_obj_set_size(strip, width_, height_ - 630);   // 90
     lv_obj_set_style_bg_color(strip, lv_color_hex(XZ_TRACK), 0);
     lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(strip, 0, 0);
