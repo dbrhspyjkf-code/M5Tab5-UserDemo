@@ -257,13 +257,13 @@ void Tab5BridgeLcdDisplay::BuildEmotionArea()
 
 void Tab5BridgeLcdDisplay::BuildBottomStrip()
 {
-    // 底部消息条 (2026-11-11 用户定稿: 高度减半 y=630..720; 不透明, 主题
-    // track 色)。只显示当前一条消息(无泡泡, 新消息替换)。
+    // 底部消息条 (2026-11-11 用户定稿: 高度减半 y=630..720, 主题 track 色
+    // 加一点透明度 ~80%, 微透出底下页面)。只显示当前一条消息(无泡泡, 新消息替换)。
     lv_obj_t* strip = lv_obj_create(overlay_);
     lv_obj_set_pos(strip, 0, 630);
     lv_obj_set_size(strip, width_, height_ - 630);   // 90
     lv_obj_set_style_bg_color(strip, lv_color_hex(XZ_TRACK), 0);
-    lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(strip, LV_OPA_80, 0);
     lv_obj_set_style_border_width(strip, 0, 0);
     lv_obj_set_style_pad_all(strip, 0, 0);
     lv_obj_clear_flag(strip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
