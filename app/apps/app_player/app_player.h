@@ -52,7 +52,7 @@ private:
     };
     static constexpr int kPageCount = 2;
     static const PageCfg _pages[kPageCount];
-    int _page = 0;   // 当前页
+    int _page = 1;   // 当前页(默认 1=HomePod;实例随安装常驻,开 app 后记住上次看的页)
 
     // ── HA(随开随关的独立客户端) ──
     std::shared_ptr<HaClient> _ha;
