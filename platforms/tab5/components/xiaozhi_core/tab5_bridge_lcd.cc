@@ -126,7 +126,8 @@ Tab5BridgeLcdDisplay::Tab5BridgeLcdDisplay(lv_display_t* existing_disp,
 {
     display_ = existing_disp;
     BuildRichUi();
-    ESP_LOGI(TAG, "rich display ready %dx%d scr=%p", width, height, scr_);
+    ESP_LOGI(TAG, "rich overlay ready %dx%d overlay=%p (transparent, on lv_layer_top)",
+             width, height, overlay_);
 }
 
 Tab5BridgeLcdDisplay::~Tab5BridgeLcdDisplay()
@@ -143,19 +144,24 @@ Tab5BridgeLcdDisplay::~Tab5BridgeLcdDisplay()
 
 // ─── Backdrop blur / snapshot 已撤 (2026-11-11 用户定稿: 背景不虚化不透明,
 // ─── 只保留底部实底对话条; LV_USE_SNAPSHOT 同步关回)。
+// ─── 2026-11-11 再定稿: UI 改挂 lv_layer_top 透明悬浮层, 原 app 页面直接透出。
 
 void Tab5BridgeLcdDisplay::ActivateScreen()
 {
-    if (!scr_) return;
+    if (!overlay_) return;
     DisplayLockGuard lock(this);
-    lv_screen_load(scr_);
+    // 活动屏不动, 只亮悬浮层 (照片屏保同机制); 若屏保层在后创建会盖在
+    // 上面 — 唤醒回调 dismiss 屏保后自然露出。显示前确保在本层最上。
+    lv_obj_move_foreground(overlay_);
+    lv_obj_clear_flag(overlay_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void Tab5BridgeLcdDisplay::DeactivateScreen()
 {
-    // The active screen is restored by the AppXiaoZhi close callback
-    // (home->restoreScreen()). This method exists solely as an
-    // entrypoint for xiaozhi_ctl; no LVGL action is needed here.
+    // 活动屏从未被切换, 隐藏悬浮层即回到原页面, 无需任何 restore。
+    if (!overlay_) return;
+    DisplayLockGuard lock(this);
+    lv_obj_add_flag(overlay_, LV_OBJ_FLAG_HIDDEN);
 }
 
 // ─── UI construction ──────────────────────────────────────────────────────────
@@ -165,12 +171,17 @@ void Tab5BridgeLcdDisplay::BuildRichUi()
     DisplayLockGuard lock(this);
     snap_theme();
 
-    scr_ = lv_obj_create(NULL);
-    lv_obj_set_size(scr_, width_, height_);
-    lv_obj_set_style_bg_color(scr_, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_pad_all(scr_, 0, 0);
-    lv_obj_clear_flag(scr_, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(scr_, LV_OBJ_FLAG_CLICKABLE);   // 点按不说话, 触碰退出在 AppXiaoZhi indev 层
+    // 透明全屏悬浮容器, 挂 lv_layer_top (照片屏保同机制): 平时隐藏, 唤醒时
+    // ActivateScreen 亮出。透明区直接透出当前活动屏 (原 app 页面), 全屏
+    // CLICKABLE 作触摸拦截 (触碰退出在 AppXiaoZhi indev 层判定)。
+    overlay_ = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(overlay_, width_, height_);
+    lv_obj_set_style_bg_opa(overlay_, LV_OPA_TRANSP, 0);   // 全透明: 原页面透出
+    lv_obj_set_style_border_width(overlay_, 0, 0);
+    lv_obj_set_style_pad_all(overlay_, 0, 0);
+    lv_obj_clear_flag(overlay_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(overlay_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(overlay_, LV_OBJ_FLAG_HIDDEN);         // 开机隐藏
 
     // 分层(创建顺序即 z 序, 底→顶): 表情 → 底部消息条。
     // 2026-11-11 用户定稿: 整页纯黑背景(不虚化不透明), 只有底部对话条有实底。
@@ -178,13 +189,13 @@ void Tab5BridgeLcdDisplay::BuildRichUi()
     // The top info bar (clock/WiFi/battery) now lives on the home screen, so
     // xiaozhi runs full-screen with no top bar. 底部状态行(聆听中)也已移除
     // (2026-11-10 定稿: 语音直聊, 底部只留当前消息)。
-    BuildEmotionArea();   // 屏幕正中偏下 ≈(640,420), 4×
-    BuildBottomStrip();   // y=540, h=180, 只显示当前消息
+    BuildEmotionArea();   // Twemoji64 表情 2x=128px, 固定中心偏下
+    BuildBottomStrip();   // y=540, h=180 实底, 只显示当前消息
 }
 
 void Tab5BridgeLcdDisplay::BuildInfoBar()
 {
-    lv_obj_t* bar = lv_obj_create(scr_);
+    lv_obj_t* bar = lv_obj_create(overlay_);
     lv_obj_set_pos(bar, 0, 0);
     lv_obj_set_size(bar, width_, 56);
     lv_obj_set_style_bg_color(bar, lv_color_hex(XZ_TRACK), 0);
@@ -235,7 +246,7 @@ void Tab5BridgeLcdDisplay::BuildEmotionArea()
     // 带透明, 直读 flash)。2× 显示 (512=2×256, 128px), 双线性抗锯齿由 LVGL
     // image 默认开启。锚点=屏幕正中偏下 (640,420), pivot 设图心保持居中。
     // 用户定稿: 位置固定, 空闲不再漫游 (原 EmojiWanderTimerCb 已删)。
-    emotion_img_ = lv_image_create(scr_);
+    emotion_img_ = lv_image_create(overlay_);
     lv_image_set_src(emotion_img_, &emoji_1f636_64);
     lv_image_set_scale(emotion_img_, 512);
     lv_image_set_pivot(emotion_img_, 32, 32);
@@ -247,7 +258,7 @@ void Tab5BridgeLcdDisplay::BuildBottomStrip()
 {
     // 底部 1/4 (y=540..720): 实底消息条 (2026-11-11 用户定稿: 不透明, 主题
     // track 色; 整页其余纯黑无背景)。只显示当前一条消息(无泡泡, 新消息替换)。
-    lv_obj_t* strip = lv_obj_create(scr_);
+    lv_obj_t* strip = lv_obj_create(overlay_);
     lv_obj_set_pos(strip, 0, 540);
     lv_obj_set_size(strip, width_, height_ - 540);   // 180
     lv_obj_set_style_bg_color(strip, lv_color_hex(XZ_TRACK), 0);

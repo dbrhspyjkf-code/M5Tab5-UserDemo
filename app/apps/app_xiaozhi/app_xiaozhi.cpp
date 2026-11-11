@@ -59,11 +59,7 @@ void AppXiaoZhi::onOpen()
     lv_screen_load(_scr);
 #else
     xiaozhi_start_task();
-    // 记录唤醒前的画面 (onOpen 在 LvglLockGuard 内由 mooncake update 调用):
-    // 模糊背景显示它, 关闭时也回到它。已在小智屏上时保留原记录不覆盖。
-    if (!xiaozhi_screen_is_active()) {
-        _return_scr = lv_screen_active();
-    }
+    // 悬浮层架构 (2026-11-11): 亮出透明 overlay, 底下原 app 页面保持不动
     xiaozhi_activate_screen();
     _last_voice_ms = esp_timer_get_time() / 1000;
     _last_state = xiaozhi_get_device_state();
@@ -131,19 +127,14 @@ void AppXiaoZhi::onRunning()
 
 void AppXiaoZhi::onClose()
 {
-    xiaozhi_deactivate_screen();
+    xiaozhi_deactivate_screen();   // 隐藏透明 overlay, 原页面原样露出 (无屏切换, 无需 restore)
     _removeSwipeGesture();
     // 退出即结束会话: Speaking 丢掉剩余 TTS、Listening 关通道回 Idle+重开唤醒词。
     // 否则关掉画面后后台还在听 (服务端静默超时 ~66s), 旁人说话会被当指令应答。
     // Idle 时调用为 no-op (回答完自动退出场景)。
     xiaozhi_end_conversation();
-    if (_return_scr) {
-        // 回到唤醒前的画面 (同样在 LvglLockGuard 内; app 屏幕常驻, 指针有效)
-        lv_screen_load(_return_scr);
-        _return_scr = nullptr;
-    } else if (_close_cb) {
-        _close_cb();   // 兜底: 无记录时回主页 (home->restoreScreen)
-    }
+    // 注意: 不调 _close_cb (home->restoreScreen) — 活动屏从未被切走,
+    // restoreScreen 反而会把底下正在显示的 app 页面拉回主页。
 }
 #else
 void AppXiaoZhi::onRunning() {}

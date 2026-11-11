@@ -108,11 +108,11 @@ extern "C" void xiaozhi_activate_screen(void)
 
 extern "C" bool xiaozhi_screen_is_active(void)
 {
+    // 2026-11-11 悬浮层架构: 小智 UI 不再是活动屏, 改判透明 overlay 是否可见。
     auto* display = static_cast<Tab5BridgeLcdDisplay*>(
         Board::GetInstance().GetDisplay()
     );
-    return display && display->GetScreen()
-        && lv_screen_active() == display->GetScreen();
+    return display && display->IsOverlayShown();
 }
 
 extern "C" void xiaozhi_set_battery_percent(int percent)

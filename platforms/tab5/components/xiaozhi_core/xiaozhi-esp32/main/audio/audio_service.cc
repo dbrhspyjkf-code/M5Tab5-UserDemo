@@ -116,7 +116,7 @@ void AudioService::Initialize(AudioCodec* codec) {
             double sum_sq = 0;
             for (int16_t s : data) sum_sq += (double)s * s;
             float rms = (float)sqrt(sum_sq / (double)data.size());
-            float th = noise_floor_rms_ * 2.5f + 150.0f;
+            float th = noise_floor_rms_ * 1.8f + 100.0f;   // 真机首测 floor~105 speech~449: 旧阈值 413 边距仅 36, 轻声漏检
             if (rms >= th) {
                 if (!voice_detected_) {
                     ESP_LOGI(TAG, "voice detected (rms=%.0f floor=%.0f th=%.0f)",

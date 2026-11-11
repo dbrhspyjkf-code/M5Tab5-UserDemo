@@ -6,20 +6,27 @@
  * Tab5BridgeLcdDisplay - wraps the lv_display_t* already created by
  * Tab5-UserDemo's BSP.  Does NOT reinitialize any LCD hardware or LVGL.
  *
- * Layout (2026-11-11 final):
- *   - Fullscreen plain background (no snapshot/blur — 用户定稿: 不虚化不透明)
- *   - Middle: emotion face (官方 Twemoji64, fixed at center-lower, no wander)
- *   - Bottom 1/4: opaque strip showing ONLY the current message
- *     (each new message replaces the previous one, no bubble history)
+ * Layout (2026-11-11 final, overlay architecture):
+ *   - UI lives on a TRANSPARENT full-screen container on lv_layer_top()
+ *     (same mechanism as the photo screensaver) — the underlying app page
+ *     stays visible and untouched everywhere except the bottom strip.
+ *     Activate/Deactivate = show/hide the overlay; the LVGL active screen
+ *     never changes, so there is nothing to restore on close.
+ *   - Bottom 1/4: OPAQUE strip (theme track color) showing ONLY the current
+ *     message (each new message replaces the previous one, no bubbles).
+ *   - Middle-lower: emotion face (官方 Twemoji64, fixed position, no wander).
+ *   - Tap anywhere / swipe-up-from-bottom / 5s rules (AppXiaoZhi) dismiss it.
  */
 class Tab5BridgeLcdDisplay : public LcdDisplay {
 public:
     Tab5BridgeLcdDisplay(lv_display_t* existing_disp, int width, int height);
     ~Tab5BridgeLcdDisplay() override;
 
-    void ActivateScreen();
-    void DeactivateScreen();  // restores control to Mooncake (screen restored by AppXiaoZhi close callback)
-    lv_obj_t* GetScreen() const { return scr_; }
+    void ActivateScreen();    // show the transparent overlay (LVGL active screen untouched)
+    void DeactivateScreen();  // hide the overlay; underlying page reappears as-is
+    bool IsOverlayShown() const {
+        return overlay_ && !lv_obj_has_flag(overlay_, LV_OBJ_FLAG_HIDDEN);
+    }
 
     // ── Overrides ──────────────────────────────────────────────────────────────
     void SetupUI()       override;
@@ -41,7 +48,9 @@ private:
     void BuildBottomStrip();
 
     // ── LVGL objects ────────────────────────────────────────────────────────────
-    lv_obj_t* scr_            = nullptr;
+    // 透明全屏悬浮容器 (lv_layer_top): 触摸拦截层 + 表情 + 底部实底对话条。
+    // 隐藏时原 app 页面原样可见可操作。
+    lv_obj_t* overlay_        = nullptr;
 
     // Info bar
     lv_obj_t* time_lbl_       = nullptr;

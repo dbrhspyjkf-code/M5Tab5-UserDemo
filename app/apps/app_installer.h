@@ -177,7 +177,8 @@ inline void on_install_apps()
 
     // ── Wire close callbacks ──
     ha->setCloseCallback([home]() { home->restoreScreen(); });
-    xz->setCloseCallback([home]() { home->restoreScreen(); });
+    // xz 不接 restoreScreen: 悬浮层架构下活动屏从未被切走 (2026-11-11),
+    // 关闭小智若回主页反而会把底下正在显示的 app 页面拽回主页。
     settings->setCloseCallback([home]() { home->restoreScreen(); });
 #ifndef PLATFORM_BUILD_WEB
     // LoRa 聊天同样从「工具」页打开, 上拨返回工具页.
