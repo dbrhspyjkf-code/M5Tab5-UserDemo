@@ -99,7 +99,7 @@ static int64_t mono_ms()
 // ════════════════════════════════════════════════════════════════════════════
 AppStocks::AppStocks()
 {
-    setAppInfo().name = "金融";
+    setAppInfo().name = "行情";
 }
 
 void AppStocks::onCreate()

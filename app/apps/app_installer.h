@@ -348,7 +348,7 @@ inline void on_install_apps()
     home->addApp("智能家居", ha_id);
     // 2026-11-05: 「小智」按钮 →「新闻」(xiaozhi 仍在装, 唤醒词"你好小智"照常进入)
     home->addApp("新闻", nw_id);
-    home->addApp("金融", st_id);   // 2026-10-28: 入口从工具页移到主页底部
+    home->addApp("行情", st_id);   // 2026-10-28: 入口从工具页移到主页底部; 2026-11-11 改名行情
     home->addApp("收音机", ra_id);
 #ifndef PLATFORM_BUILD_WEB
     home->addApp("播放器", pl_id);
