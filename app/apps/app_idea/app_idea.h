@@ -165,4 +165,11 @@ private:
     void _installSwipeGesture();
     void _removeSwipeGesture();
     void _requestClose() { if (_close_cb) _close_cb(); }
+
+    // ── 记录卡片左拨露删除钮 (邮件滑动行同款, 2026-11-12) ──
+    lv_obj_t* _idea_swipe_open = nullptr;   // 当前滑开的行 (单开原则; 重建即清)
+    lv_timer_t* _swipe_timer   = nullptr;   // 5s 无操作自动合拢 (car-dash 同款)
+    uint32_t    _swipe_ts      = 0;
+    void _collapseSwipe(bool anim);
+    static void _swipeTimer_cb(lv_timer_t* t);
 };

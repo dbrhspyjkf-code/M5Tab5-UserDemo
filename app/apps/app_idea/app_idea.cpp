@@ -376,6 +376,8 @@ void AppIdea::_teardown()
     }
     _ta = _keyboard = _mic_btn = _mic_lbl = nullptr;
     _save_btn = _stt_btn = _status_lbl = nullptr;
+    if (_swipe_timer) { lv_timer_del(_swipe_timer); _swipe_timer = nullptr; }
+    _idea_swipe_open = nullptr;   // 行随 _scr 删除, 指针一并清
     _filter_row = _list_scroll = _list_panel = nullptr;
     _count_lbl = _play_fill = _play_btn_lbl = nullptr;
     {
@@ -608,7 +610,27 @@ void AppIdea::_buildUi()
         static_cast<AppIdea*>(lv_event_get_user_data(e))->_hideKeyboard();
     }, LV_EVENT_CANCEL, this);
 
+    // 滑开行 5s 无操作自动合拢 (邮件子页同款; _teardown 删)
+    if (_swipe_timer) lv_timer_del(_swipe_timer);
+    _swipe_timer = lv_timer_create(_swipeTimer_cb, 500, this);
+
     _renderFilter();
+}
+
+// ── 记录卡片左拨露删除 (邮件滑动行同款: 单开 + 吸合 + 5s 自动合拢) ────────────
+void AppIdea::_collapseSwipe(bool anim)
+{
+    lv_obj_t* row = _idea_swipe_open;
+    _idea_swipe_open = nullptr;
+    if (row) lv_obj_scroll_to_x(row, 0, anim ? LV_ANIM_ON : LV_ANIM_OFF);
+}
+
+void AppIdea::_swipeTimer_cb(lv_timer_t* t)
+{
+    auto* self = static_cast<AppIdea*>(lv_timer_get_user_data(t));
+    if (!self || !self->_list_panel || !self->_idea_swipe_open) return;
+    if (lv_tick_elaps(self->_swipe_ts) < 5000) return;
+    self->_collapseSwipe(true);   // 5s 无操作自动合拢 (car-dash 同款)
 }
 
 // 分类底色用 track 色要过主题快照 — 成员转发 (chip 回调里拿不到 file-static)
@@ -682,6 +704,7 @@ void AppIdea::_renderList()
     }
 
     lv_obj_clean(_list_panel);
+    _idea_swipe_open = nullptr;   // 旧行已删, 滑开状态一并清 (邮件同款)
     _play_fill = nullptr;        // 重建后旧进度条失效
     _play_btn_lbl = nullptr;
     _play_id.clear();
@@ -707,9 +730,21 @@ void AppIdea::_renderList()
             lv_obj_set_style_text_color(hd, lv_color_hex(C_TEXT2), 0);
         }
 
+        // 行视口 (邮件滑动行同款, 2026-11-12): 横向滚动容器, 卡片占满行宽,
+        // 删除区藏在卡片右侧 — 左拨露出。单开原则 + SCROLL_END 吸合。
+        lv_obj_t* row = lv_obj_create(_list_panel);
+        lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_scroll_dir(row, LV_DIR_HOR);
+        lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLL_CHAIN_HOR);  // 拖到头不链给纵向列表
+
         // 卡片
         const CatDef* cat = cat_of(it.cat);
-        lv_obj_t* card = lv_obj_create(_list_panel);
+        lv_obj_t* card = lv_obj_create(row);
         lv_obj_set_size(card, LV_PCT(100), LV_SIZE_CONTENT);
         lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD), 0);
         lv_obj_set_style_radius(card, 16, 0);
@@ -717,6 +752,7 @@ void AppIdea::_renderList()
         lv_obj_set_style_pad_all(card, 14, 0);
         lv_obj_set_style_pad_bottom(card, 18, 0);
         lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_EVENT_BUBBLE);  // PRESSED 冒泡给行做单开合拢
 
         // 头行: 分类 chip + 时间 + 删除
         lv_obj_t* cc = lv_obj_create(card);
@@ -741,25 +777,64 @@ void AppIdea::_renderList()
         lv_obj_set_style_text_color(tm, lv_color_hex(C_TEXT2), 0);
         lv_obj_align(tm, LV_ALIGN_TOP_LEFT, 108, 8);
 
-        lv_obj_t* del = lv_button_create(card);
-        lv_obj_set_size(del, 88, 44);
-        lv_obj_align(del, LV_ALIGN_TOP_RIGHT, 0, 0);
-        lv_obj_set_style_bg_color(del, lv_color_hex(C_TRACK), 0);
-        lv_obj_set_style_radius(del, 22, 0);
+        // 右侧删除区: 左拨卡片露出 (满程 216px), 点击直接删 (用户定稿: 不再弹
+        // 确认窗 — 滑开是明确意图)。垂直居中于卡片 (卡片高度先布局量出)。
+        lv_obj_update_layout(card);
+        const int cw = lv_obj_get_width(card);
+        const int ch = lv_obj_get_height(card);
+        int zh_ = (ch < 104) ? ch - 8 : 96;      // zone 高 clamp (卡片矮时不溢出)
+        lv_obj_t* zone = lv_obj_create(row);
+        lv_obj_set_size(zone, 200, zh_);
+        lv_obj_set_pos(zone, cw + 16, (ch - zh_) / 2);
+        lv_obj_set_style_bg_color(zone, lv_color_hex(theme::cur().danger), 0);
+        lv_obj_set_style_radius(zone, 16, 0);
+        lv_obj_set_style_border_width(zone, 0, 0);
+        lv_obj_set_style_shadow_width(zone, 0, 0);
+        lv_obj_set_style_pad_all(zone, 0, 0);
+        lv_obj_clear_flag(zone, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(zone, LV_OBJ_FLAG_EVENT_BUBBLE);   // PRESSED 冒泡给行 (单开)
         {
             auto* req = new DelReq{this, it.id, it.voice};
-            lv_obj_add_event_cb(del, [](lv_event_t* e) {
+            lv_obj_add_event_cb(zone, [](lv_event_t* e) {
                 auto* req = static_cast<DelReq*>(lv_event_get_user_data(e));
                 if (lv_event_get_code(e) == LV_EVENT_DELETE) { delete req; return; }
-                if (lv_event_get_code(e) == LV_EVENT_CLICKED)
-                    req->app->_showConfirm("删除这条想法?", req->id, req->voice, false);
+                if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+                auto* self = req->app;
+                self->_deleteItem(req->id, req->voice);
             }, LV_EVENT_ALL, req);
         }
-        lv_obj_t* dl = lv_label_create(del);
+        lv_obj_t* dl = lv_label_create(zone);
         lv_label_set_text(dl, "删除");
         lv_obj_set_style_text_font(dl, zh_font_md(), 0);
-        lv_obj_set_style_text_color(dl, lv_color_hex(C_TEXT2), 0);
+        lv_obj_set_style_text_color(dl, lv_color_hex(0xFFFFFF), 0);
         lv_obj_center(dl);
+
+        // 单开原则: 按下本行时合拢已开的旧行 (邮件 _emailRowPressed_cb 同款)
+        lv_obj_add_event_cb(row, [](lv_event_t* e) {
+            auto* self = static_cast<AppIdea*>(lv_event_get_user_data(e));
+            lv_obj_t* r = lv_event_get_current_target_obj(e);
+            if (self && self->_idea_swipe_open && self->_idea_swipe_open != r)
+                self->_collapseSwipe(true);
+        }, LV_EVENT_PRESSED, this);
+        // 松手吸合 {0, 满 216} + 单开登记 (邮件 _emailRowScroll_cb 同款简化:
+        // 只有右侧删除区, 无左区 → 两档吸附)
+        lv_obj_add_event_cb(row, [](lv_event_t* e) {
+            auto* self = static_cast<AppIdea*>(lv_event_get_user_data(e));
+            lv_obj_t* r = lv_event_get_current_target_obj(e);
+            if (!self) return;
+            const int x = (int)lv_obj_get_scroll_x(r);
+            const int target = (x < 108) ? 0 : 216;
+            if (target != x) {
+                lv_obj_scroll_to_x(r, target, LV_ANIM_ON);   // 吸合; 第二次 END 再登记
+                return;
+            }
+            if (target == 0) {
+                if (self->_idea_swipe_open == r) self->_idea_swipe_open = nullptr;
+            } else {
+                self->_idea_swipe_open = r;
+                self->_swipe_ts = lv_tick_get();
+            }
+        }, LV_EVENT_SCROLL_END, this);
 
         // 正文
         if (it.voice) {
