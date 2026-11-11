@@ -730,16 +730,13 @@ void AppIdea::_renderList()
             lv_obj_set_style_text_color(hd, lv_color_hex(C_TEXT2), 0);
         }
 
-        // 行视口 (car-dash .idea-swipe 复刻, 2026-11-12): 横向滚动容器本体即
-        // 圆角卡面 (C_CARD + radius16 + clip_corner 把子对象按圆角掩码裁剪,
-        // lv_refr.c clip_corner 分支离屏掩码) — 红色删除区从右缘滑入时被裁出
-        // 卡片轮廓, 与 car-dash overflow:hidden 同效。
+        // 行视口 (邮件 _emailMakeRow 同款, 2026-11-12 终版): 透明横向滚动容器,
+        // 卡片与删除钮各自成形, 左拨露删除钮。单开原则 + SCROLL_END 吸合。
         lv_obj_t* row = lv_obj_create(_list_panel);
         lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_color(row, lv_color_hex(C_CARD), 0);
-        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(row, 16, 0);
-        lv_obj_set_style_clip_corner(row, true, 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_radius(row, 0, 0);
+        lv_obj_set_style_clip_corner(row, false, 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_set_style_shadow_width(row, 0, 0);
@@ -747,12 +744,12 @@ void AppIdea::_renderList()
         lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLL_CHAIN_HOR);  // 拖到头不链给纵向列表
 
-        // 卡片 (透明融入 row 卡面; 底色/圆角/裁剪全由 row 提供)
+        // 卡片
         const CatDef* cat = cat_of(it.cat);
         lv_obj_t* card = lv_obj_create(row);
         lv_obj_set_size(card, LV_PCT(100), LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_opa(card, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_radius(card, 0, 0);
+        lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD), 0);
+        lv_obj_set_style_radius(card, 16, 0);
         lv_obj_set_style_border_width(card, 0, 0);
         lv_obj_set_style_pad_all(card, 14, 0);
         lv_obj_set_style_pad_bottom(card, 18, 0);
@@ -782,17 +779,17 @@ void AppIdea::_renderList()
         lv_obj_set_style_text_color(tm, lv_color_hex(C_TEXT2), 0);
         lv_obj_align(tm, LV_ALIGN_TOP_LEFT, 108, 8);
 
-        // 右侧删除区 = car-dash .idea-actzone: danger 红条紧贴卡片右缘, 全卡高,
-        // 方角 (伸出 row 右缘的部分由 row 的 clip_corner 圆角裁出轮廓); 左拨露出
-        // (满程 200), 点击直接删 (用户定稿: 不再弹确认窗)。
+        // 右侧删除钮 (邮件 mk_zone 同款风格): C_CARD 圆角钮 + danger 文字,
+        // 与卡片留 16px 缝, 与卡片同高; 左拨露出 (满程 216), 点击直接删
+        // (用户定稿: 不再弹确认窗)。
         lv_obj_update_layout(card);
         const int cw = lv_obj_get_width(card);
         const int ch = lv_obj_get_height(card);
         lv_obj_t* zone = lv_obj_create(row);
         lv_obj_set_size(zone, 200, ch);
-        lv_obj_set_pos(zone, cw, 0);
-        lv_obj_set_style_bg_color(zone, lv_color_hex(theme::cur().danger), 0);
-        lv_obj_set_style_radius(zone, 0, 0);
+        lv_obj_set_pos(zone, cw + 16, 0);
+        lv_obj_set_style_bg_color(zone, lv_color_hex(C_CARD), 0);
+        lv_obj_set_style_radius(zone, 18, 0);
         lv_obj_set_style_border_width(zone, 0, 0);
         lv_obj_set_style_shadow_width(zone, 0, 0);
         lv_obj_set_style_pad_all(zone, 0, 0);
@@ -811,7 +808,7 @@ void AppIdea::_renderList()
         lv_obj_t* dl = lv_label_create(zone);
         lv_label_set_text(dl, "删除");
         lv_obj_set_style_text_font(dl, zh_font_md(), 0);
-        lv_obj_set_style_text_color(dl, lv_color_hex(0xFFFFFF), 0);   // 红底白字 (car-dash 同款)
+        lv_obj_set_style_text_color(dl, lv_color_hex(theme::cur().danger), 0);   // 邮件钮风格: 彩字
         lv_obj_center(dl);
 
         // 单开原则: 按下本行时合拢已开的旧行 (邮件 _emailRowPressed_cb 同款)
@@ -828,7 +825,7 @@ void AppIdea::_renderList()
             lv_obj_t* r = lv_event_get_current_target_obj(e);
             if (!self) return;
             const int x = (int)lv_obj_get_scroll_x(r);
-            const int target = (x < 100) ? 0 : 200;
+            const int target = (x < 108) ? 0 : 216;
             if (target != x) {
                 lv_obj_scroll_to_x(r, target, LV_ANIM_ON);   // 吸合; 第二次 END 再登记
                 return;
