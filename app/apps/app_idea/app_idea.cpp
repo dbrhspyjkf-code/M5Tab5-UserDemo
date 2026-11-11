@@ -309,7 +309,7 @@ void AppIdea::onRunning()
             _recStop(true);   // 60s 上限自动停并上传
         }
     } else if (_mic_lbl) {
-        const char* want = s_uploading.load() ? "上传中…" : "按下说话";
+        const char* want = s_uploading.load() ? "上传中…" : "保存语音";
         if (strcmp(lv_label_get_text(_mic_lbl), want) != 0) {
             lv_label_set_text(_mic_lbl, want);
         }
@@ -495,13 +495,13 @@ void AppIdea::_buildUi()
     }
 
     // 录音大按钮 + 底部两钮的 y (设备才有录音行)。
-    // 设备纵排: chips 底 318 → mic 338..430 → 保存/转写 446..512 (各留 16-20
-    // 行距, 2026-11-05 修 mic 与保存钮重叠); 无 mic 平台: 保存 338 起。
+    // 2026-11-12 用户定稿两行对调: chips 底 318 → 保存/转写 338..406 →
+    // 语音大钮 446..538; 无 mic 平台: 保存 338 起。
     int btn_y = 338;
 #ifndef PLATFORM_BUILD_DESKTOP
     lv_obj_t* mic = lv_button_create(card);
     lv_obj_set_size(mic, LW - 32, 92);
-    lv_obj_align(mic, LV_ALIGN_TOP_LEFT, 0, 338);
+    lv_obj_align(mic, LV_ALIGN_TOP_LEFT, 0, 446);
     lv_obj_set_style_bg_color(mic, lv_color_hex(C_DANGER), 0);
     lv_obj_set_style_bg_color(mic, lv_color_mix(lv_color_hex(0), lv_color_hex(C_DANGER), 178), LV_STATE_PRESSED);
     lv_obj_set_style_radius(mic, 46, 0);
@@ -511,11 +511,11 @@ void AppIdea::_buildUi()
         else self->_recStart();
     }, LV_EVENT_CLICKED, this);
     _mic_lbl = lv_label_create(mic);
-    lv_label_set_text(_mic_lbl, "按下说话");
+    lv_label_set_text(_mic_lbl, "保存语音");
     lv_obj_set_style_text_font(_mic_lbl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_mic_lbl, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(_mic_lbl);
-    btn_y = 446;   // mic 底 430 + 16
+    btn_y = 338;   // 保存/转写行上移至 chips 下方 (对调后)
 #endif
 
     // 保存 + 语音转写
@@ -528,7 +528,7 @@ void AppIdea::_buildUi()
         static_cast<AppIdea*>(lv_event_get_user_data(e))->_saveText();
     }, LV_EVENT_CLICKED, this);
     lv_obj_t* sl = lv_label_create(_save_btn);
-    lv_label_set_text(sl, "保存灵感");
+    lv_label_set_text(sl, "保存文字");
     lv_obj_set_style_text_font(sl, zh_font_lg(), 0);
     lv_obj_set_style_text_color(sl, lv_color_hex(0x10151A), 0);
     lv_obj_center(sl);
