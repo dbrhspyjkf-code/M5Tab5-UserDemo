@@ -121,7 +121,8 @@ void AppXiaoZhi::onRunning()
     bool silent5s = (now_ms - _last_voice_ms > 5000);
     if ((st == kDeviceStateListening && !_heard_user && silent5s) ||
         (_answered && st == kDeviceStateIdle && silent5s)) {
-        mclog::tagInfo(TAG, "auto-exit: 5s rule (st=%d heard=%d answered=%d)",
+        // mclog 是 fmt 库: {} 占位符 (非 printf %d, 2026-11-11 实锤)
+        mclog::tagInfo(TAG, "auto-exit: 5s rule (st={} heard={} answered={})",
                        st, (int)_heard_user, (int)_answered);
         close();
         return;
