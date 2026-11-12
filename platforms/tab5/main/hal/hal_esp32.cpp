@@ -21,6 +21,8 @@ extern "C" {
 #include <functional>
 #include <new>
 #include <pthread.h>
+#include <esp_heap_caps.h>
+#include <cJSON.h>
 
 extern esp_lcd_touch_handle_t _lcd_touch_handle;
 
@@ -95,6 +97,17 @@ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 void HalEsp32::init()
 {
     mclog::tagInfo(_tag, "init");
+
+    // cJSON 全局钩到 PSRAM: xiaozhi 协议/MCP/语音链路的消息 DOM 每条都在
+    // 内部堆构建销毁, 是碎片化常驻搅拌源之一 (nlohmann 系已迁 PsramJson,
+    // 见 app/apps/utils/psram_json.h)。PSRAM 32MB 余量大; 必须在任何
+    // cJSON 使用前设置, 本 init 是 app 侧最早的公共入口。
+    cJSON_Hooks cJSON_psram_hooks;
+    cJSON_psram_hooks.malloc_fn = [](size_t sz) -> void* {
+        return heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    };
+    cJSON_psram_hooks.free_fn = [](void* ptr) { heap_caps_free(ptr); };
+    cJSON_InitHooks(&cJSON_psram_hooks);
 
     // 复位原因判别 (2026-11-01 拍照崩溃排查: 无 panic 打印的静默复位定位)
     {

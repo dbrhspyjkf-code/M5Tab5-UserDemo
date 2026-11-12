@@ -2,6 +2,7 @@
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include "../utils/news/news_feeds.h"
 #include "../utils/theme/theme.h"
 #include <cstdio>
@@ -406,7 +407,7 @@ void AppNews::_fetch()
             }
             nlohmann::json j;
             try {
-                j = nlohmann::json::parse(resp.body);
+                j = PsramJson::parse(resp.body);
             } catch (...) {
                 mclog::tagWarn(TAG, "json parse failed");
                 break;

@@ -17,6 +17,7 @@
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
 #endif
@@ -965,13 +966,13 @@ void AppIdea::_fetch()
         }
         _retry_ms = UINT32_MAX;
         std::vector<IdeaItem> items;
-        auto j = nlohmann::json::parse(resp.body, nullptr, false);
+        auto j = PsramJson::parse(resp.body, nullptr, false);
         if (!j.is_discarded()) {
             if (j.contains("texts")) {
                 for (auto& t : j["texts"]) {
                     IdeaItem it;
-                    it.id = t.value("id", "");
-                    it.text = t.value("text", "");
+                    it.id = t.value("id", std::string());
+                    it.text = t.value("text", std::string());
                     it.cat = t.value("categoryId", "work");
                     it.created = (long long)t.value("createdAt", 0LL);
                     items.push_back(std::move(it));
@@ -981,8 +982,8 @@ void AppIdea::_fetch()
                 for (auto& v : j["voices"]) {
                     IdeaItem it;
                     it.voice = true;
-                    it.id = v.value("id", "");
-                    it.text = v.value("text", "");
+                    it.id = v.value("id", std::string());
+                    it.text = v.value("text", std::string());
                     it.cat = v.value("categoryId", "work");
                     it.created = (long long)v.value("createdAt", 0LL);
                     it.dur = v.value("dur", 0);
@@ -1366,7 +1367,7 @@ void AppIdea::s_uploadRun()
                                        {{"Content-Type", "application/octet-stream"}});
         bool pok = false;
         if (resp.status == 200) {
-            auto j = nlohmann::json::parse(resp.body, nullptr, false);
+            auto j = PsramJson::parse(resp.body, nullptr, false);
             pok = !j.is_discarded() && j.value("ok", false);
         }
         if (!pok) {

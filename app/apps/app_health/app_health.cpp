@@ -2,6 +2,7 @@
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include "../utils/ui/canvas_draw.h"
 #include "../utils/theme/theme.h"   // 2026-11-09 接入全局主题
 #include <cstdio>
@@ -466,7 +467,7 @@ void AppHealth::_fetch()
             }
             nlohmann::json j;
             try {
-                j = nlohmann::json::parse(resp.body);
+                j = PsramJson::parse(resp.body);
             } catch (...) {
                 mclog::tagWarn(TAG, "json parse failed");
                 break;
@@ -700,7 +701,7 @@ void AppHealth::_fetchHistory()
             }
             nlohmann::json j;
             try {
-                j = nlohmann::json::parse(resp.body);
+                j = PsramJson::parse(resp.body);
             } catch (...) {
                 err = "解析失败";
                 break;

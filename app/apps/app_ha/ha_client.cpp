@@ -365,13 +365,13 @@ std::vector<HaClient::LockRecord> HaClient::fetchLockHistory(
 
     std::vector<LockRecord> all;
     try {
-        auto root = json::parse(resp.body);
+        auto root = PsramJson::parse(resp.body);
         if (!root.is_array()) return {};
 
         for (auto& entity_arr : root) {
             if (!entity_arr.is_array()) continue;
             for (auto& e : entity_arr) {
-                std::string st = e.value("state", "");
+                std::string st = e.value("state", std::string());
                 if (st == "unknown" || st == "unavailable" || st.empty()) continue;
                 auto& attrs = e["attributes"];
                 std::string ev_type = "";
@@ -385,7 +385,7 @@ std::vector<HaClient::LockRecord> HaClient::fetchLockHistory(
                     desc = op.empty() ? "开锁" : op + "开锁";
                 } else {
                     // lock/back_lock events with null event_type → auto-lock
-                    std::string fn = attrs.value("friendly_name", "");
+                    std::string fn = attrs.value("friendly_name", std::string());
                     if (fn.find("上锁") != std::string::npos)
                         desc = "自动上锁";
                     else if (fn.find("反锁") != std::string::npos)

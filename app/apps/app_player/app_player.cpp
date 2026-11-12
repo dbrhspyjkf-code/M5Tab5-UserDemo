@@ -6,6 +6,7 @@
 #include "../utils/theme/theme.h"
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include <mooncake_log.h>
 #include "../app_ha/ha_weather.h"
 #include <cstdio>
@@ -440,7 +441,7 @@ void AppPlayer::_macPollTask(AppPlayer* self)
     float p = -1, d = -1;
     if (resp.ok) {
         try {
-            auto j = nlohmann::json::parse(resp.body);
+            auto j = PsramJson::parse(resp.body);
             if (j.value("source", std::string()) == "mac"
                 && j.value("state", std::string()) == "playing") {
                 playing = true;
@@ -663,7 +664,7 @@ void AppPlayer::_startLyricsFetch(const std::string& title, const std::string& a
             std::vector<std::pair<float, std::string>> ent;   // (时间, 行)
             if (resp.ok) {
                 try {
-                    auto j = nlohmann::json::parse(resp.body);
+                    auto j = PsramJson::parse(resp.body);
                     if (j.value("ok", false)) {
                         std::string lrc = j.value("synced", std::string());
                         size_t pos = 0;

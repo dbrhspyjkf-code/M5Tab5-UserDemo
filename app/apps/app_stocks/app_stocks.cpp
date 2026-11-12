@@ -6,6 +6,7 @@
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include <cstdio>
 #include <cstring>
 #include <chrono>
@@ -743,11 +744,11 @@ void AppStocks::_commodFetchWorker()
         auto mresp = GetHAL()->httpGet("http://" + svc + ":8766/api/market/overview");
         if (mresp.ok) {
             try {
-                auto j = nlohmann::json::parse(mresp.body, nullptr, false);
+                auto j = PsramJson::parse(mresp.body, nullptr, false);
                 if (!j.is_discarded() && j.contains("items")) {
                     for (const auto& it : j["items"]) {
-                        if (it.value("name", "") != "比特币") continue;
-                        q[2].value   = it.value("value", "");
+                        if (it.value("name", std::string()) != "比特币") continue;
+                        q[2].value   = it.value("value", std::string());
                         q[2].chg_pct = static_cast<float>(it.value("chg", 0.0));
                         // gate 无日内高低 — hilo 留空
                         q[2].ok = !q[2].value.empty();
@@ -1213,7 +1214,7 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
 
     ChartData local;
     auto parse_ok = [](const std::string& body) {
-        try { auto j = nlohmann::json::parse(body); return j.value("code", -1) == 0; }
+        try { auto j = PsramJson::parse(body); return j.value("code", -1) == 0; }
         catch (...) { return false; }
     };
 
@@ -1223,8 +1224,8 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
             "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=" + prefixed);
         if (resp.ok && parse_ok(resp.body)) {
             try {
-                auto j = nlohmann::json::parse(resp.body);
-                const auto& arr = j["data"][prefixed]["data"]["data"];
+                auto j = PsramJson::parse(resp.body);
+                const auto& arr = j["data"][prefixed.c_str()]["data"]["data"];
                 if (arr.is_array()) {
                     for (auto& row : arr) {
                         // 每行: "HHMM price cum_volume cum_amount"
@@ -1238,7 +1239,7 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
                 // 跑马灯全文: 现价 涨跌 涨跌% + 成交额/换手/量比/PE —— 全部来自
                 // 响应内嵌 qt 节点 (= qt.gtimg 实时数组, GBK 但只取数字字段;
                 // [3]现价 [31]涨跌 [32]涨跌% [37]成交额(万) [38]换手 [39]PE [49]量比)
-                const auto& qtn = j["data"][prefixed]["qt"][prefixed];
+                const auto& qtn = j["data"][prefixed.c_str()]["qt"][prefixed.c_str()];
                 if (qtn.is_array() && qtn.size() > 49) {
                     auto qf = [&](int n) -> std::string {
                         return qtn[n].is_string() ? qtn[n].get<std::string>() : "";
@@ -1274,8 +1275,8 @@ void AppStocks::_chartFetchWorker(std::string code, std::shared_ptr<bool> alive)
             prefixed + ",day,,,250,qfq");
         if (resp.ok && parse_ok(resp.body)) {
             try {
-                auto j = nlohmann::json::parse(resp.body);
-                auto node = j["data"][prefixed];
+                auto j = PsramJson::parse(resp.body);
+                auto node = j["data"][prefixed.c_str()];
                 // 有 qfqday 用 qfqday, 否则 day
                 const auto* arr = node.contains("qfqday") ? &node["qfqday"] : &node["day"];
                 if (arr->is_array()) {
@@ -1708,7 +1709,7 @@ void AppStocks::_doFetch()
 void AppStocks::_parseStocksJson(const std::string& body)
 {
     try {
-        auto j = nlohmann::json::parse(body);
+        auto j = PsramJson::parse(body);
         std::vector<StockItem> parsed;
         if (j.contains("items") && j["items"].is_array()) {
             for (const auto& it : j["items"]) {

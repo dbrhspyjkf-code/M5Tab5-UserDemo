@@ -4,6 +4,7 @@
 #include "../utils/datetime/lunar_calendar.h"
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -388,7 +389,7 @@ void AppIdleScreen::_fetchAgenda()
             bool publish = false;
             std::string txt;
             try {
-                auto j = nlohmann::json::parse(GetHAL()->httpGet(base + "/agenda").body);
+                auto j = PsramJson::parse(GetHAL()->httpGet(base + "/agenda").body);
                 if (j.value("ok", false)) {   // 明确成功: 无 next=真无事项
                     txt = (j.contains("next") && j["next"].is_object())
                           ? j["next"].value("text", std::string())

@@ -13,6 +13,7 @@
  */
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../psram_json.h"
 #include <string>
 #include <vector>
 
@@ -48,7 +49,7 @@ inline std::vector<std::string> loadSel()
 {
     std::vector<std::string> sel;
     try {
-        auto j = nlohmann::json::parse(
+        auto j = PsramJson::parse(
             GetHAL()->getConfig("news_feeds", "[\"ai\"]"));
         if (j.is_array())
             for (auto& e : j) {

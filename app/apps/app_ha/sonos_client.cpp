@@ -3,6 +3,7 @@
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 
 using json = nlohmann::json;
 static const std::string _tag = "sonos";
@@ -154,16 +155,16 @@ void SonosClient::_fetch_state()
     }
 
     try {
-        auto j = json::parse(resp.body);
+        auto j = PsramJson::parse(resp.body);
         State ns;
         ns.ok         = j.value("ok", false);
-        ns.raw_state  = j.value("state", "");
+        ns.raw_state  = j.value("state", std::string());
         ns.volume     = j.value("volume", 0);
         ns.muted      = j.value("muted", false);
         ns.is_tv      = j.value("is_tv", false);
-        ns.artist     = j.value("artist", "");
-        ns.title      = j.value("title", "");
-        ns.album      = j.value("album", "");
+        ns.artist     = j.value("artist", std::string());
+        ns.title      = j.value("title", std::string());
+        ns.album      = j.value("album", std::string());
         if (GetHAL()) ns.last_update_ms = (uint32_t)GetHAL()->millis();
 
         std::lock_guard<std::mutex> lock(_mutex);

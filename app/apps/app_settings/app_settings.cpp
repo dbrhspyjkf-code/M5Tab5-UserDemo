@@ -1,4 +1,5 @@
 #include "app_settings.h"
+#include "../utils/psram_json.h"
 #include "../utils/theme/theme.h"
 #include "../utils/assets/assets_partition.h"
 #include <hal/hal.h>
@@ -1443,7 +1444,7 @@ void AppSettings::_fxFetch()
         auto resp = GetHAL()->httpGet(url);
         if (resp.ok) {
             try {
-                auto j = nlohmann::json::parse(resp.body);
+                auto j = PsramJson::parse(resp.body);
                 if (j.value("ok", false) && j.contains("rates")) {
                     const auto& rates = j["rates"];
                     std::lock_guard<std::mutex> lk(g_fx_mutex);
@@ -2180,8 +2181,6 @@ void AppSettings::_closeEmail()
 // PSRAM 阈值): 307 封 × 7 字段 ≈ 4K 个节点, 每分钟 churn 两次把内部堆搅碎
 // (27KB 空闲分不出 181B → WiFi SDIO 断言, 2026-11-07)。自定义分配器让
 // 节点+字符串整棵落 PSRAM; 解析出的紧凑 email_list 仍走内部堆 (常驻小体量)。
-// (2026-11-09 提为共享头 utils/psram_json.h, 供 ha_client /api/states 同款)
-#include "../utils/psram_json.h"
 
 void AppSettings::fetchEmail()
 {
@@ -2612,7 +2611,7 @@ void AppSettings::_emailRunAction(const std::string& act, const std::string& fol
                 return false;
             }
             try {
-                auto r = nlohmann::json::parse(resp.body);
+                auto r = PsramJson::parse(resp.body);
                 if (r.value("ok", false)) return true;
                 err = r.value("error", std::string("未知错误"));
             } catch (const std::exception& ex) {

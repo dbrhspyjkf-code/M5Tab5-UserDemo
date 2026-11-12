@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include <xiaozhi_ctl.h>
 #include "../app_voice_input/app_voice_input.h"
 #include "../app_ha/ha_weather.h"
@@ -811,10 +812,10 @@ void AppHome::_fetch_weather()
         auto resp = GetHAL()->httpGet(url, {{"Authorization", std::string("Bearer ") + tok}});
         if (!resp.ok) return;
         try {
-            auto j = nlohmann::json::parse(resp.body);
-            std::string st = j.value("state", "");
+            auto j = PsramJson::parse(resp.body);
+            std::string st = j.value("state", std::string());
             if (st.empty() || st == "unavailable" || st == "unknown") return;
-            auto attrs = j.value("attributes", nlohmann::json::object());
+            auto attrs = j.value("attributes", PsramJson::object());
             std::string temp;
             if (attrs.contains("temperature")) {
                 // temperature may be a JSON number (e.g. 28.1) — render whole degrees.
@@ -854,7 +855,7 @@ void AppHome::_sentenceNext()
     GetHAL()->tryRunDetached([this, base, off]() {
         auto resp = GetHAL()->httpGet(base + "/daily/sentence?offset=" + std::to_string(off));
         try {
-            auto j = nlohmann::json::parse(resp.body);
+            auto j = PsramJson::parse(resp.body);
             if (!j.value("ok", false)) return;
             std::string en = j.value("en", std::string());
             std::string cn = j.value("cn", std::string());
@@ -965,15 +966,15 @@ void AppHome::_fetch_dashboard()
     std::string base = "http://" + GetHAL()->getConfig("svc_host", "192.168.1.200") + ":8766";
     GetHAL()->tryRunDetached([this, base]() {
         // → parsed json on {"ok": true, ...}, null json on any failure
-        auto pick = [](const std::string& body) -> nlohmann::json {
+        auto pick = [](const std::string& body) -> PsramJson {
             try {
-                auto j = nlohmann::json::parse(body);
+                auto j = PsramJson::parse(body);
                 if (j.value("ok", false)) return j;
             } catch (...) {}
-            return nlohmann::json();
+            return PsramJson();
         };
-        auto sub = [](const nlohmann::json& j, const char* key) -> nlohmann::json {
-            return j.is_object() && j.contains(key) && j[key].is_object() ? j[key] : nlohmann::json::object();
+        auto sub = [](const PsramJson& j, const char* key) -> PsramJson {
+            return j.is_object() && j.contains(key) && j[key].is_object() ? j[key] : PsramJson::object();
         };
 
         // Row values — the row name ("GLM 用量"…) lives on the left of the
@@ -1071,7 +1072,7 @@ void AppHome::_fetch_dashboard()
             od.swap_pct  = mm.value("swap_percent", 0.0);
             od.mem_used_a = (int)(mm.value("used_mb", 0.0) / 102.4 + 0.5);  // GB×10
             od.mem_tot_a  = (int)(mm.value("total_mb", 0.0) / 102.4 + 0.5);
-            nlohmann::json dk = nlohmann::json::object();
+            nlohmann::json dk = PsramJson::object();
             if (j.contains("disk") && j["disk"].is_array() && !j["disk"].empty()
                 && j["disk"][0].is_object())
                 dk = j["disk"][0];
@@ -1093,7 +1094,7 @@ void AppHome::_fetch_dashboard()
         std::string h_time = "--:--";
         if (auto j = pick(GetHAL()->httpGet(base + "/api/health").body); !j.is_null()) {
             auto types = (j.contains("types") && j["types"].is_object())
-                         ? j["types"] : nlohmann::json::object();
+                         ? j["types"] : PsramJson::object();
             // {type, 单位, 小数位}: 与卡内 3x2 顺序一致
             struct HM { const char* t; const char* u; int dec; };
             static const HM hm[kHealthCells] = {
@@ -1372,9 +1373,9 @@ void AppHome::_fetchWeatherDetail()
             auto resp = GetHAL()->httpGet(base + "/api/states/" + ha_weather::ENTITY,
                                           {{"Authorization", tok}});
             if (resp.ok) {
-                auto j = nlohmann::json::parse(resp.body);
-                std::string st = j.value("state", "");
-                auto a = j.value("attributes", nlohmann::json::object());
+                auto j = PsramJson::parse(resp.body);
+                std::string st = j.value("state", std::string());
+                auto a = j.value("attributes", PsramJson::object());
                 auto num = [&](const char* k, double def = 0) {
                     return a.contains(k) && a[k].is_number() ? a[k].get<double>() : def;
                 };
@@ -1403,16 +1404,16 @@ void AppHome::_fetchWeatherDetail()
                 std::string("{\"entity_id\":\"") + ha_weather::ENTITY + "\",\"type\":\"daily\"}",
                 {{"Authorization", tok}, {"Content-Type", "application/json"}});
             if (resp.ok) {
-                auto j = nlohmann::json::parse(resp.body);
+                auto j = PsramJson::parse(resp.body);
                 auto fc = j["service_response"][ha_weather::ENTITY]["forecast"];
                 if (fc.is_array() && !fc.empty()) {
                     out += "未来几天\n";
                     int n = 0;
                     for (auto& f : fc) {
                         if (n >= 6) break;
-                        std::string dt = f.value("datetime", "");      // YYYY-MM-DD...
+                        std::string dt = f.value("datetime", std::string());      // YYYY-MM-DD...
                         std::string md = dt.size() >= 10 ? dt.substr(5, 2) + "/" + dt.substr(8, 2) : dt;
-                        std::string cond = ha_weather::condZh(f.value("condition", ""));
+                        std::string cond = ha_weather::condZh(f.value("condition", std::string()));
                         int hi = f.contains("temperature") && f["temperature"].is_number()
                                  ? (int)(f["temperature"].get<double>() + 0.5) : 0;
                         int lo = f.contains("templow") && f["templow"].is_number()

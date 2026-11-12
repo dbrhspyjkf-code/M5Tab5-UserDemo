@@ -20,6 +20,7 @@
 #include <mooncake_log.h>
 #include <xiaozhi_ctl.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -732,14 +733,14 @@ void AppRadio::_fetchStations()
     auto r = GetHAL()->httpGet(std::string(kRelayBase) + "stations");
     if (r.status != 200) return;
     try {
-        auto j = nlohmann::json::parse(r.body);
+        auto j = PsramJson::parse(r.body);
         auto arr = j.at("stations");
         if (!arr.is_array() || arr.empty()) return;
         auto v = std::make_shared<std::vector<StationDyn>>();
         for (auto& e : arr) {
             StationDyn st;
-            st.path = e.value("key", "");
-            st.name = e.value("name", "");
+            st.path = e.value("key", std::string());
+            st.name = e.value("name", std::string());
             st.freq = e.value("freq", 0);
             if (!st.path.empty() && !st.name.empty())
                 v->push_back(std::move(st));

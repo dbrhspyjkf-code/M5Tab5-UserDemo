@@ -3,6 +3,7 @@
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -328,17 +329,17 @@ void AppYt::_searchAsync(const std::string& q)
             err = "HTTP " + std::to_string(resp.status);
         } else {
             try {
-                auto j = nlohmann::json::parse(resp.body);
+                auto j = PsramJson::parse(resp.body);
                 if (!j.value("ok", false)) {
-                    err = j.value("error", "") == "no_results"
+                    err = j.value("error", std::string()) == "no_results"
                               ? "无结果, 换个关键词"
                               : "搜索失败 (上游不可用)";
                 } else {
                     for (const auto& it : j["items"]) {
                         YtItem d;
-                        d.id = it.value("id", "");
-                        d.t = it.value("t", "");
-                        d.c = it.value("c", "");
+                        d.id = it.value("id", std::string());
+                        d.t = it.value("t", std::string());
+                        d.c = it.value("c", std::string());
                         d.d = it.value("d", 0);
                         if (!d.id.empty()) items.push_back(std::move(d));
                         if ((int)items.size() >= 20) break;
@@ -450,7 +451,7 @@ void AppYt::_histLoad()
     auto v = GetHAL()->getConfig("yt_hist", "");
     if (v.empty()) return;
     try {
-        auto j = nlohmann::json::parse(v);
+        auto j = PsramJson::parse(v);
         if (j.is_array())
             for (const auto& e : j)
                 if (e.is_string() && !e.get<std::string>().empty())

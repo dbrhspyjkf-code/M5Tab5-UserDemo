@@ -4,6 +4,7 @@
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -250,7 +251,7 @@ void AppGallery::_fetchList()
 #endif
             if (resp.ok && resp.status == 200) {
                 try {
-                    auto j = nlohmann::json::parse(resp.body);
+                    auto j = PsramJson::parse(resp.body);
                     if (j.value("ok", false) && j.contains("items") && j["items"].is_array()) {
                         for (const auto& it : j["items"]) {
                             if (!it.is_object()) continue;

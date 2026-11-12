@@ -18,7 +18,8 @@ static const char* TAG = "rfid";
 #include <bsp/m5stack_tab5.h>                     // bsp_set_ext_5v_en (总线楔死时的 Hub 断电升级)
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <nlohmann/json.hpp>                    // 解析 HA /api/states
+#include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"                    // 解析 HA /api/states
 #include <string>
 #include <vector>
 #include "../app_email_led/app_email_led.h"       // setPortAOwnedByApp / retirePortA (PORT A 仲裁)
@@ -955,11 +956,11 @@ void AppRfid::_fetchPickerEntities()
             return;
         }
         try {
-            auto arr = nlohmann::json::parse(resp.body);
+            auto arr = PsramJson::parse(resp.body);
             auto effective = off_entity_list();  // 当前生效清单 → 预勾选
             std::vector<PickerEntity> ents;
             for (auto& item : arr) {
-                std::string eid = item.value("entity_id", "");
+                std::string eid = item.value("entity_id", std::string());
                 std::string dom = eid.substr(0, eid.find('.'));
                 if (dom != "switch" && dom != "light" && dom != "fan") continue;
                 PickerEntity pe;

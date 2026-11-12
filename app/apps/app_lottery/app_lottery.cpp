@@ -3,6 +3,7 @@
 #include <mooncake_log.h>
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
+#include "../utils/psram_json.h"
 #include "../utils/ui/canvas_draw.h"
 #include "../utils/font5x7.h"
 #include <cstdio>
@@ -287,16 +288,16 @@ void AppLottery::_fetchAsync()
                 _data_err = "HTTP " + std::to_string(resp.status);
             } else {
                 try {
-                    auto j = nlohmann::json::parse(resp.body);
+                    auto j = PsramJson::parse(resp.body);
                     if (!j.value("ok", false)) {
                         _data_err = j.value("error", "服务端无数据");
                     } else {
                         std::vector<ssq::DrawIssue> issues;
                         for (const auto& it : j["issues"]) {
                             ssq::DrawIssue d;
-                            d.code = it.value("code", "");
-                            d.date = it.value("date", "");
-                            d.week = it.value("week", "");
+                            d.code = it.value("code", std::string());
+                            d.date = it.value("date", std::string());
+                            d.week = it.value("week", std::string());
                             d.blue = it.value("blue", 0);
                             d.sales = it.value("sales", 0L);
                             d.pool = it.value("pool", 0L);
@@ -1342,7 +1343,7 @@ void AppLottery::_shutter()
                 return;
             }
             try {
-                auto j = nlohmann::json::parse(resp.body);
+                auto j = PsramJson::parse(resp.body);
                 if (j.value("ok", false) && (j.contains("bets") || j.contains("partial"))) {
                     for (const auto& b : j["bets"]) {
                         ssq::Pick p;
