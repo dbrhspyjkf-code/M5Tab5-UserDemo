@@ -390,11 +390,14 @@ static bool spawn_detached_worker(std::function<void()> fn, size_t stack_bytes)
         return false;
     }
 
-    // ≥16KB 深调用链(SSH/TLS 握手): 栈优先放 PSRAM —— 内部 RAM 长时间
-    // 运行后碎片化, 连续 32KB 块常不可得(pthread_create ENOMEM 12,
-    // 2026-10-29 实测: SSH 连接静默卡死)。CONFIG_SPIRAM_ALLOW_STACK_
-    // EXTERNAL_MEMORY=y 已开。set_cfg 是线程局部, 用后恢复默认。
-    if (stack_bytes >= 16384) {
+    // ≥6KB worker 栈优先放 PSRAM —— 内部 RAM 长时间运行后碎片化, 连续块
+    // 常不可得(pthread_create ENOMEM 12)。≥16KB 深调用链(SSH/TLS 握手)
+    // 2026-10-29 实测; 2026-11-12 降到 6KB: 8KB 级 HTTP worker 常驻轮询
+    // (gallery/email/home)反复在内部堆建/毁栈是碎片化搅拌源之一, 而
+    // app worker 无 DMA/ISR 需求, PSRAM 栈已被 opus/SSH 任务长期验证。
+    // CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y 已开。set_cfg 是线程
+    // 局部, 用后恢复默认。
+    if (stack_bytes >= 6144) {
         esp_pthread_cfg_t pc = esp_pthread_get_default_config();
         pc.stack_size       = stack_bytes;
         pc.stack_alloc_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;

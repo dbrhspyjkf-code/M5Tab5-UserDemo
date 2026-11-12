@@ -370,10 +370,16 @@ void AppGallery::_startThumbWorker()
             std::vector<int> todo;
             for (int i = 0; i < (int)ids.size(); i++) todo.push_back(i);
             // 顺序拉 (SDIO 友好); 失败的隔 3s 补拉, 最多 3 轮
+            // 限流 (2026-11-12): 全屏大图下载期间暂停缩略图, 全程单流;
+            // 每张之间留 40ms 间隙 —— 连续满速 SDIO 突发会把传输层压到
+            // 丢包僵死 (21:07 实录: 逛图库 10s 内 free -21KB → rpc 超时)
             for (int round = 0; round < 3 && !todo.empty() && gen == _gen.load(); round++) {
                 if (round > 0) GetHAL()->delay(3000);
                 std::vector<int> failed;
                 for (int i : todo) {
+                    if (gen != _gen.load()) break;
+                    while (_full_in_flight.load() && gen == _gen.load())
+                        GetHAL()->delay(100);
                     if (gen != _gen.load()) break;
                     char q[128];
                     snprintf(q, sizeof(q), "/gallery/thumb.rgb565?id=%s&w=%d&h=%d",
@@ -384,9 +390,12 @@ void AppGallery::_startThumbWorker()
                         failed.push_back(i);
                         continue;
                     }
-                    std::lock_guard<std::mutex> lk(_mu);
-                    if (gen == _gen.load()) _thumb_q.emplace_back(i, buf);
-                    else rgb565::release(buf);
+                    {
+                        std::lock_guard<std::mutex> lk(_mu);
+                        if (gen == _gen.load()) _thumb_q.emplace_back(i, buf);
+                        else rgb565::release(buf);
+                    }
+                    GetHAL()->delay(40);
                 }
                 todo.swap(failed);
             }
