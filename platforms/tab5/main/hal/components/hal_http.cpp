@@ -6,6 +6,9 @@
 #include <mooncake_log.h>
 #include <esp_http_client.h>
 #include <esp_crt_bundle.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -14,6 +17,24 @@
 #include <utility>
 
 static const std::string _tag = "hal-http";
+
+// ─── 网络活性记账 ───
+// esp_hosted SDIO 传输层在堆耗尽丢包后可能静默僵死：WiFi 名义在线、永远
+// 不来 DISCONNECTED 事件，但所有 TCP 连接 select() 超时（2026-11-12 哑死
+// 30+ 分钟直到手动复位）。perform 返回 ESP_OK 即通路健康——哪怕 4xx/5xx
+// 也证明包能走通。hal_wifi 的活性看门狗：有请求、无成功、持续 5 分钟 →
+// esp_restart 自愈（每次重启后 WiFi 均 ~14s 恢复，实测多轮）。
+std::atomic<uint32_t> HalEsp32::net_last_attempt_tick{0};
+std::atomic<uint32_t> HalEsp32::net_last_ok_tick{0};
+
+static esp_err_t _net_perform(esp_http_client_handle_t client)
+{
+    HalEsp32::net_last_attempt_tick.store(xTaskGetTickCount());
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK)
+        HalEsp32::net_last_ok_tick.store(xTaskGetTickCount());
+    return err;
+}
 
 static bool _is_claude_gateway_url(const std::string& url)
 {
@@ -102,7 +123,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpGet(
     for (auto& [k, v] : headers)
         esp_http_client_set_header(client, k.c_str(), v.c_str());
 
-    esp_err_t err = esp_http_client_perform(client);
+    esp_err_t err = _net_perform(client);
     if (err == ESP_OK) {
         resp.status = esp_http_client_get_status_code(client);
         resp.ok     = (resp.status >= 200 && resp.status < 300);
@@ -146,7 +167,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPost(
 
     esp_http_client_set_post_field(client, post_data.c_str(), (int)post_data.size());
 
-    esp_err_t err = esp_http_client_perform(client);
+    esp_err_t err = _net_perform(client);
     if (err == ESP_OK) {
         resp.status = esp_http_client_get_status_code(client);
         resp.ok     = (resp.status >= 200 && resp.status < 300);
@@ -188,7 +209,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPut(
 
     esp_http_client_set_post_field(client, put_data.c_str(), (int)put_data.size());
 
-    esp_err_t err = esp_http_client_perform(client);
+    esp_err_t err = _net_perform(client);
     if (err == ESP_OK) {
         resp.status = esp_http_client_get_status_code(client);
         resp.ok     = (resp.status >= 200 && resp.status < 300);
@@ -271,7 +292,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPostKeepAlive(
         esp_http_client_set_url(s_keepalive_client, url.c_str());
         esp_http_client_set_post_field(s_keepalive_client, post_data.c_str(),
                                        static_cast<int>(post_data.size()));
-        esp_err_t err = esp_http_client_perform(s_keepalive_client);
+        esp_err_t err = _net_perform(s_keepalive_client);
         s_keepalive_body = nullptr;
         if (err == ESP_OK) {
             HttpResponse_t resp;

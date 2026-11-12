@@ -7,6 +7,7 @@
 #include <hal/hal.h>
 #include <ina226.hpp>
 #include <lvgl.h>
+#include <atomic>
 #include "utils/rx8130/rx8130.h"
 
 class HalEsp32 : public hal::HalBase {
@@ -82,6 +83,12 @@ public:
     void startWifiAp() override;
     bool isWifiConnected() override;
     std::vector<WifiAp_t> wifiScan() override;
+
+    // ── 网络活性记账（仅设备 hal；hal_http 写入 / hal_wifi 看门狗轮询）──
+    // 最近一次 HTTP 请求发出 / 最近一次完整响应的 tick。esp_hosted 传输层
+    // 可能在堆耗尽丢包后静默僵死（无 DISCONNECTED 事件），看门狗据此自愈。
+    static std::atomic<uint32_t> net_last_attempt_tick;
+    static std::atomic<uint32_t> net_last_ok_tick;
 
     std::string getConfig(const std::string& key, const std::string& defaultValue = "") override;
     void setConfig(const std::string& key, const std::string& value) override;

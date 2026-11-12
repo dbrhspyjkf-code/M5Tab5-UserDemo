@@ -194,6 +194,41 @@ static void wifi_reconnect_worker()
     }
 }
 
+// ─── 网络哑死看门狗 ───
+// 重连 worker 只认 DISCONNECTED 事件, 但 esp_hosted SDIO 传输层可能在堆耗尽
+// 丢包后静默僵死: 名义在线 (s_wifi_connected 一直 true)、IP 还挂着, 实际所有
+// TCP 超时、连 ARP 都不回 (2026-11-12: 哑死 30+ 分钟直到手动复位)。这里兜底:
+// WiFi 在线 + 近 4 分钟内有人发过 HTTP 请求 + 5 分钟没有任何一次完整响应 →
+// esp_restart 自愈 (复位后 esp_hosted 全链重初始化, 每次实测 ~14s 拿回 IP;
+// SDIO 断言软化补丁把"OOM 即砖"改成"OOM 丢包", 本看门狗再把"丢包后哑死"
+// 收敛为"哑死 5 分钟即自愈重启")。要求 ok_tick 非零 (开机后至少成功过一次),
+// 避免"服务端一直关机"被误判成传输层死亡而无限重启循环。
+#define NET_WDT_CHECK_MS     30000
+#define NET_WDT_DEAD_MS      300000
+#define NET_WDT_ATTEMPT_MS   240000
+static void network_liveness_worker()
+{
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(NET_WDT_CHECK_MS));
+        if (!s_wifi_connected) continue;   // 断线归重连 worker 管
+        uint32_t now = xTaskGetTickCount();
+        uint32_t ok  = HalEsp32::net_last_ok_tick.load();
+        uint32_t att = HalEsp32::net_last_attempt_tick.load();
+        if (att == 0 || ok == 0) continue; // 还没流量 / 从未成功过: 不判死
+        int32_t since_ok  = (int32_t)(now - ok);   // 32 位 tick 回绕安全
+        int32_t since_att = (int32_t)(now - att);
+        if (since_att < 0 || since_att > (int32_t)pdMS_TO_TICKS(NET_WDT_ATTEMPT_MS))
+            continue;   // 近 4 分钟没人发请求 = 设备在睡, 不是网络死了
+        if (since_ok > (int32_t)pdMS_TO_TICKS(NET_WDT_DEAD_MS)) {
+            ESP_LOGW(TAG, "liveness watchdog: no HTTP success for %ds despite "
+                          "attempts — esp_restart self-heal",
+                     (int)(since_ok / configTICK_RATE_HZ));
+            vTaskDelay(pdMS_TO_TICKS(3000));   // 给日志留冲刷时间
+            esp_restart();
+        }
+    }
+}
+
 static void sta_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data)
 {
@@ -234,6 +269,9 @@ bool HalEsp32::wifi_init()
     s_disc_sem = xSemaphoreCreateBinary();
     if (!tryRunDetached(wifi_reconnect_worker, 16384)) {
         ESP_LOGE(TAG, "reconnect worker spawn failed — WiFi won't self-heal");
+    }
+    if (!tryRunDetached(network_liveness_worker, 16384)) {
+        ESP_LOGE(TAG, "network liveness worker spawn failed — no wedge self-heal");
     }
 
     s_wifi_event_group = xEventGroupCreate();
