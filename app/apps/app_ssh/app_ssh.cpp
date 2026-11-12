@@ -75,10 +75,12 @@ void AppSsh::_destroyUi()
         _scr = nullptr;
     }
     _form = _ta_host = _ta_user = _ta_pass = _form_status = nullptr;
+    _form_kb = nullptr;   // 挂 _scr, 随屏删除
 #ifndef PLATFORM_BUILD_DESKTOP
     _canvas = nullptr;
     _disc_btn = nullptr;
     _mic_btn = nullptr;
+    _soft_btn = _soft_panel = _soft_kb = _soft_ta = _soft_ctrl_btn = nullptr;
     if (_cbuf) {
         free(_cbuf);
         _cbuf = nullptr;
@@ -112,6 +114,9 @@ void AppSsh::onRunning()
         // 状态跃迁: 表单 ⇄ 会话屏 的屏切换都在 LVGL 线程做
         if (st == 2) {
             if (_form) { lv_obj_delete(_form); _form = nullptr; }
+            // 表单软键盘挂 _scr 不随 _form 删除, 进会话屏前收掉 (其编辑目标
+            // 是即将销毁的 textarea, 留着=悬空目标)
+            if (_form_kb) { lv_obj_delete(_form_kb); _form_kb = nullptr; }
             // _form_status 挂在 _scr 上不随 _form 删除——不清理会在会话屏残留,
             // 断开重进表单时新旧两层叠字 (2026-10-30 用户实锤)
             if (_form_status) { lv_obj_delete(_form_status); _form_status = nullptr; }
@@ -186,7 +191,9 @@ void AppSsh::_buildForm()
         lv_obj_set_style_border_color(ta, lv_color_hex(T.border), 0);
         lv_obj_set_style_border_width(ta, 1, 0);
         lv_obj_set_style_radius(ta, 10, 0);
-        lv_obj_add_event_cb(ta, _focus_ta_cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(ta, _focus_ta_cb, LV_EVENT_CLICKED, this);
+        // 软键盘 ↵ (单行框拒 '\n' 触发 ta READY): 收起表单软键盘
+        lv_obj_add_event_cb(ta, _formKbCb, LV_EVENT_READY, this);
         // 关键: 输入框必须加入 hal 键盘组, 物理键盘的字符才会投递到
         // 组内被聚焦的 textarea(lv_group_focus_obj 只对组内对象生效)。
         // hal 键盘驱动路径: kb_forward_to_lvgl → 组内聚焦对象若是
@@ -247,6 +254,37 @@ void AppSsh::_focus_ta_cb(lv_event_t* e)
     auto* ta = static_cast<lv_obj_t*>(lv_event_get_target(e));
     hal::HalBase* hal = GetHAL();
     if (hal && hal->lvKbGroup) lv_group_focus_obj(ta);
+    // 点输入框弹软键盘兜底 (USB 实体键盘在场则不弹, idea/lora_chat 同款;
+    // Tab5 键盘面板配件不在 usb 检测范围, 在场时也能弹, 关掉即可)
+    auto* app = static_cast<AppSsh*>(lv_event_get_user_data(e));
+    if (app) app->_showFormKb(ta);
+}
+
+// ── 表单软键盘 (两平台共用) ────────────────────────────────────────────
+void AppSsh::_showFormKb(lv_obj_t* ta)
+{
+    if (GetHAL()->usbKeyboardDetect()) return;   // USB 实体键盘直打不弹
+    if (!_form_kb) {
+        _form_kb = lv_keyboard_create(_scr);
+        lv_obj_set_size(_form_kb, 1280, 260);   // y460 起, 三个输入框(y≤450)不被盖
+        lv_obj_align(_form_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_bg_color(_form_kb, lv_color_hex(theme::cur().card[0]), 0);
+        lv_obj_add_event_cb(_form_kb, _formKbCb, LV_EVENT_READY, this);
+        lv_obj_add_event_cb(_form_kb, _formKbCb, LV_EVENT_CANCEL, this);
+    }
+    lv_keyboard_set_textarea(_form_kb, ta);
+    lv_obj_clear_flag(_form_kb, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_form_kb);
+}
+
+void AppSsh::_hideFormKb()
+{
+    if (_form_kb) lv_obj_add_flag(_form_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+void AppSsh::_formKbCb(lv_event_t* e)
+{
+    static_cast<AppSsh*>(lv_event_get_user_data(e))->_hideFormKb();
 }
 
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -658,6 +696,36 @@ void AppSsh::_buildSession()
     mic_part(26, 36, 4, 8, 2);     // 杆
     mic_part(18, 44, 20, 3, 1);    // 底座
 
+    // 软键盘开关钮 (左下角, 麦克风对侧): 无实体键盘时的输入兜底
+    _soft_ctrl = false;
+    _soft_busy = false;
+    _soft_line.clear();
+    _soft_btn = lv_btn_create(_scr);
+    lv_obj_set_size(_soft_btn, 56, 56);
+    lv_obj_align(_soft_btn, LV_ALIGN_BOTTOM_LEFT, 12, -8);
+    lv_obj_set_style_radius(_soft_btn, 28, 0);
+    lv_obj_set_style_bg_color(_soft_btn, lv_color_hex(0x22303C), 0);
+    lv_obj_set_style_border_width(_soft_btn, 2, 0);
+    lv_obj_set_style_border_color(_soft_btn, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_set_style_shadow_width(_soft_btn, 0, 0);
+    lv_obj_set_style_pad_all(_soft_btn, 0, 0);   // 绝对坐标子元素, 同麦克风铁律
+    lv_obj_add_event_cb(_soft_btn, _softBtnCb, LV_EVENT_CLICKED, this);
+    // 迷你键盘简笔画: 机身 + 一排键点 + 空格条
+    const uint32_t SOFT_C = 0xE8F0F6;
+    auto kb_part = [&](int x, int y, int w, int hh, int r, uint32_t color) {
+        lv_obj_t* o = lv_obj_create(_soft_btn);
+        lv_obj_remove_style_all(o);
+        lv_obj_set_pos(o, x, y);
+        lv_obj_set_size(o, w, hh);
+        lv_obj_set_style_bg_color(o, lv_color_hex(color), 0);
+        lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(o, r, 0);
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    };
+    kb_part(11, 20, 34, 18, 3, SOFT_C);                                  // 机身
+    for (int i = 0; i < 4; ++i) kb_part(15 + i * 7, 24, 3, 3, 1, 0x22303C);   // 键点
+    kb_part(18, 31, 20, 3, 1, 0x22303C);                                 // 空格条
+
     ime::reset(true);    // 加载拼音表 + 清缓冲
     _installKeySink();
     _renderTerminal();   // 首帧
@@ -683,6 +751,11 @@ void AppSsh::_teardownSession()
     AppVoiceInput::dismissMicButton();
     AppVoiceInput::cancelVoiceText();
     if (_mic_btn) { lv_obj_delete(_mic_btn); _mic_btn = nullptr; }
+    if (_soft_btn) { lv_obj_delete(_soft_btn); _soft_btn = nullptr; }
+    if (_soft_panel) { lv_obj_delete(_soft_panel); _soft_panel = nullptr; }
+    _soft_kb = _soft_ta = _soft_ctrl_btn = nullptr;   // 随 panel 删除
+    _soft_ctrl = false;
+    _soft_line.clear();
     _removeKeySink();
     if (_disc_btn) { lv_obj_delete(_disc_btn); _disc_btn = nullptr; }
     if (_canvas)   { lv_obj_delete(_canvas); _canvas = nullptr; }
@@ -930,6 +1003,210 @@ void AppSsh::_installKeySink()
 void AppSsh::_removeKeySink()
 {
     hal_tab5_keyboard_set_raw_sink(nullptr, nullptr);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 软键盘 (屏幕虚拟键盘): 无实体键盘时的输入兜底 (2026-11-12)
+// 表单屏: 见 _showFormKb (两平台段)。
+// 会话屏: 左下角开关钮 → 面板 = 终端功能键行 + lv_keyboard。键盘编辑隐藏
+// 行缓冲 _soft_ta, VALUE_CHANGED 对镜像 diff → 字节直发远端 —— 与物理键盘
+// 同语义 (逐字节实时, 远端回显即所见); ✓/↵ = 发 '\r' 执行当前行; ✗ = 收起
+// (已发字节不动, 等价物理键盘"合上盖子")。
+// ═══════════════════════════════════════════════════════════════════════
+namespace {
+struct SoftFnDef {
+    const char* lbl;
+    const char* seq;
+    uint8_t len;
+    bool sticky;   // Ctrl 粘滞: 下一个键盘字母发控制码
+};
+constexpr SoftFnDef SOFT_FN[] = {
+    {"Esc",  "\x1b", 1, false},
+    {"Tab",  "\t",   1, false},
+    {"Ctrl", nullptr, 0, true},
+    {LV_SYMBOL_UP,    "\x1b[A", 3, false},
+    {LV_SYMBOL_DOWN,  "\x1b[B", 3, false},
+    {LV_SYMBOL_LEFT,  "\x1b[D", 3, false},
+    {LV_SYMBOL_RIGHT, "\x1b[C", 3, false},
+    {"/", "/", 1, false},
+    {"-", "-", 1, false},
+    {".", ".", 1, false},
+};
+constexpr int SOFT_FN_N = (int)(sizeof(SOFT_FN) / sizeof(SOFT_FN[0]));
+constexpr int SOFT_PANEL_H = 416;   // 功能键行 60 + 键盘 352 + 余量
+constexpr int SOFT_KB_H = 352;
+}  // namespace
+
+// ── 会话屏软键盘 ──
+void AppSsh::_softToggle()
+{
+    if (_soft_panel && !lv_obj_has_flag(_soft_panel, LV_OBJ_FLAG_HIDDEN))
+        _softHide();
+    else
+        _softShow();
+}
+
+void AppSsh::_softShow()
+{
+    if (!_soft_panel) {
+        _soft_panel = lv_obj_create(_scr);
+        lv_obj_set_size(_soft_panel, 1280, SOFT_PANEL_H);
+        lv_obj_align(_soft_panel, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_bg_color(_soft_panel, lv_color_hex(0x101820), 0);
+        lv_obj_set_style_border_width(_soft_panel, 0, 0);
+        lv_obj_set_style_radius(_soft_panel, 10, 0);
+        lv_obj_set_style_pad_all(_soft_panel, 0, 0);
+        lv_obj_clear_flag(_soft_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+        // 隐藏行缓冲: 键盘的编辑目标, 内容 diff 后直发远端
+        _soft_ta = lv_textarea_create(_soft_panel);
+        lv_textarea_set_one_line(_soft_ta, true);
+        lv_obj_add_flag(_soft_ta, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(_soft_ta, _softTaCb, LV_EVENT_VALUE_CHANGED, this);
+        lv_obj_add_event_cb(_soft_ta, _softTaCb, LV_EVENT_READY, this);
+
+        // 终端功能键行: lv_keyboard 没有的键 (Esc/Tab/Ctrl/方向/路径常用符)
+        const int bw = 1280 / SOFT_FN_N;
+        for (int i = 0; i < SOFT_FN_N; ++i) {
+            lv_obj_t* b = lv_btn_create(_soft_panel);
+            lv_obj_set_size(b, bw - 10, 48);
+            lv_obj_set_pos(b, 5 + i * bw, 6);
+            lv_obj_set_style_bg_color(b, lv_color_hex(0x22303C), 0);
+            lv_obj_set_style_radius(b, 8, 0);
+            lv_obj_set_style_shadow_width(b, 0, 0);
+            lv_obj_set_user_data(b, (void*)(intptr_t)i);
+            lv_obj_add_event_cb(b, _softFnCb, LV_EVENT_CLICKED, this);
+            lv_obj_t* l = lv_label_create(b);
+            lv_label_set_text(l, SOFT_FN[i].lbl);
+            lv_obj_set_style_text_color(l, lv_color_hex(0xE8F0F6), 0);
+            lv_obj_center(l);
+            lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE);
+            if (SOFT_FN[i].sticky) _soft_ctrl_btn = b;
+        }
+
+        _soft_kb = lv_keyboard_create(_soft_panel);
+        lv_obj_set_pos(_soft_kb, 0, 60);
+        lv_obj_set_size(_soft_kb, 1280, SOFT_KB_H);
+        lv_obj_set_style_bg_color(_soft_kb, lv_color_hex(0x1A2530), 0);
+        lv_keyboard_set_textarea(_soft_kb, _soft_ta);
+        lv_obj_add_event_cb(_soft_kb, _softKbCb, LV_EVENT_READY, this);
+        lv_obj_add_event_cb(_soft_kb, _softKbCb, LV_EVENT_CANCEL, this);
+    }
+    lv_obj_clear_flag(_soft_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_soft_panel);
+}
+
+void AppSsh::_softHide()
+{
+    if (_soft_panel) lv_obj_add_flag(_soft_panel, LV_OBJ_FLAG_HIDDEN);
+    _soft_ctrl = false;
+    if (_soft_ctrl_btn)
+        lv_obj_set_style_bg_color(_soft_ctrl_btn, lv_color_hex(0x22303C), 0);
+    if (_soft_ta) {
+        _soft_busy = true;
+        lv_textarea_set_text(_soft_ta, "");
+        _soft_busy = false;
+    }
+    _soft_line.clear();
+}
+
+// 执行当前行: 流式模式下字符已逐字节发过, 只补 '\r'
+void AppSsh::_softEnter()
+{
+    if (_sess_state.load() != 2) return;
+    const uint8_t cr = '\r';
+    _softSend(&cr, 1);
+    if (_soft_ta) {
+        _soft_busy = true;
+        lv_textarea_set_text(_soft_ta, "");
+        _soft_busy = false;
+    }
+    _soft_line.clear();
+}
+
+// 与物理键盘同一条队列 (raw sink 同款 KeyEvt, 会话任务单线程写通道)
+void AppSsh::_softSend(const uint8_t* b, size_t n)
+{
+    if (!s_keyq || _sess_state.load() != 2 || !n) return;
+    KeyEvt e{};
+    e.len = (uint8_t)std::min(n, sizeof(e.b));
+    memcpy(e.b, b, e.len);
+    xQueueSend(s_keyq, &e, 0);
+}
+
+void AppSsh::_softBtnCb(lv_event_t* e)
+{
+    static_cast<AppSsh*>(lv_event_get_user_data(e))->_softToggle();
+}
+
+void AppSsh::_softKbCb(lv_event_t* e)
+{
+    auto* app = static_cast<AppSsh*>(lv_event_get_user_data(e));
+    if (!app) return;
+    if (lv_event_get_code(e) == LV_EVENT_READY)
+        app->_softEnter();
+    else if (lv_event_get_code(e) == LV_EVENT_CANCEL)
+        app->_softHide();
+}
+
+// 键盘字符 → 镜像 diff → 直发远端 (流式)
+void AppSsh::_softTaCb(lv_event_t* e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    auto* app = static_cast<AppSsh*>(lv_event_get_user_data(e));
+    if (!app || !app->_soft_ta) return;
+    if (code == LV_EVENT_READY) { app->_softEnter(); return; }   // ↵(单行框拒'\n'→READY)
+    if (code != LV_EVENT_VALUE_CHANGED || app->_soft_busy) return;
+
+    const char* txt = lv_textarea_get_text(app->_soft_ta);
+    const std::string& old = app->_soft_line;
+    size_t common = 0;
+    while (common < old.size() && txt[common] && txt[common] == old[common]) common++;
+    const size_t new_len = strlen(txt);
+
+    // Ctrl 粘滞: 单字母追加 → 发控制码, 输入框回退 (远端回显 ^C 等)
+    if (app->_soft_ctrl && new_len == old.size() + 1 && common == old.size()) {
+        uint8_t c = (uint8_t)txt[common];
+        app->_soft_ctrl = false;
+        if (app->_soft_ctrl_btn)
+            lv_obj_set_style_bg_color(app->_soft_ctrl_btn, lv_color_hex(0x22303C), 0);
+        if (c >= 'a' && c <= 'z') c = (uint8_t)(c & 0x1F);
+        else if (c >= 'A' && c <= 'Z') c = (uint8_t)(c - 'A' + 1);
+        app->_softSend(&c, 1);
+        app->_soft_busy = true;
+        lv_textarea_set_text(app->_soft_ta, old.c_str());
+        app->_soft_busy = false;
+        return;   // 镜像不变 (字符未进缓冲)
+    }
+
+    uint8_t buf[16];
+    size_t n = 0;
+    for (size_t k = old.size(); k > common && n < sizeof(buf); --k) buf[n++] = 0x7F;   // 回退
+    for (size_t k = common; k < new_len && n < sizeof(buf); ++k) {
+        if (txt[k] == '\n' || txt[k] == '\r') continue;   // Enter 走 READY
+        buf[n++] = (uint8_t)txt[k];
+    }
+    app->_soft_line.assign(txt);
+    app->_softSend(buf, n);
+}
+
+// 功能键行: 直发转义序列 / Ctrl 粘滞开关
+void AppSsh::_softFnCb(lv_event_t* e)
+{
+    auto* app = static_cast<AppSsh*>(lv_event_get_user_data(e));
+    auto* btn = lv_event_get_current_target_obj(e);
+    if (!app || !btn) return;
+    const int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
+    if (idx < 0 || idx >= SOFT_FN_N) return;
+    const SoftFnDef& d = SOFT_FN[idx];
+    if (d.sticky) {
+        app->_soft_ctrl = !app->_soft_ctrl;
+        if (app->_soft_ctrl_btn)
+            lv_obj_set_style_bg_color(app->_soft_ctrl_btn,
+                lv_color_hex(app->_soft_ctrl ? theme::cur().accent : 0x22303C), 0);
+        return;
+    }
+    app->_softSend((const uint8_t*)d.seq, d.len);
 }
 
 // ═══════════════════════════════════════════════════════════════════════

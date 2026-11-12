@@ -57,6 +57,12 @@ private:
     void _buildForm();
     void _destroyUi();
 
+    // 表单软键盘 (两平台共用): 点输入框弹出, ✓/↵/✗ 收起
+    lv_obj_t* _form_kb = nullptr;
+    void _showFormKb(lv_obj_t* ta);
+    void _hideFormKb();
+    static void _formKbCb(lv_event_t* e);
+
 #ifndef PLATFORM_BUILD_DESKTOP
     // ── 终端会话 (仅真机) ──
     std::unique_ptr<TerminalEmulator> _emu;
@@ -82,6 +88,25 @@ private:
     std::mutex _voice_mx;
     std::string _voice_text;
     void _onVoiceText(const std::string& t);
+
+    // 软键盘 (屏幕虚拟键盘): 无实体键盘时的输入兜底 (2026-11-12)
+    lv_obj_t* _soft_btn = nullptr;        // 会话屏: 软键盘开关钮 (左下角)
+    lv_obj_t* _soft_panel = nullptr;      // 会话屏: 功能键行 + 键盘面板
+    lv_obj_t* _soft_kb = nullptr;         // 面板内 lv_keyboard
+    lv_obj_t* _soft_ta = nullptr;         // 隐藏行缓冲 (键盘编辑目标)
+    lv_obj_t* _soft_ctrl_btn = nullptr;   // Ctrl 粘滞键 (高亮反馈)
+    std::string _soft_line;               // _soft_ta 内容镜像 (diff 发送)
+    bool _soft_ctrl = false;              // Ctrl 粘滞: 下一个键盘字母发控制码
+    bool _soft_busy = false;              // 回改 _soft_ta 期间抑制 diff
+    void _softToggle();
+    void _softShow();
+    void _softHide();
+    void _softEnter();
+    void _softSend(const uint8_t* b, size_t n);
+    static void _softBtnCb(lv_event_t* e);
+    static void _softKbCb(lv_event_t* e);
+    static void _softTaCb(lv_event_t* e);
+    static void _softFnCb(lv_event_t* e);
 #endif
 
     // ── 上拨手势退出 (app_rfid 同款, 工具页模式) ──
