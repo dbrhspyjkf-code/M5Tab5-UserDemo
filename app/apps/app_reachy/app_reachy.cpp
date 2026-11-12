@@ -16,7 +16,6 @@ static const std::string _tag = "reachy";
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
-#include <esp_heap_caps.h>
 #include "../utils/assets/assets_partition.h"
 extern const uint8_t font_puhui_common_30_4_bin_start[]
     asm("_binary_font_puhui_common_30_4_bin_start");
@@ -32,23 +31,15 @@ static const lv_font_t* zh_font_sm() {
     }();
     return f;
 }
-static void ensure_reachy_lvgl_pool() {
-    static bool initialized = false;
-    if (initialized) return;
-    constexpr size_t pool_size = 128 * 1024;
-    void* pool = heap_caps_malloc(pool_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!pool || !lv_mem_add_pool(pool, pool_size)) {
-        if (pool) heap_caps_free(pool);
-        mclog::tagWarn(_tag, "failed to expand LVGL heap in PSRAM");
-        return;
-    }
-    initialized = true;
-}
+// 注: 曾在此给 LVGL 加 128KB PSRAM 池 (lv_mem_add_pool), 但设备 LVGL 走
+// CLIB_MALLOC 模式, 其 lv_mem_add_pool 是空实现 (恒返回 NULL) — 池根本不生效,
+// 只会每次开机后首次打开都白白 alloc/free 128KB 并打一条假警告。
+// LVGL 对象由系统 malloc 分配 (内部 SRAM 优先), 内部堆压力治理走全局方案
+// (hal_http 瞬态全 PSRAM / SDIO 断言软化, 2026-11-12)。
 #else
 extern "C" const lv_font_t font_puhui_20_4;
 static const lv_font_t* zh_font_lg() { return &font_puhui_20_4; }
 static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
-static void ensure_reachy_lvgl_pool() {}
 #endif
 
 struct TabCtx { class AppReachy* self; int idx; };
@@ -79,7 +70,6 @@ void AppReachy::onCreate() {}
 
 void AppReachy::onOpen() {
     _open_generation.fetch_add(1);
-    ensure_reachy_lvgl_pool();
     if (_scr) {
         lv_screen_load(_scr);
         _installSwipeGesture();

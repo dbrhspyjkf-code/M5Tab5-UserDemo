@@ -662,12 +662,21 @@ static uint8_t * sdio_rx_get_buffer(uint32_t len)
 	uint8_t ** buf = &double_buf.buffer[index].buf;
 
 	if (len > double_buf.buffer[index].buf_size) {
+		// allocate before freeing the old buffer so a failed alloc keeps the
+		// smaller buffer valid; assert() on OOM here rebooted the whole system
+		// when the fragmented internal DMA heap could not grow the buffer by a
+		// few bytes (2026-11-12, gallery open + wifi burst -> 181B alloc fail)
+		uint8_t * new_buf = (uint8_t *)MEM_ALLOC(len);
+		if (!new_buf) {
+			ESP_LOGE(TAG, "Failed to alloc %ld byte rx buffer, keeping old size %ld",
+					len, double_buf.buffer[index].buf_size);
+			return NULL;
+		}
 		if (*buf) {
 			// free already allocated memory
 			g_h.funcs->_h_free(*buf);
 		}
-		*buf = (uint8_t *)MEM_ALLOC(len);
-		assert(*buf);
+		*buf = new_buf;
 		double_buf.buffer[index].buf_size = len;
 		ESP_LOGD(TAG, "buf %d size: %ld", index, double_buf.buffer[index].buf_size);
 	}
@@ -875,7 +884,14 @@ static void sdio_read_task(void const* pvParameters)
 
 		/* Allocate rx buffer */
 		rxbuff = sdio_rx_get_buffer(len_from_slave);
-		assert(rxbuff);
+		if (!rxbuff) {
+			/* OOM: drop this transfer without advancing the byte count, the
+			 * slave's flow control (throttling) backs off until host memory
+			 * frees up. Never reboot the system over a wifi buffer. */
+			SDIO_DRV_UNLOCK();
+			vTaskDelay(pdMS_TO_TICKS(10));
+			continue;
+		}
 
 		data_left = len_from_slave;
 		pos = rxbuff;

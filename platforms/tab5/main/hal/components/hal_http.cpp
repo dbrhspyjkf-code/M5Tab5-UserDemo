@@ -47,6 +47,12 @@ typedef struct {
     std::vector<std::pair<std::string, std::string>>* resp_headers;
 } _http_ctx_t;
 
+// HTTP 瞬态缓冲一律越过 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL (16KB) 阈值分配,
+// 全落 PSRAM: esp_http_client 每次请求都会 init/alloc RX buffer, body 字符串
+// 也是一次性的; 落内部堆的 alloc/free 循环是内部堆碎片化的主要搅拌源
+// (2026-11-12 SDIO 181B 分配失败断言重启的根因链)。PSRAM 32MB, 随便用。
+static constexpr size_t kPsramBufThreshold = 20480;
+
 static esp_err_t _http_event_handler(esp_http_client_event_t* evt)
 {
     auto* ctx = static_cast<_http_ctx_t*>(evt->user_data);
@@ -59,7 +65,7 @@ static esp_err_t _http_event_handler(esp_http_client_event_t* evt)
         // 扩容 realloc 多次, 小容量落内部堆, 每次轮询都给内部堆留一串碎片
         // (2026-11-07 邮件 158KB×2/分钟把内部堆搅碎实锤)。一次性的大块
         // (>16KB) 经 CONFIG_SPIRAM_USE_MALLOC 直接落 PSRAM。
-        if (ctx->body->capacity() < 4096) {
+        if (ctx->body->capacity() < kPsramBufThreshold) {
             int64_t len = esp_http_client_get_content_length(evt->client);
             if (len > (int64_t)ctx->body->capacity() && len <= 8 * 1024 * 1024)
                 ctx->body->reserve((size_t)len + 1);
@@ -75,7 +81,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpGet(
 {
     HttpResponse_t resp;
     std::string body;
-    body.reserve(2048);
+    body.reserve(kPsramBufThreshold);   // PSRAM: 见 kPsramBufThreshold 注释
     _http_ctx_t ctx{&body, &resp.resp_headers};
 
     esp_http_client_config_t config = {};
@@ -83,7 +89,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpGet(
     config.event_handler  = _http_event_handler;
     config.user_data      = &ctx;
     config.timeout_ms     = _http_get_timeout_ms(url);
-    config.buffer_size    = 2048;
+    config.buffer_size    = kPsramBufThreshold;
     config.buffer_size_tx = 512;
     // https 必须给服务器校验选项, 否则 esp-tls 拒绝建连
     // ("No server verification option set", 2026-10-27 指数页 qt.gtimg.cn 实锤).
@@ -117,7 +123,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPost(
 {
     HttpResponse_t resp;
     std::string body;
-    body.reserve(512);
+    body.reserve(kPsramBufThreshold);   // PSRAM: 见 kPsramBufThreshold 注释
     _http_ctx_t ctx{&body, &resp.resp_headers};
 
     esp_http_client_config_t config = {};
@@ -128,7 +134,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPost(
     // ssq/ticket: 服务端多方向×逐行×3变换 OCR 全管线 >10s, 60s 上限
     config.timeout_ms     = _is_claude_gateway_url(url) ? 240000
                           : (url.find("/api/ssq/ticket") != std::string::npos ? 60000 : 10000);
-    config.buffer_size    = 1024;
+    config.buffer_size    = kPsramBufThreshold;
     config.buffer_size_tx = 2048;
     config.crt_bundle_attach = esp_crt_bundle_attach;
 
@@ -160,7 +166,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPut(
 {
     HttpResponse_t resp;
     std::string body;
-    body.reserve(512);
+    body.reserve(kPsramBufThreshold);   // PSRAM: 见 kPsramBufThreshold 注释
 
     _http_ctx_t ctx{&body, &resp.resp_headers};
 
@@ -170,7 +176,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPut(
     config.event_handler  = _http_event_handler;
     config.user_data      = &ctx;
     config.timeout_ms     = 10000;
-    config.buffer_size    = 1024;
+    config.buffer_size    = kPsramBufThreshold;
     config.buffer_size_tx = 2048;
     config.crt_bundle_attach = esp_crt_bundle_attach;
 
@@ -244,7 +250,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPostKeepAlive(
             config.method            = HTTP_METHOD_POST;
             config.event_handler     = _keepalive_event_handler;
             config.timeout_ms        = 3000;
-            config.buffer_size       = 1024;
+            config.buffer_size       = kPsramBufThreshold;
             config.buffer_size_tx    = 2048;
             config.keep_alive_enable = true;
             config.crt_bundle_attach = esp_crt_bundle_attach;
@@ -260,7 +266,7 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPostKeepAlive(
         }
 
         std::string body;
-        body.reserve(512);
+        body.reserve(kPsramBufThreshold);   // PSRAM: 见 kPsramBufThreshold 注释
         s_keepalive_body = &body;
         esp_http_client_set_url(s_keepalive_client, url.c_str());
         esp_http_client_set_post_field(s_keepalive_client, post_data.c_str(),

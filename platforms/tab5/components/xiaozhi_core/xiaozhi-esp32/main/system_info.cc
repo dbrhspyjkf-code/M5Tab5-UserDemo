@@ -148,7 +148,11 @@ void SystemInfo::PrintTaskList() {
 void SystemInfo::PrintHeapStats() {
     int free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
-    ESP_LOGI(TAG, "free sram: %u minimal sram: %u", free_sram, min_free_sram);
+    // 最大连续块: 碎片化实锤指标 (free 还剩 37KB 却分不出 181B 的 2026-11-12
+    // SDIO OOM 断言重启, 靠 free/minimal 根本看不出是"量不够"还是"碎")
+    size_t largest_sram = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ESP_LOGI(TAG, "free sram: %u minimal sram: %u largest blk: %u",
+             free_sram, min_free_sram, (unsigned)largest_sram);
 }
 
 void SystemInfo::PrintPmLocks() {

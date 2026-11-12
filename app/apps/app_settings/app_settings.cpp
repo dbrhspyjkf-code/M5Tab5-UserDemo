@@ -2192,6 +2192,15 @@ void AppSettings::fetchEmail()
         uint32_t now_tick = lv_tick_get();
         if (s_retry_not_before != 0 && (int32_t)(now_tick - s_retry_not_before) < 0) return;
     }
+    // 双轮询去重: LED 通知器 (60s) / 主页状态栏 (120s) / 工具页三处都打本
+    // 端点, 实录常有相隔 3 秒的成对请求 (08:54:53 + :56), 白白多一轮 84KB
+    // 往返。45s 内完成过一次就复用上次结果直接跳过; 手动刷新场景这个新鲜度
+    // 也够。s_last_done_tick 由 worker 在两个完成点写, 32 位对齐写无撕裂。
+    static uint32_t s_last_done_tick = 0;
+    {
+        uint32_t now_tick = lv_tick_get();
+        if (s_last_done_tick != 0 && (int32_t)(now_tick - s_last_done_tick) < 45000) return;
+    }
     if (email_fetching.exchange(true)) {
         mclog::tagWarn(_tag, "fetchEmail: already in flight, skip");
         return;
@@ -2225,6 +2234,7 @@ void AppSettings::fetchEmail()
             mclog::tagInfo(_tag, "emailFetch: unchanged (304), skip parse");
             // 304 早退也必须清闸, 否则 in-flight 旗标永久卡死, 轮询从此
             // 全部 "already in flight, skip" 直到重启 (2026-11-09 实锤).
+            s_last_done_tick = lv_tick_get();
             email_fetching.store(false);
             return;
         }
@@ -2330,6 +2340,7 @@ void AppSettings::fetchEmail()
                 email_error_msg = "HTTP " + std::to_string(resp.status);
             }
         }
+        s_last_done_tick = lv_tick_get();
         email_fetching.store(false);
     });
     if (!spawned) {
