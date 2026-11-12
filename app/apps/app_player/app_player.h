@@ -68,6 +68,7 @@ private:
     lv_obj_t* _page_lbl  = nullptr;
     lv_obj_t* _hint_lbl  = nullptr;   // 底部提示: 触摸后 3s 内显示   // 顶行居中的当前源名
     lv_obj_t* _state_chip = nullptr;   // 播放中/暂停/空闲/离线
+    lv_obj_t* _src_lbl   = nullptr;   // 「Mac 外放中」源指示(Mac 外放模式才显示)
     lv_obj_t* _title_lbl  = nullptr;
     lv_obj_t* _artist_lbl = nullptr;
     lv_obj_t* _play_lbl   = nullptr;   // 播放键内容(▶/⏸)
@@ -116,6 +117,23 @@ private:
     void _refreshUi();                 // 缓存→UI(全量)
     void _pollEntity();                // HA→缓存(onRunning 周期调)
     void _sendCmd(const char* service, const char* extra_json = "");
+
+    // ── Mac 外放回退(仅 HomePod 页,2026-11-12) ──
+    // Mac 系统音频 AirPlay 直推 HomePod 时 MA 实体完全不可见(实测:实体 idle
+    // +标题停旧值,MA WS 同样 external_source=null),改轮询 hermes 聚合端点
+    // /api/player/now:MA playing→MA 数据;否则回吐 Mac 系统 Now Playing。
+    bool _mac_active = false;          // 本页当前显示 Mac 外放内容
+    std::string _mac_title, _mac_artist, _mac_app;
+    float _mac_pos = -1, _mac_dur = -1;
+    bool _mac_playing = false;         // 最近一次聚合结果(_mac_mu 保护)
+    std::mutex _mac_mu;
+    std::atomic<bool> _mac_fetching{false};
+    std::atomic<bool> _mac_ready{false};
+    uint32_t _mac_next_ms = 0;         // 下次轮询时点(5s 节流)
+    void _startMacPoll();
+    void _consumeMac();                // LVGL 线程消费任务结果(进出 mac 模式的过渡)
+    static void _macPollTask(AppPlayer* self);
+    void _sendMacControl(const char* action);   // 播放控制走同一聚合端点
 
     static void _tabClick_cb(lv_event_t* e);
     static void _prevClick_cb(lv_event_t* e);

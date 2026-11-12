@@ -150,6 +150,10 @@ void AppPlayer::onOpen()
     _title.clear(); _artist.clear(); _state.clear();
     _volume = -1; _has_data = false;
     _pos = -1; _dur = -1;
+    _mac_active = false; _mac_playing = false;
+    _mac_title.clear(); _mac_artist.clear(); _mac_app.clear();
+    _mac_pos = -1; _mac_dur = -1;
+    _mac_ready.store(false); _mac_next_ms = 0;   // 开页即拉一次(下次轮询时点=0)
     { std::lock_guard<std::mutex> lk(_lyr_mu); _lyr_t.clear(); _lyr_l.clear(); }
     _lyr_idx = -1;
     if (_lyr_now) lv_label_set_text(_lyr_now, "");
@@ -166,6 +170,14 @@ void AppPlayer::onOpen()
     lv_obj_align(_page_lbl, LV_ALIGN_TOP_MID, 0, 32);   // 屏幕正中
     lv_obj_add_flag(_page_lbl, LV_OBJ_FLAG_CLICKABLE);  // 点击标题切换 SONOS/HomePod
     lv_obj_add_event_cb(_page_lbl, _tabClick_cb, LV_EVENT_CLICKED, this);
+
+    // 源指示: Mac 外放(系统 AirPlay 直推, MA 看不见)时显示
+    _src_lbl = lv_label_create(_scr);
+    lv_obj_set_style_text_font(_src_lbl, zh_font_md(), 0);
+    lv_obj_set_style_text_color(_src_lbl, lv_color_hex(C_ACCENT), 0);
+    lv_label_set_text(_src_lbl, "Mac 外放中");
+    lv_obj_align(_src_lbl, LV_ALIGN_TOP_MID, 0, 66);
+    lv_obj_add_flag(_src_lbl, LV_OBJ_FLAG_HIDDEN);
 
     // 状态 chip 已取消(2026-10-26): 播放状态由播放键图标表达
 
@@ -317,6 +329,25 @@ void AppPlayer::_pollEntity()
     if (!_ha) return;
     const char* entity = _pages[_page].entity;
     std::string st = _ha->getEntityState(entity);
+
+    // ── Mac 外放回退(仅 HomePod 页): MA 实体不在播 → 5s 一次拉聚合端点,
+    // 其 source=mac && playing 时本页改显 Mac 系统 Now Playing(标题/进度),
+    // 音量仍跟实体(HomePod 硬件音量)。MA 接管播放则立即退回实体数据。
+    if (_page == 1) {
+        if (st != "playing") {
+            uint32_t nowm = GetHAL()->millis();
+            if (!_mac_fetching.load() && (int32_t)(nowm - _mac_next_ms) >= 0)
+                _startMacPoll();
+            if (_mac_ready.exchange(false)) _consumeMac();
+        } else if (_mac_active) {
+            _mac_active = false;
+            _has_data = false;               // MA 接管: 强制重渲染实体数据
+        }
+    } else if (_mac_active) {
+        _mac_active = false;
+        _has_data = false;
+    }
+
     if (st.empty()) {
         if (_has_data) { _has_data = false; _refreshUi(); }
         return;
@@ -331,12 +362,25 @@ void AppPlayer::_pollEntity()
     // 时间戳漂移校正: HA 的 position 是 updated_at 时刻的值(静止不动),
     // 真实位置 = position + (now - updated_at), 否则必然周期性误重置
     int new_pos = poss.empty() ? -1 : (int)(atof(poss.c_str()) + 0.5);
-    if (new_pos >= 0) {
+    if (new_pos >= 0 && !_mac_active) {
         std::string upd = _ha->getEntityAttr(entity, "media_position_updated_at");
         int64_t ue = upd.empty() ? -1 : iso8601_utc_epoch(upd);
         int64_t ne = (int64_t)time(nullptr);
         if (ue > 0 && ne >= ue) new_pos += (int)(ne - ue);
     }
+
+    // ── Mac 外放内容覆盖(数据源换血, 后续变更检测/歌词/进度全走同一套逻辑) ──
+    if (_mac_active) {
+        t = _mac_title;
+        a = _mac_artist.empty() ? _mac_app : _mac_artist;
+        st = "playing";
+        pic.clear();                         // Mac 外放无封面
+        if (_mac_dur > 0) { new_dur = (int)_mac_dur; durs = std::to_string(new_dur); }
+        else { new_dur = -1; durs.clear(); }
+        if (_mac_pos >= 0) { new_pos = (int)_mac_pos; poss = std::to_string(new_pos); }
+        else { new_pos = -1; poss.clear(); }
+    }
+
     bool track_chg = (new_dur > 0 && _dur > 0 && new_dur != _dur);
     bool pos_resync = false;
     if (new_dur > 0 && new_pos >= 0) {
@@ -360,7 +404,8 @@ void AppPlayer::_pollEntity()
     if (changed || pos_jump) _refreshUi();
     // 封面:entity_picture 变化(切歌/切页)才重拉; 失败后 10s 退避重试
     // (旧逻辑一次性: 失败即永不重试 —— 尺寸不匹配时永远黑屏, 2026-10-26 实锤)
-    if (pic != _art_key && GetHAL()->millis() >= _art_retry_ms) {
+    // Mac 外放期间不拉封面(pic 已清, _art_key 已在进入时清过)
+    if (!_mac_active && pic != _art_key && GetHAL()->millis() >= _art_retry_ms) {
         _art_key = pic;
         if (!pic.empty()) _startArtFetch();
     }
@@ -370,6 +415,91 @@ void AppPlayer::_pollEntity()
         lv_obj_clear_flag(_cover_img, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(_cover_card, LV_OBJ_FLAG_HIDDEN);
     }
+}
+
+// ─── Mac 外放回退(hermes /api/player/now 聚合端点, detached 线程) ──────────
+
+void AppPlayer::_startMacPoll()
+{
+    _mac_next_ms = GetHAL()->millis() + 5000;
+    if (_mac_fetching.exchange(true)) return;
+    // 16KB PSRAM 栈(封面/歌词同款, 免内部 RAM 碎片化 pthread_create 必败)
+    if (!GetHAL()->tryRunDetached([this]() { _macPollTask(this); }, 16 * 1024)) {
+        _mac_fetching.store(false);
+    }
+}
+
+void AppPlayer::_macPollTask(AppPlayer* self)
+{
+    auto resp = GetHAL()->httpGet("http://192.168.1.200:8766/api/player/now");
+    bool playing = false;
+    std::string t, a, app;
+    float p = -1, d = -1;
+    if (resp.ok) {
+        try {
+            auto j = nlohmann::json::parse(resp.body);
+            if (j.value("source", std::string()) == "mac"
+                && j.value("state", std::string()) == "playing") {
+                playing = true;
+                t = j.value("title", std::string());
+                a = j.value("artist", std::string());
+                app = j.value("app", std::string());
+                if (j.contains("position") && j["position"].is_number()
+                    && j["position"].get<double>() >= 0)
+                    p = (float)j["position"].get<double>();
+                if (j.contains("duration") && j["duration"].is_number()
+                    && j["duration"].get<double>() > 0)
+                    d = (float)j["duration"].get<double>();
+            }
+        } catch (...) {}
+    }
+    {
+        std::lock_guard<std::mutex> lk(self->_mac_mu);
+        self->_mac_playing = playing;
+        self->_mac_title = t; self->_mac_artist = a; self->_mac_app = app;
+        self->_mac_pos = p; self->_mac_dur = d;
+    }
+    self->_mac_ready.store(true);
+    self->_mac_fetching.store(false);
+}
+
+void AppPlayer::_consumeMac()
+{
+    std::string t, a, app;
+    float p = -1, d = -1;
+    bool playing;
+    {
+        std::lock_guard<std::mutex> lk(_mac_mu);
+        t = _mac_title; a = _mac_artist; app = _mac_app;
+        p = _mac_pos; d = _mac_dur; playing = _mac_playing;
+    }
+    bool was = _mac_active;
+    _mac_active = playing;
+    if (playing && !was) {
+        mclog::tagInfo(TAG, "mac now-playing active (external AirPlay source)");
+        // 进入 Mac 外放: 清歌词(YouTube 标题查词无意义)与封面键,
+        // 封面退回占位暗卡;退出后 MA 恢复时 pic != _art_key 会自动重拉
+        {
+            std::lock_guard<std::mutex> lk(_lyr_mu);
+            _lyr_t.clear(); _lyr_l.clear(); _lyr_idx = -1;
+            _lyr_want_title.clear(); _lyr_want_artist.clear();
+        }
+        if (_lyr_now) lv_label_set_text(_lyr_now, "");
+        _art_key.clear();
+        if (_cover_img)  lv_obj_add_flag(_cover_img, LV_OBJ_FLAG_HIDDEN);
+        if (_cover_card) lv_obj_clear_flag(_cover_card, LV_OBJ_FLAG_HIDDEN);
+    } else if (!playing && was) {
+        mclog::tagInfo(TAG, "mac now-playing ended, back to MA entity display");
+    }
+}
+
+void AppPlayer::_sendMacControl(const char* action)
+{
+    std::string body = std::string("{\"action\":\"") + action + "\"}";
+    // 即发即忘: 控制结果由 ≤5s 后的聚合轮询校正(暂停成功→回退实体显示)
+    GetHAL()->tryRunDetached([body]() {
+        GetHAL()->httpPost("http://192.168.1.200:8766/api/player/now/control", body);
+    }, 16 * 1024);
 }
 
 void AppPlayer::_sendCmd(const char* service, const char* extra_json)
@@ -388,6 +518,7 @@ void AppPlayer::_switchPage(int idx)
     if (_page_lbl) lv_label_set_text(_page_lbl, _pages[idx].tab);
     _title.clear(); _artist.clear(); _state.clear();
     _volume = -1; _has_data = false;
+    _mac_active = false;                 // Mac 外放态只属于 HomePod 页
     // 封面复位:暗卡垫底,键清空(新页轮询后按需重拉)
     if (_cover_img)  lv_obj_add_flag(_cover_img, LV_OBJ_FLAG_HIDDEN);
     if (_cover_card) lv_obj_clear_flag(_cover_card, LV_OBJ_FLAG_HIDDEN);
@@ -410,6 +541,12 @@ void AppPlayer::_refreshUi()
         chip = "连接中…";
     }
     if (_state_chip) lv_label_set_text(_state_chip, chip);   // chip 已取消, 保险判空
+
+    // 源指示跟随 Mac 外放态
+    if (_src_lbl) {
+        if (_mac_active) lv_obj_clear_flag(_src_lbl, LV_OBJ_FLAG_HIDDEN);
+        else             lv_obj_add_flag(_src_lbl, LV_OBJ_FLAG_HIDDEN);
+    }
 
     // now-playing
     lv_label_set_text(_title_lbl, _has_data && !_title.empty() ? _title.c_str()
@@ -462,17 +599,30 @@ void AppPlayer::_tabClick_cb(lv_event_t* e)
 
 void AppPlayer::_prevClick_cb(lv_event_t* e)
 {
-    static_cast<AppPlayer*>(lv_event_get_user_data(e))->_sendCmd("media_previous_track");
+    auto* self = static_cast<AppPlayer*>(lv_event_get_user_data(e));
+    if (self->_mac_active) { self->_sendMacControl("previous"); return; }
+    self->_sendCmd("media_previous_track");
 }
 
 void AppPlayer::_nextClick_cb(lv_event_t* e)
 {
-    static_cast<AppPlayer*>(lv_event_get_user_data(e))->_sendCmd("media_next_track");
+    auto* self = static_cast<AppPlayer*>(lv_event_get_user_data(e));
+    if (self->_mac_active) { self->_sendMacControl("next"); return; }
+    self->_sendCmd("media_next_track");
 }
 
 void AppPlayer::_playClick_cb(lv_event_t* e)
 {
     auto* self = static_cast<AppPlayer*>(lv_event_get_user_data(e));
+    if (self->_mac_active) {
+        // Mac 外放: 控制系统 Now Playing(即当前出声的 app, 如 Chrome)
+        self->_sendMacControl("toggle");
+        // 乐观更新: ≤5s 后聚合轮询校正(暂停成功→端点回 none→回退实体显示)
+        if (self->_state == "playing") self->_state = "paused";
+        else                           self->_state = "playing";
+        self->_refreshUi();
+        return;
+    }
     self->_sendCmd("media_play_pause");
     // 乐观更新: 4s 轮询会校正
     if (self->_state == "playing") self->_state = "paused";
@@ -682,7 +832,7 @@ void AppPlayer::onClose()
     // 子对象指针必须随屏清空 (2026-11-09 崩溃定案): _lyr_now 残留悬挂,
     // 二次 onOpen 里 `if (_lyr_now) lv_label_set_text(...)` 先于建屏执行,
     // 对已释放标签 UAF → Load access fault 重启 (coredump 实锤).
-    _page_lbl = _hint_lbl = _state_chip = nullptr;
+    _page_lbl = _hint_lbl = _state_chip = _src_lbl = nullptr;
     _title_lbl = _artist_lbl = _play_lbl = nullptr;
     _vol_slider = _vol_lbl = nullptr;
     _prog_slider = _prog_lbl = _prog_total = nullptr;
