@@ -6,11 +6,12 @@
  * 复用 app_ha 的 HaClient(独立实例,4s 轮询,随 app 开关创建/销毁):
  *   - 客厅 SONOS  = media_player.ke_ting_2(Music Assistant 实体;原生 Sonos
  *     集成已从 HA 消失,MA 实体既是状态源也是控制目标 —— M5DIAL 2026-10-22 结论)
- *   - 起居室 HOMEPOD = media_player.qi_ju_shi(MA 的 RAOP/AirPlay1 送不了
- *     AirPlay2 音频,必须控制 HomePod 自身实体 —— 同上结论。
- *     2026-11-11: MA 里删掉重加 HomePod 播放器 → 实体 id 从 qi_ju_shi_2
- *     变回 qi_ju_shi,旧 id 成孤儿永不再更新;再遇「不显示正在播」先核对
- *     HA 实体 id 是否又变了 —— hermes _cover_art.py 的 pod 同步受影响)
+ *   - 起居室 HOMEPOD = media_player.qi_ju_shi(MA 播放器实体,显示/控制主源;
+ *     音量另走 HomeKit 实体 qi_ju_shi_2 —— 见 PageCfg.vol_entity。
+ *     2026-11-11: MA 删重加使实体 id 从 qi_ju_shi_2 漂移回 qi_ju_shi;
+ *     2026-11-12 定论: qi_ju_shi_2 = Apple TV/pyatv 集成实体(音量跟硬件
+ *     真值,镜像 MA 会话; M5DIAL app_sonos 同款双实体结论),MA 实体的
+ *     volume_level 在 MA idle 时不再跟设备 —— 音量条不同步先查这里)
  *
  * UI(1280×720 触摸): 顶部页签二选一 + 大字 now-playing + 上一曲/播放暂停/
  * 下一曲 触摸键 + 音量滑条;上拨手势退出(app_radio 同款)。
@@ -47,8 +48,11 @@ private:
 
     // ── 页配置(Sonos/HomePod 双页) ──
     struct PageCfg {
-        const char* tab;       // 页签名
-        const char* entity;    // HA media_player 实体
+        const char* tab;        // 页签名
+        const char* entity;     // HA media_player 实体(显示/控制主源)
+        const char* vol_entity; // 音量读写实体(null=同 entity); HomePod 页用
+                                // HomeKit 实体 qi_ju_shi_2 —— 音量跟硬件真值,
+                                // MA 实体 idle 时不跟设备音量(2026-11-12 实测)
     };
     static constexpr int kPageCount = 2;
     static const PageCfg _pages[kPageCount];
@@ -116,7 +120,8 @@ private:
     void _switchPage(int idx);
     void _refreshUi();                 // 缓存→UI(全量)
     void _pollEntity();                // HA→缓存(onRunning 周期调)
-    void _sendCmd(const char* service, const char* extra_json = "");
+    void _sendCmd(const char* service, const char* extra_json = "",
+                  const char* entity_override = nullptr);
 
     // ── Mac 外放回退(仅 HomePod 页,2026-11-12) ──
     // Mac 系统音频 AirPlay 直推 HomePod 时 MA 实体完全不可见(实测:实体 idle

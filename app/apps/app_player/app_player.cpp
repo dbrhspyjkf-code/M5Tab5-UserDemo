@@ -92,10 +92,10 @@ static void snap_theme()
     C_TEXT = T.text_hi;  C_TEXT2 = T.text_dim;
 }
 
-// 页配置: 实体结论见头注释(M5DIAL 2026-10-22 验证)
+// 页配置: 实体结论见头注释(M5DIAL 2026-10-22 验证; HomePod 音量实体 2026-11-12)
 const AppPlayer::PageCfg AppPlayer::_pages[kPageCount] = {
-    {"客厅 SONOS",   "media_player.ke_ting_2"},
-    {"起居室 HOMEPOD", "media_player.qi_ju_shi"},
+    {"客厅 SONOS",   "media_player.ke_ting_2", nullptr},
+    {"起居室 HOMEPOD", "media_player.qi_ju_shi", "media_player.qi_ju_shi_2"},
 };
 
 AppPlayer::AppPlayer()
@@ -354,7 +354,10 @@ void AppPlayer::_pollEntity()
     }
     std::string t = _ha->getEntityAttr(entity, "media_title");
     std::string a = _ha->getEntityAttr(entity, "media_artist");
-    std::string v = _ha->getEntityAttr(entity, "volume_level");
+    // 音量读硬件真值实体: HomePod 页走 HomeKit 实体 qi_ju_shi_2(M5DIAL 拧的
+    // 音量/手机 Control Center 调的音量都直接反映; MA 实体 idle 时是死值)
+    const char* vol_entity = _pages[_page].vol_entity ? _pages[_page].vol_entity : entity;
+    std::string v = _ha->getEntityAttr(vol_entity, "volume_level");
     std::string pic = _ha->getEntityAttr(entity, "entity_picture");
     std::string durs = _ha->getEntityAttr(entity, "media_duration");
     std::string poss = _ha->getEntityAttr(entity, "media_position");
@@ -502,10 +505,11 @@ void AppPlayer::_sendMacControl(const char* action)
     }, 16 * 1024);
 }
 
-void AppPlayer::_sendCmd(const char* service, const char* extra_json)
+void AppPlayer::_sendCmd(const char* service, const char* extra_json, const char* entity_override)
 {
     if (!_ha) return;
-    _ha->callService("media_player", service, _pages[_page].entity,
+    const char* entity = entity_override ? entity_override : _pages[_page].entity;
+    _ha->callService("media_player", service, entity,
                      extra_json ? extra_json : "");
 }
 
@@ -780,7 +784,11 @@ void AppPlayer::_vol_cb(lv_event_t* e)
     lv_label_set_text_fmt(self->_vol_lbl, "%d%%", v);
     char extra[48];
     snprintf(extra, sizeof(extra), "\"volume_level\":%d.%02d", v / 100, v % 100);
-    self->_sendCmd("volume_set", extra);
+    // 音量写硬件真值实体(与读同源; HomePod 页=qi_ju_shi_2, 与 M5DIAL 拧音量同效)
+    const char* vol_entity = self->_pages[self->_page].vol_entity
+                                 ? self->_pages[self->_page].vol_entity
+                                 : self->_pages[self->_page].entity;
+    self->_sendCmd("volume_set", extra, vol_entity);
 }
 
 // ─── 生命周期 ──────────────────────────────────────────────────────────────
