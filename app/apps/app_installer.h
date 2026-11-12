@@ -17,7 +17,6 @@
 #include "app_reachy/app_reachy.h"
 #include "app_voice_input/app_voice_input.h"
 #include "app_lora_chat/app_lora_chat.h"
-#include "app_email_led/app_email_led.h"
 #include "app_stocks/app_stocks.h"
 #include "app_rfid/app_rfid.h"
 #include "app_ssh/app_ssh.h"
@@ -78,7 +77,6 @@ inline void on_install_apps()
     AppHA* ha      = ha_uptr.get();
 
     auto xz_uptr   = std::make_unique<AppXiaoZhi>();
-    AppXiaoZhi* xz = xz_uptr.get();
 
     auto set_uptr  = std::make_unique<AppSettings>();
     AppSettings* settings = set_uptr.get();
@@ -373,12 +371,10 @@ inline void on_install_apps()
         std::make_unique<AppVoiceInput>());
     mooncake::GetMooncake().extensionManager()->resumeWorkerAbility(vi_id);
 
-    // ── Email LED notifier WorkerAbility (always-on) ──
-    // 后台轮询未读邮件, 有未读时在 PORT A 的 8x8 矩阵滚动蓝色 "NEW EMAIL".
-    // 与「灯阵」/「LoRa」app 通过 AppEmailLed::setPortAOwnedByApp 协调 GPIO53.
-    int el_id = mooncake::GetMooncake().extensionManager()->createAbility(
-        std::make_unique<AppEmailLed>());
-    mooncake::GetMooncake().extensionManager()->resumeWorkerAbility(el_id);
+    // Email LED notifier WorkerAbility 已移除 (2026-11-12 用户明确邮件不再需要
+    // LED 功能, 灯阵硬件 2026-11-08 已清): 后台常驻实例不再创建。未读邮件由
+    // 主页状态栏 (120s) 与工具页自行轮询; PORT A 仲裁转发仍走
+    // AppEmailLed::setPortAOwnedByApp 静态接口 (无需实例)。
 
     // ── Idle screensaver WorkerAbility (always-on) ──
     // 20s 无操作后全屏显示时间/日期/天气, 碰屏幕即关闭。天气数据复用 AppHome
