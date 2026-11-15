@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include "../utils/psram_json.h"
 #include "../utils/news/news_feeds.h"
+#include "../utils/news/news_rss.h"
 #include "../utils/theme/theme.h"
 #include <cstdio>
 #include <cstdlib>
@@ -398,16 +399,11 @@ void AppNews::_fetch()
         std::vector<FeedData> out(newsfeed::kSourceCount);
         std::string fetched;
         do {
-            const std::string base =
-                "http://" + GetHAL()->getConfig("svc_host", "192.168.1.200") + ":8766";
-            auto resp = GetHAL()->httpGet(base + "/news/feeds");
-            if (!resp.ok || resp.status != 200) {
-                mclog::tagWarn(TAG, "fetch failed: HTTP {}", resp.status);
-                break;   // 失败保持原值
-            }
+            // 设备直连 8 源 RSS (oneapp news_rss.py 同款; 2026-11-15 去
+            // OrangePi 化 — 原 hermes :8766/news/feeds 中转已退役)
             nlohmann::json j;
             try {
-                j = PsramJson::parse(resp.body);
+                j = PsramJson::parse(news_rss::fetchAllJson());
             } catch (...) {
                 mclog::tagWarn(TAG, "json parse failed");
                 break;

@@ -17,6 +17,7 @@
 #include "../utils/datetime/lunar_calendar.h"
 #include "../utils/theme/theme.h"
 #include "../utils/news/news_feeds.h"
+#include "../utils/news/news_rss.h"
 #include "../utils/power_scheduler.h"
 #ifndef PLATFORM_BUILD_DESKTOP
 #include "../utils/assets/assets_partition.h"
@@ -1162,7 +1163,9 @@ void AppHome::_fetch_dashboard()
             std::string cn = j.value("cn", std::string());
             if (!en.empty()) { sent_en = en; sent_cn = cn; }
         }
-        // 新闻多源轮播 (hermes /news/feeds, car-dash 同款; 2026-11-05 起):
+        // 新闻多源轮播 (2026-11-15 起设备直连 8 源 RSS, oneapp news_rss.py
+        // 同款 — 原 hermes /news/feeds 中转退役; news_rss::fetchAllJson 内部
+        // 每源 10min TTL 缓存, 与新闻 app 共用):
         // 设置弹窗按 NVS news_feeds 选源, 这里按选择轮转交错合并 (默认 {"ai"},
         // 与旧版 /news/ai 纯 AI 新闻行为一致)。30 分钟节流; _news_dirty=
         // 设置弹窗改源后置位, 下一次 60s 仪表轮询立即重拉。
@@ -1174,7 +1177,7 @@ void AppHome::_fetch_dashboard()
         uint32_t wnow = GetHAL()->millis();
         if (s_news_ms.load() == 0 || wnow - s_news_ms.load() >= 30u * 60 * 1000u
             || _news_dirty.exchange(false)) {
-            if (auto j = pick(GetHAL()->httpGet(base + "/news/feeds").body); !j.is_null()
+            if (auto j = pick(news_rss::fetchAllJson()); !j.is_null()
                 && j.contains("feeds") && j["feeds"].is_object()) {
                 for (auto& it : newsfeed::interleave(j["feeds"], newsfeed::loadSel(), 48))
                     news.push_back({it.cat, it.title, it.desc});
