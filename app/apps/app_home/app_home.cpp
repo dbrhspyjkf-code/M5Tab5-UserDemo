@@ -11,7 +11,8 @@
 #include "../utils/psram_json.h"
 #include <xiaozhi_ctl.h>
 #include "../app_voice_input/app_voice_input.h"
-#include "../app_ha/ha_weather.h"
+#include "../app_ha/ha_weather.h"          // 网络弹窗 hostOnly 解析 (天气已不依赖)
+#include "../utils/weather/open_meteo.h"
 #include "../app_settings/app_settings.h"
 #include "../utils/datetime/lunar_calendar.h"
 #include "../utils/theme/theme.h"
@@ -800,34 +801,158 @@ void AppHome::onRunning()
     }
 }
 
+// ── 天气直连 (2026-11-15 去 OrangePi 化, oneapp 同款方案) ────────────────────
+// 原: Pi 上 HA 的 weather.he_feng_tian_qi_heweather 实体 (REST + token, 主页
+// 卡 + 详情弹窗各一次请求)。现: 设备直连 Open-Meteo 免 key API, IP 归属地
+// 定位 (ip-api → ip.sb → 深圳/上次定位兜底), 单请求覆盖卡片+弹窗全部字段。
+namespace {
+
+struct WxLoc {
+    double lat = 0, lon = 0;
+    std::string city;
+    bool ok = false;
+};
+
+WxLoc s_wx_loc{open_meteo::HOME_LAT, open_meteo::HOME_LON, open_meteo::HOME_CITY, false};
+uint32_t s_wx_loc_tick = 0;   // 定位缓存 (30min TTL; lv_tick, worker 只读改)
+
+// IP 归属地定位: NVS 上次成功值 (跨重启持久) → ip-api → ip.sb → 深圳/上次值。
+// 只在 worker 线程调用 (_fetch_weather 15min 一轮, 不会并发)。
+WxLoc wxLocate()
+{
+    if (s_wx_loc_tick != 0 && lv_tick_elaps(s_wx_loc_tick) < 30 * 60 * 1000)
+        return s_wx_loc;
+    // NVS 上次成功定位 (比默认深圳准; 断网时的兜底)
+    WxLoc fallback{open_meteo::HOME_LAT, open_meteo::HOME_LON, open_meteo::HOME_CITY, false};
+    {
+        std::string lat = GetHAL()->getConfig("wx_lat", "");
+        std::string lon = GetHAL()->getConfig("wx_lon", "");
+        std::string city = GetHAL()->getConfig("wx_city", "");
+        if (!lat.empty() && !lon.empty() && !city.empty())
+            fallback = WxLoc{std::atof(lat.c_str()), std::atof(lon.c_str()), city, true};
+    }
+    auto try_parse = [](const std::string& body, bool sb) -> WxLoc {
+        try {
+            auto j = PsramJson::parse(body);
+            if (!sb && j.value("status", std::string()) != "success")
+                return WxLoc{};
+            WxLoc l;
+            l.lat = sb ? j.value("latitude", 0.0) : j.value("lat", 0.0);
+            l.lon = sb ? j.value("longitude", 0.0) : j.value("lon", 0.0);
+            l.city = j.value("city", std::string());
+            l.ok = (l.lat != 0 || l.lon != 0);
+            if (l.city.empty()) l.city = "定位";
+            return l;
+        } catch (...) {
+            return WxLoc{};
+        }
+    };
+    WxLoc loc;
+    auto r1 = GetHAL()->httpGet(open_meteo::LOCATE_URL_1);   // ① ip-api (http 中文)
+    if (r1.ok) loc = try_parse(r1.body, false);
+    if (!loc.ok) {                                           // ② ip.sb (https)
+        auto r2 = GetHAL()->httpGet(open_meteo::LOCATE_URL_2);
+        if (r2.ok) loc = try_parse(r2.body, true);
+    }
+    if (loc.ok) {
+        s_wx_loc = loc;
+        s_wx_loc_tick = lv_tick_get();
+        // 持久化上次成功定位 (值不变不写 — 防 NVS 磨损; hal_camera setConfig
+        // 自 worker 线程调用是既有先例)
+        auto setnx = [](const char* k, const std::string& v) {
+            if (GetHAL()->getConfig(k, "") != v) GetHAL()->setConfig(k, v);
+        };
+        setnx("wx_lat", open_meteo::coordStr(loc.lat));
+        setnx("wx_lon", open_meteo::coordStr(loc.lon));
+        setnx("wx_city", loc.city);
+        return loc;
+    }
+    return fallback;   // 两个源都挂: NVS 上次值 / 深圳 (下次 15min 轮询重试)
+}
+
+}  // namespace
+
 void AppHome::_fetch_weather()
 {
-    // Home has no HA client, so read the HA weather entity directly via the REST
-    // API (GET /api/states/<entity> with the shared token). The worker only
-    // writes strings — it must not touch LVGL — onRunning copies them to labels.
-    std::string url = ha_weather::baseUrl(GetHAL()->getConfig("ha_host", ""))
-                    + "/api/states/" + ha_weather::ENTITY;
-    std::string tok = ha_weather::token();
-    GetHAL()->tryRunDetached([this, url, tok]() {
-        auto resp = GetHAL()->httpGet(url, {{"Authorization", std::string("Bearer ") + tok}});
+    // 直连 Open-Meteo (oneapp 同款): 定位 → 单请求 当前实况+6 天预报。
+    // worker 只写字符串缓存 — 不碰 LVGL; onRunning 拷给卡片标签, 弹窗走
+    // _wx_ready 原地换文字。失败保留旧数据 (15min 后自动重试)。
+    GetHAL()->tryRunDetached([this]() {
+        WxLoc loc = wxLocate();
+        if (!loc.ok) return;
+        auto resp = GetHAL()->httpGet(open_meteo::forecastUrl(loc.lat, loc.lon));
         if (!resp.ok) return;
         try {
             auto j = PsramJson::parse(resp.body);
-            std::string st = j.value("state", std::string());
-            if (st.empty() || st == "unavailable" || st == "unknown") return;
-            auto attrs = j.value("attributes", PsramJson::object());
-            std::string temp;
-            if (attrs.contains("temperature")) {
-                // temperature may be a JSON number (e.g. 28.1) — render whole degrees.
-                double t = attrs["temperature"].is_number()
-                         ? attrs["temperature"].get<double>()
-                         : std::atof(attrs["temperature"].get<std::string>().c_str());
-                temp = std::to_string((int)(t + (t >= 0 ? 0.5 : -0.5)));
+            auto cur = j["current"];
+            double t   = cur.value("temperature_2m", 0.0);
+            int code   = cur.value("weather_code", -1);
+            double rh  = cur.value("relative_humidity_2m", 0.0);
+            double dp  = cur.value("dew_point_2m", 0.0);
+            double cc  = cur.value("cloud_cover", 0.0);
+            double pr  = cur.value("pressure_msl", 0.0);
+            double ws  = cur.value("wind_speed_10m", 0.0);
+            int wd     = cur.value("wind_direction_10m", 0);
+            std::string cond = open_meteo::codeZh(code);
+            if (cond.empty()) cond = "—";
+            std::string temp =
+                std::to_string((int)(t + (t >= 0 ? 0.5 : -0.5))) + "°C";
+
+            // 紫外线在 daily.uv_index_max (今日值) — 先取, 详情实况行要用
+            auto daily = j["daily"];
+            double uv = -1;
+            if (daily.contains("uv_index_max") && daily["uv_index_max"].is_array() &&
+                daily["uv_index_max"].size() > 0 &&
+                daily["uv_index_max"][0].is_number())
+                uv = daily["uv_index_max"][0].get<double>();
+
+            // 详情文本 (版式与旧 HA 版一致; 首行带 IP 归属城市)
+            char line[160];
+            char uvb[16];
+            snprintf(uvb, sizeof(uvb), "%.1f", uv);   // 旧版 %.1f 形态 ("3.2")
+            std::string out = (loc.city.empty() ? "" : loc.city + "  ") +
+                              cond + "   " + temp + "\n";
+            snprintf(line, sizeof(line), "湿度 %d%%   露点 %d°C   紫外线 %s\n",
+                     (int)(rh + 0.5), (int)(dp + 0.5), uv >= 0 ? uvb : "--");
+            out += line;
+            snprintf(line, sizeof(line), "云量 %d%%   风 %s%dkm/h   气压 %dhPa\n",
+                     (int)(cc + 0.5), open_meteo::dirZh(wd).c_str(),
+                     (int)(ws + 0.5), (int)(pr + 0.5));
+            out += line;
+
+            // 未来几天 (两天一行, 同旧版版式)
+            if (daily.contains("time") && daily["time"].is_array() &&
+                daily.contains("temperature_2m_max")) {
+                out += "未来几天\n";
+                auto& times = daily["time"];
+                auto& codes = daily["weather_code"];
+                auto& his   = daily["temperature_2m_max"];
+                auto& los   = daily["temperature_2m_min"];
+                int n = 0;
+                for (size_t i = 0; i < times.size() && n < 6; i++, n++) {
+                    std::string dt = times[i].is_string()
+                                         ? times[i].get<std::string>() : "";
+                    std::string md = dt.size() >= 10
+                                         ? dt.substr(5, 2) + "/" + dt.substr(8, 2) : dt;
+                    std::string c = codes.size() > i
+                                         ? open_meteo::codeZh(codes[i].get<int>()) : "";
+                    if (c.empty()) c = "—";
+                    double hi = his.size() > i ? his[i].get<double>() : 0;
+                    double lo = los.size() > i ? los[i].get<double>() : 0;
+                    snprintf(line, sizeof(line), "%s %s %d~%d°", md.c_str(),
+                             c.c_str(), (int)(lo + 0.5), (int)(hi + 0.5));
+                    out += line;
+                    out += (n % 2 == 1) ? "\n" : "    ";
+                }
+                if (n % 2 == 1) out += "\n";
             }
+
             std::lock_guard<std::mutex> lk(_weather_mutex);
-            if (!temp.empty()) _weather_temp = temp + "°C";
-            _weather_cond = ha_weather::condZh(st);
+            _weather_temp = temp;
+            _weather_cond = cond;
+            _wx_text = out;
         } catch (...) {}
+        _wx_ready.store(true);
     });
 }
 
@@ -1359,84 +1484,7 @@ void AppHome::_openWeatherDialog()
     lv_label_set_text(_wx_body, _wx_shown.empty() ? "加载中…" : _wx_shown.c_str());
 
     _wx_ready = false;
-    _fetchWeatherDetail();
-}
-
-void AppHome::_fetchWeatherDetail()
-{
-    std::string base = ha_weather::baseUrl(GetHAL()->getConfig("ha_host", ""));
-    std::string tok  = std::string("Bearer ") + ha_weather::token();
-    GetHAL()->tryRunDetached([this, base, tok]() {
-        std::string out;
-        // ── Current conditions ──
-        try {
-            auto resp = GetHAL()->httpGet(base + "/api/states/" + ha_weather::ENTITY,
-                                          {{"Authorization", tok}});
-            if (resp.ok) {
-                auto j = PsramJson::parse(resp.body);
-                std::string st = j.value("state", std::string());
-                auto a = j.value("attributes", PsramJson::object());
-                auto num = [&](const char* k, double def = 0) {
-                    return a.contains(k) && a[k].is_number() ? a[k].get<double>() : def;
-                };
-                // 和风天气(heweather) already reports wind in km/h, pressure in
-                // hPa, and wind_bearing as a Chinese direction string (e.g. "东南风")
-                // — no unit conversion needed (unlike the old met.no entity).
-                std::string wind_dir = a.value("wind_bearing", std::string("--"));
-                char line[160];
-                out += ha_weather::condZh(st) + "   " +
-                       std::to_string((int)(num("temperature") + 0.5)) + "°C\n";
-                snprintf(line, sizeof(line), "湿度 %d%%   露点 %d°C   紫外线 %.1f\n",
-                         (int)num("humidity"), (int)(num("dew_point") + 0.5), num("uv_index"));
-                out += line;
-                snprintf(line, sizeof(line), "云量 %d%%   风 %s%dkm/h   气压 %dhPa\n",
-                         (int)num("cloud_coverage"), wind_dir.c_str(),
-                         (int)(num("wind_speed") + 0.5),
-                         (int)(num("pressure") + 0.5));
-                out += line;
-            }
-        } catch (...) {}
-
-        // ── Daily forecast ──
-        try {
-            auto resp = GetHAL()->httpPost(
-                base + "/api/services/weather/get_forecasts?return_response",
-                std::string("{\"entity_id\":\"") + ha_weather::ENTITY + "\",\"type\":\"daily\"}",
-                {{"Authorization", tok}, {"Content-Type", "application/json"}});
-            if (resp.ok) {
-                auto j = PsramJson::parse(resp.body);
-                auto fc = j["service_response"][ha_weather::ENTITY]["forecast"];
-                if (fc.is_array() && !fc.empty()) {
-                    out += "未来几天\n";
-                    int n = 0;
-                    for (auto& f : fc) {
-                        if (n >= 6) break;
-                        std::string dt = f.value("datetime", std::string());      // YYYY-MM-DD...
-                        std::string md = dt.size() >= 10 ? dt.substr(5, 2) + "/" + dt.substr(8, 2) : dt;
-                        std::string cond = ha_weather::condZh(f.value("condition", std::string()));
-                        int hi = f.contains("temperature") && f["temperature"].is_number()
-                                 ? (int)(f["temperature"].get<double>() + 0.5) : 0;
-                        int lo = f.contains("templow") && f["templow"].is_number()
-                                 ? (int)(f["templow"].get<double>() + 0.5) : 0;
-                        char cell[64];
-                        snprintf(cell, sizeof(cell), "%s %s %d~%d°", md.c_str(), cond.c_str(), lo, hi);
-                        out += cell;
-                        // Two days per line.
-                        out += (n % 2 == 1) ? "\n" : "    ";
-                        n++;
-                    }
-                    if (n % 2 == 1) out += "\n";
-                }
-            }
-        } catch (...) {}
-
-        if (out.empty()) out = "天气获取失败";
-        {
-            std::lock_guard<std::mutex> lk(_weather_mutex);
-            _wx_text = out;
-        }
-        _wx_ready = true;
-    });
+    _fetch_weather();   // 直连 Open-Meteo: 同一请求覆盖卡片+弹窗, 有缓存秒显
 }
 
 // ─── Power dialog (battery tap) ─────────────────────────────────────────────
