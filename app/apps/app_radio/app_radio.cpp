@@ -16,6 +16,7 @@
 #include "web_media.h"   // platforms/web/hal (仅 web 构建在 include 路径)
 #endif
 #include "../utils/theme/theme.h"
+#include "../utils/weather/open_meteo.h"   // LOCATE_URL_1: IP 归属地(与主页天气同源)
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <xiaozhi_ctl.h>
@@ -26,6 +27,9 @@
 #include <cmath>
 #include <mutex>
 #include <vector>
+#include <algorithm>
+#include <utility>
+#include <cctype>
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
@@ -75,20 +79,26 @@ static const lv_font_t* zh_font_sm() { return &font_puhui_20_4; }
 
 static const char* TAG = "radio";
 
-// 电台表(与 Passport 同源中继; freq=真实 FM 频点 0.1MHz, 0=纯网络台)
+// 电台表(与 oneapp radio_stations.py 同源; freq=真实 FM 频点 0.1MHz, 0=纯网络台)
+// grp/prov/city = 分组与 IP 归属地锚点(oneapp 同款: 省级/地方组本地置顶+「本」徽标)
 struct RadioStation {
     const char* name;
     const char* path;
     int freq;
+    const char* grp;
+    const char* prov;
+    const char* city;
 };
 
 // ── 动态电台表(2026-11-02): 列表以 relay /radio/stations 下发为准, 终端
 // 增删台零改动; 内置表仅作离线兜底。shared_ptr + mutex 换表, 读者局部
 // 持有快照(流任务遍历期间旧表存活, 无迭代器失效)。
+// 2026-11-15: relay 表换 oneapp 全量 204 台(四组), grp/prov/city 随下发。
 struct StationDyn {
     std::string name;
     std::string path;
     int freq = 0;
+    std::string grp, prov, city;
 };
 static std::mutex s_st_mu;
 static std::shared_ptr<const std::vector<StationDyn>> s_stations;
@@ -106,26 +116,32 @@ static char s_np_title[192] = {0};
 static std::atomic<uint32_t> s_np_seq{0};
 [[maybe_unused]] static uint32_t s_np_gen = 0;
 
+// 分组页签(oneapp radio_tabs: ★ 收藏在最前, 后接四组); relay 下发 groups
+// 时整表替换(顺序与 oneapp GROUPS 一致), 内置为离线兜底。
+static const char* kGroupsDef[] = {"国家", "省级", "地方", "国际"};
+static std::vector<std::string> s_groups(kGroupsDef, kGroupsDef + 4);
+
 static const RadioStation kStations[] = {
-    {"深圳交通广播",    "szjt",  1062},
-    {"深圳新闻广播",    "szxw",  898},
-    {"深圳飞扬971",     "szfy",  971},
-    {"深圳生活广播",    "szsh",  942},
-    {"央广中国之声",    "zgzs",  0},
-    {"央广经济之声",    "jjzs",  0},
-    {"广东音乐之声",    "gdyy",  993},
-    {"羊城交通广播",    "gdyz",  1052},
-    {"广东新闻FM91.4",  "gdxw",  914},
-    {"珠江经济FM97.4",  "zjjs",  974},
-    {"BBC World Service", "bbcws", 0},
-    {"NPR News",        "npr",   0},
-    {"CNN 新闻",        "cnn",   0},
-    {"CNN 国际台",      "cnni",  0},
-    {"MSNBC 新闻",      "msnbc", 0},
-    {"WNYC 纽约公共",   "wnyc",  0},
-    {"WBEZ 芝加哥公共", "wbez",  0},
-    {"KEXP 独立音乐",   "kexp",  0},
-    {"Radio Paradise",  "rp",    0},
+    {"深圳交通广播",     "szjt",  1062, "地方", "广东", "深圳"},
+    {"深圳新闻广播",     "szxw",  898,  "地方", "广东", "深圳"},
+    {"深圳飞扬971",      "szfy",  971,  "地方", "广东", "深圳"},
+    {"深圳生活广播",     "szsh",  942,  "地方", "广东", "深圳"},
+    {"深圳综艺广播",     "szzy",  0,    "地方", "广东", "深圳"},
+    {"央广中国之声",     "zgzs",  0,    "国家", "",     ""},
+    {"央广经济之声",     "jjzs",  0,    "国家", "",     ""},
+    {"广东音乐FM99.3",   "gdyy",  993,  "省级", "广东", ""},
+    {"羊城交通FM105.2",  "gdyz",  1052, "省级", "广东", ""},
+    {"广东新闻FM91.4",   "gdxw",  914,  "省级", "广东", ""},
+    {"珠江经济FM97.4",   "zjjs",  974,  "省级", "广东", ""},
+    {"BBC World Service", "bbcws", 0,   "国际", "",     ""},
+    {"NPR News",         "npr",   0,    "国际", "",     ""},
+    {"CNN 新闻",         "cnn",   0,    "国际", "",     ""},
+    {"CNN 国际台",       "cnni",  0,    "国际", "",     ""},
+    {"MSNBC 新闻",       "msnbc", 0,    "国际", "",     ""},
+    {"WNYC 纽约公共",    "wnyc",  0,    "国际", "",     ""},
+    {"WBEZ 芝加哥公共",  "wbez",  0,    "国际", "",     ""},
+    {"KEXP 独立音乐",    "kexp",  0,    "国际", "",     ""},
+    {"Radio Paradise",   "rp",    0,    "国际", "",     ""},
 };
 static const int kStationCount = sizeof(kStations) / sizeof(kStations[0]);
 
@@ -136,7 +152,8 @@ static std::shared_ptr<const std::vector<StationDyn>> st_snapshot()
         std::lock_guard<std::mutex> g(s_st_mu);
         if (!s_stations) {   // 懒加载: 内置表作离线兜底种子
             auto v = std::make_shared<std::vector<StationDyn>>();
-            for (const auto& s : kStations) v->push_back({s.name, s.path, s.freq});
+            for (const auto& s : kStations)
+                v->push_back({s.name, s.path, s.freq, s.grp, s.prov, s.city});
             s_stations = v;
         }
         return s_stations;
@@ -154,6 +171,67 @@ static bool st_at(int i, StationDyn& out)   // 越界返回 false
     out = (*t)[i];
     return true;
 }
+
+// ── IP 归属地归一(oneapp radio_stations.py 同款移植) ──────────────────
+static const char* kProvs[] = {
+    "北京", "天津", "上海", "重庆", "河北", "山西", "辽宁", "吉林",
+    "黑龙江", "江苏", "浙江", "安徽", "福建", "江西", "山东", "河南",
+    "湖北", "湖南", "广东", "海南", "四川", "贵州", "云南", "陕西",
+    "甘肃", "青海", "内蒙古", "广西", "西藏", "宁夏", "新疆", "台湾",
+};
+static const char* kProvSuffix[] = {
+    "特别行政区", "维吾尔自治区", "壮族自治区", "回族自治区",
+    "自治区", "省", "市",
+};
+static const std::pair<const char*, const char*> kProvAlias[] = {
+    {"beijing", "北京"}, {"tianjin", "天津"}, {"shanghai", "上海"},
+    {"chongqing", "重庆"}, {"hebei", "河北"}, {"shanxi", "山西"},
+    {"liaoning", "辽宁"}, {"jilin", "吉林"}, {"heilongjiang", "黑龙江"},
+    {"jiangsu", "江苏"}, {"zhejiang", "浙江"}, {"anhui", "安徽"},
+    {"fujian", "福建"}, {"jiangxi", "江西"}, {"shandong", "山东"},
+    {"henan", "河南"}, {"hubei", "湖北"}, {"hunan", "湖南"},
+    {"guangdong", "广东"}, {"hainan", "海南"}, {"sichuan", "四川"},
+    {"guizhou", "贵州"}, {"yunnan", "云南"}, {"shaanxi", "陕西"},
+    {"gansu", "甘肃"}, {"qinghai", "青海"}, {"nei mongol", "内蒙古"},
+    {"inner mongolia", "内蒙古"}, {"guangxi", "广西"}, {"tibet", "西藏"},
+    {"ningxia", "宁夏"}, {"xinjiang", "新疆"}, {"taiwan", "台湾"},
+};
+
+// 归属地字符串 → 省短名(剥行政区后缀; 中英通吃); 不匹配返回空
+static std::string norm_prov(std::string t)
+{
+    if (t.empty()) return "";
+    while (t.size() && (t.back() == ' ' || t.back() == '\t')) t.pop_back();
+    for (const char* suf : kProvSuffix) {
+        size_t n = strlen(suf);
+        if (t.size() > n && t.compare(t.size() - n, n, suf) == 0) {
+            t.erase(t.size() - n);
+            break;
+        }
+    }
+    for (const char* p : kProvs) if (t == p) return t;
+    for (const auto& a : kProvAlias) {
+        std::string low = t;
+        for (char& c : low) c = (char)tolower((unsigned char)c);
+        if (low == a.first) return a.second;
+    }
+    return "";
+}
+
+// 城市名剥 市/区 后缀('深圳市'→'深圳'), 对齐台表 city 锚点
+static std::string norm_city(std::string t)
+{
+    if (t.empty()) return "";
+    while (t.size() && (t.back() == ' ' || t.back() == '\t')) t.pop_back();
+    for (const char* suf : {"市", "区"}) {
+        size_t n = strlen(suf);
+        if (t.size() > n && t.compare(t.size() - n, n, suf) == 0) {
+            t.erase(t.size() - n);
+            break;
+        }
+    }
+    return t;
+}
 static const char* kRelayBase  = "http://192.168.1.200:8769/radio/";
 
 // 播放输出(2026-11-01): pid=nullptr 即本机 I2S 直放; 外部经 relay→MA 转投。
@@ -169,7 +247,7 @@ static const int kOutputCount = sizeof(kOutputs) / sizeof(kOutputs[0]);
 // 配色: 主题快照(onOpen 时从全局主题取, 见 utils/theme/theme.h);
 // 绘制回调在 LVGL 线程里读这些全局, 零锁。
 static uint32_t C_BG, C_CARD, C_CARD_ON, C_ACCENT, C_TEXT, C_TEXT2,
-                C_AMBER, C_AMBER_SOFT, C_DIAL_BG, C_BORDER, C_TRACK,
+                C_AMBER, C_BORDER, C_TRACK,
                 C_OK, C_WARN, C_DANGER;
 
 static void snap_theme()
@@ -178,7 +256,6 @@ static void snap_theme()
     C_BG = T.page;      // 屏底随主题
     C_CARD = T.card[1];  C_CARD_ON = T.press;  C_ACCENT = T.accent;
     C_TEXT = T.text_hi;  C_TEXT2 = T.text_dim; C_AMBER = T.accent;
-    C_AMBER_SOFT = T.text_dim;  C_DIAL_BG = T.track;
     C_BORDER = T.border;  C_TRACK = T.track;
     C_OK = T.ok;  C_WARN = T.warn;  C_DANGER = T.danger;
 }
@@ -676,57 +753,379 @@ void AppRadio::onCreate()
     // 与 HA/股票等一致: 安装不自动打开, 等用户从主页点入 (open 会抢主屏)
 }
 
-int AppRadio::_row_y(int i) const { return 6 + i * 47; }   // 动态行数, 13 行可见, 列表滚动
+// ── oneapp 同款列表(2026-11-15) ────────────────────────────────────────
+// 行不走对象: 单容器绘制事件直绘(VU 条带同技法)。204 台一行一个对象会
+// 压垮内部 RAM(碎片化惯犯); 直绘只有容器+撑高 spacer 两个对象。
+// 交互: 点台=播/停(oneapp Enter 语义), 长按=收藏/取消(oneapp 5 键)。
+static constexpr int ROW_H = 56;
+static std::mutex s_loc_mu;   // _loc_prov/_loc_city 锁(worker 写, LVGL 读)
 
-// ── 动态电台表(2026-11-02) ─────────────────────────────────────────────
-// 列表以 relay /radio/stations 为准(增删台只改 relay), 内置表离线兜底。
-void AppRadio::_rebuildStationRows()
+// ── 分组页签(oneapp radio_tabs: ★ 收藏在最前, 后接四组) ───────────────
+void AppRadio::_rebuildTabs()
 {
-    if (!_list) return;
-    lv_obj_clean(_list);   // 旧行+高亮条一起清, 全部重建
-
-    _row_sel = lv_obj_create(_list);
-    lv_obj_set_size(_row_sel, 544, 44);
-    lv_obj_set_pos(_row_sel, 8, _row_y(0));
-    lv_obj_set_style_bg_color(_row_sel, lv_color_hex(C_CARD_ON), 0);
-    lv_obj_set_style_bg_opa(_row_sel, LV_OPA_80, 0);
-    lv_obj_set_style_border_width(_row_sel, 0, 0);
-    lv_obj_set_style_radius(_row_sel, 12, 0);
-    lv_obj_clear_flag(_row_sel, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-
-    auto tbl = st_snapshot();
-    if (!tbl) return;
-    for (size_t i = 0; i < tbl->size(); i++) {
-        const StationDyn& st = (*tbl)[i];
-        lv_obj_t* row = lv_obj_create(_list);
-        lv_obj_set_size(row, 544, 44);
-        lv_obj_set_pos(row, 8, _row_y((int)i));
-        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_radius(row, 12, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_user_data(row, (void*)(intptr_t)i);
-        lv_obj_add_event_cb(row, _rowClick_cb, LV_EVENT_CLICKED, this);
-
-        char freq[20];
-        if (st.freq > 0) snprintf(freq, sizeof(freq), "%d.%d", st.freq / 10, st.freq % 10);
-        else             snprintf(freq, sizeof(freq), "网络");
-        lv_obj_t* fl = lv_label_create(row);
-        lv_obj_set_style_text_font(fl, zh_font_lg(), 0);   // 含中文"网络"
-        lv_obj_set_style_text_color(fl, lv_color_hex(C_ACCENT), 0);
-        lv_label_set_text(fl, freq);
-        lv_obj_align(fl, LV_ALIGN_LEFT_MID, 16, 0);
-
-        lv_obj_t* nl = lv_label_create(row);
-        lv_obj_set_style_text_font(nl, zh_font_lg(), 0);
-        lv_obj_set_style_text_color(nl, lv_color_hex(C_TEXT), 0);
-        lv_label_set_text(nl, st.name.c_str());
-        lv_obj_align(nl, LV_ALIGN_LEFT_MID, 132, 0);
+    if (!_tabs) return;
+    lv_obj_clean(_tabs);
+    for (auto*& b : _tab_btns) b = nullptr;
+    int n = 1 + (int)s_groups.size();
+    const int cap = (int)(sizeof(_tab_btns) / sizeof(_tab_btns[0]));
+    if (n > cap) n = cap;
+    int x = 0;
+    for (int i = 0; i < n; i++) {
+        bool sel = (i == _radio_grp);
+        lv_obj_t* b = lv_obj_create(_tabs);
+        _tab_btns[i] = b;
+        lv_obj_set_size(b, LV_SIZE_CONTENT, 46);
+        lv_obj_set_style_radius(b, 23, 0);
+        lv_obj_set_style_pad_left(b, 22, 0);
+        lv_obj_set_style_pad_right(b, 22, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(sel ? C_CARD_ON : C_BG), 0);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(sel ? C_ACCENT : C_TRACK), 0);
+        lv_obj_set_style_border_opa(b, sel ? LV_OPA_70 : LV_OPA_40, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(C_CARD_ON), LV_STATE_PRESSED);
+        lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(b, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(b, _tab_cb, LV_EVENT_CLICKED, this);
+        lv_obj_t* l = lv_label_create(b);
+        lv_obj_set_style_text_font(l, zh_font_md(), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(sel ? C_TEXT : C_TEXT2), 0);
+        lv_label_set_text(l, i == 0 ? "★" : s_groups[i - 1].c_str());
+        lv_obj_center(l);
+        lv_obj_update_layout(b);
+        lv_obj_set_pos(b, x, 0);
+        x += lv_obj_get_width(b) + 14;
     }
 }
 
+void AppRadio::_setGroup(int g)
+{
+    if (g == _radio_grp) return;
+    int n = 1 + (int)s_groups.size();
+    if (g < 0 || g >= n) return;
+    _radio_grp = g;
+    _rebuildTabs();
+    _rebuildRows();
+    _scrollToPlaying();   // 播放中的台在本组则滚到可见
+}
+
+// ── 当前组行序(_rows = 绝对下标序列) ──────────────────────────────────
+void AppRadio::_rebuildRows()
+{
+    if (!_list) return;
+    _rows.clear();
+    if (auto tbl = st_snapshot()) {
+        if (_radio_grp == 0) {
+            // ★ 收藏组: key 顺序, 缺台剔除(oneapp radio_list 同款)
+            for (const auto& k : _favs)
+                for (size_t i = 0; i < tbl->size(); i++)
+                    if ((*tbl)[i].path == k) { _rows.push_back((int)i); break; }
+        } else {
+            const std::string& g = s_groups[_radio_grp - 1];
+            std::vector<std::pair<int, int>> tmp;   // (本地序, 绝对下标)
+            for (size_t i = 0; i < tbl->size(); i++) {
+                if ((*tbl)[i].grp != g) continue;
+                tmp.push_back({_localRank((int)i), (int)i});
+            }
+            // 稳定排序: 同城>同省>其他, 组内保原序(oneapp local_rank 同款)
+            std::stable_sort(tmp.begin(), tmp.end(),
+                [](const std::pair<int, int>& a, const std::pair<int, int>& b) {
+                    return a.first < b.first;
+                });
+            for (auto& p : tmp) _rows.push_back(p.second);
+        }
+    }
+    if (_list_spacer)
+        lv_obj_set_size(_list_spacer, 1, (int)_rows.size() * ROW_H);
+    lv_obj_invalidate(_list);
+}
+
+void AppRadio::_scrollToPlaying()
+{
+    if (!_list) return;
+    int w = _want_station.load();
+    if (w < 0) return;
+    for (size_t i = 0; i < _rows.size(); i++) {
+        if (_rows[i] != w) continue;
+        int y = (int)i * ROW_H;
+        int cur = (int)lv_obj_get_scroll_y(_list);
+        int h   = lv_obj_get_height(_list);
+        if (y < cur || y + ROW_H > cur + h)   // 不可见才滚, 居中
+            lv_obj_scroll_to_y(_list, y - h / 2 + ROW_H / 2, LV_ANIM_ON);
+        break;
+    }
+}
+
+int AppRadio::_rowAt(int py) const
+{
+    if (!_list || _rows.empty()) return -1;
+    lv_area_t a;
+    lv_obj_get_coords(_list, &a);
+    int rel = py - a.y1 + (int)lv_obj_get_scroll_y(_list);
+    if (rel < 0) return -1;
+    int row = rel / ROW_H;
+    return row < (int)_rows.size() ? row : -1;
+}
+
+// 列表直绘(oneapp draw_radio 同构): ▶/★ 标记 + 台名 + 右列「本」徽标/FM 频点
+void AppRadio::_list_draw_cb(lv_event_t* e)
+{
+    auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
+    auto* obj = static_cast<lv_obj_t*>(lv_event_get_target(e));
+    auto* layer = lv_event_get_layer(e);
+    lv_area_t oc;
+    lv_obj_get_coords(obj, &oc);
+    auto tbl = st_snapshot();
+    if (!tbl || !app) return;
+    const int scroll_y = (int)lv_obj_get_scroll_y(obj);
+    const int w = lv_obj_get_width(obj);
+    int first = scroll_y / ROW_H;
+    if (first < 0) first = 0;
+    int vis = lv_obj_get_height(obj) / ROW_H + 2;
+    int want = app->_want_station.load();
+
+    lv_draw_rect_dsc_t rd;
+    lv_draw_rect_dsc_init(&rd);
+    lv_draw_label_dsc_t ld;
+    lv_draw_label_dsc_init(&ld);
+    char buf[24];
+
+    for (int i = first; i < first + vis && i < (int)app->_rows.size(); i++) {
+        int abs = app->_rows[i];
+        const StationDyn& st = (*tbl)[abs];
+        int y = i * ROW_H - scroll_y;                       // 对象内坐标
+        bool on  = (want >= 0 && abs == want);
+        bool fav = app->_favHas(st.path);
+        int  rank = app->_localRank(abs);
+
+        if (on) {   // 播放行: track 底 + 左侧 accent 竖条(oneapp 光标行同款)
+            rd.bg_opa = LV_OPA_70;
+            rd.bg_color = lv_color_hex(C_CARD_ON);
+            rd.radius = 12;
+            rd.border_width = 0;
+            lv_area_t ra{oc.x1, oc.y1 + y, oc.x1 + w - 1, oc.y1 + y + ROW_H - 2};
+            lv_draw_rect(layer, &rd, &ra);
+            rd.bg_opa = LV_OPA_COVER;
+            rd.bg_color = lv_color_hex(C_ACCENT);
+            rd.radius = 2;
+            lv_area_t rb{oc.x1, oc.y1 + y, oc.x1 + 2, oc.y1 + y + ROW_H - 2};
+            lv_draw_rect(layer, &rd, &rb);
+        }
+
+        int tx = 16;
+        ld.opa = LV_OPA_COVER;
+        if (on) {          // ▶ 播放标记(oneapp 三角; FA PLAY 同形)
+            ld.font = &lv_font_montserrat_24;
+            ld.text = LV_SYMBOL_PLAY;
+            ld.color = lv_color_hex(C_ACCENT);
+            lv_area_t ta{oc.x1 + tx, oc.y1 + y + 16, oc.x1 + tx + 30, oc.y1 + y + ROW_H - 2};
+            lv_draw_label(layer, &ld, &ta);
+            tx = 56;
+        } else if (fav) {  // ★ 收藏标记
+            ld.font = zh_font_md();
+            ld.text = "★";
+            ld.color = lv_color_hex(C_ACCENT);
+            lv_area_t ta{oc.x1 + tx, oc.y1 + y + 13, oc.x1 + tx + 30, oc.y1 + y + ROW_H - 2};
+            lv_draw_label(layer, &ld, &ta);
+            tx = 56;
+        }
+
+        // 台名: 播放/收藏行提亮, 其余 soft(oneapp name_col 同款)
+        ld.font = zh_font_lg();
+        ld.text = st.name.c_str();
+        ld.color = lv_color_hex(on || fav ? C_TEXT : C_TEXT2);
+        int name_w = w - tx - 100;
+        if (name_w > 40) {
+            lv_area_t ta{oc.x1 + tx, oc.y1 + y + 10, oc.x1 + tx + name_w, oc.y1 + y + ROW_H - 2};
+            lv_draw_label(layer, &ld, &ta);
+        }
+
+        // 右列: 本地徽标「本」accent > FM 频点 dim(oneapp 同款互换)
+        if (rank < 2) {
+            ld.font = zh_font_md();
+            ld.text = "本";
+            ld.color = lv_color_hex(C_ACCENT);
+        } else if (st.freq > 0) {
+            snprintf(buf, sizeof(buf), "FM%d.%d", st.freq / 10, st.freq % 10);
+            ld.font = zh_font_md();
+            ld.text = buf;
+            ld.color = lv_color_hex(C_TEXT2);
+        } else {
+            continue;
+        }
+        lv_point_t sz;
+        lv_txt_get_size(&sz, ld.text, ld.font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        lv_area_t ta{oc.x1 + w - 14 - sz.x, oc.y1 + y + 14, oc.x1 + w - 14, oc.y1 + y + ROW_H - 2};
+        lv_draw_label(layer, &ld, &ta);
+    }
+
+    // 空收藏组提示(oneapp 同款文案变体)
+    if (app->_rows.empty() && app->_radio_grp == 0) {
+        int cx = w / 2;
+        ld.font = zh_font_lg();
+        ld.text = "还没有收藏";
+        ld.color = lv_color_hex(C_TEXT2);
+        lv_point_t sz;
+        lv_txt_get_size(&sz, ld.text, ld.font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        lv_area_t t1{oc.x1 + cx - sz.x / 2, oc.y1 + 170, oc.x1 + cx + sz.x / 2, oc.y1 + 214};
+        lv_draw_label(layer, &ld, &t1);
+        ld.font = zh_font_sm();
+        ld.text = "切到电台分组, 长按喜欢的电台收藏";
+        lv_txt_get_size(&sz, ld.text, ld.font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        lv_area_t t2{oc.x1 + cx - sz.x / 2, oc.y1 + 232, oc.x1 + cx + sz.x / 2, oc.y1 + 262};
+        lv_draw_label(layer, &ld, &t2);
+    }
+}
+
+// 点台=播/停, 长按=收藏(oneapp Enter/5 键的触摸对应)
+void AppRadio::_list_event_cb(lv_event_t* e)
+{
+    auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_CLICKED && code != LV_EVENT_LONG_PRESSED) return;
+    lv_indev_t* ind = lv_indev_get_act();
+    if (!ind) return;
+    lv_point_t pt;
+    lv_indev_get_point(ind, &pt);
+    int row = app->_rowAt(pt.y);
+    if (row < 0) return;
+    if (code == LV_EVENT_LONG_PRESSED) {
+        app->_favToggle(app->_rows[row]);
+        return;
+    }
+    int abs = app->_rows[row];
+    if (app->_want_station.load() >= 0 && abs == app->_want_station.load()) {
+        app->_stopPlayback();   // oneapp Enter 语义: 再点播放中的台 = 停
+    } else {
+        app->_play(abs);
+    }
+}
+
+void AppRadio::_tab_cb(lv_event_t* e)
+{
+    auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
+    app->_setGroup((int)(intptr_t)lv_obj_get_user_data(
+        static_cast<lv_obj_t*>(lv_event_get_target(e))));
+}
+
+// ── 收藏(NVS radio_favs, 逗号分隔 key 表; oneapp radio_fav 同款) ──────
+void AppRadio::_favLoad()
+{
+    _favs.clear();
+    std::string v = GetHAL()->getConfig("radio_favs", "");
+    size_t p = 0;
+    while (p < v.size()) {
+        size_t c = v.find(',', p);
+        if (c == std::string::npos) c = v.size();
+        if (c > p) _favs.push_back(v.substr(p, c - p));
+        p = c + 1;
+    }
+}
+
+void AppRadio::_favSave()
+{
+    std::string v;
+    for (size_t i = 0; i < _favs.size(); i++) {
+        if (i) v += ',';
+        v += _favs[i];
+    }
+    GetHAL()->setConfig("radio_favs", v);
+}
+
+bool AppRadio::_favHas(const std::string& key) const
+{
+    return std::find(_favs.begin(), _favs.end(), key) != _favs.end();
+}
+
+void AppRadio::_favToggle(int idx)
+{
+    StationDyn st;
+    if (!st_at(idx, st)) return;
+    auto it = std::find(_favs.begin(), _favs.end(), st.path);
+    if (it != _favs.end()) {
+        _favs.erase(it);
+        _showToast("已取消收藏");
+    } else {
+        _favs.push_back(st.path);
+        _showToast(("已收藏 · " + st.name).c_str());
+    }
+    _favSave();
+    if (_radio_grp == 0) _rebuildRows();   // ★ 组成员变了
+    else lv_obj_invalidate(_list);         // 星标即时显隐
+}
+
+// ── IP 归属地(oneapp radio_local 同款) ────────────────────────────────
+void AppRadio::_locLoad()
+{
+    std::lock_guard<std::mutex> g(s_loc_mu);
+    _loc_prov = _loc_city = "";
+    std::string v = GetHAL()->getConfig("radio_loc", "");
+    auto bar = v.find('|');
+    if (bar != std::string::npos) {
+        _loc_prov = v.substr(0, bar);
+        _loc_city = v.substr(bar + 1);
+        return;
+    }
+    // 无缓存: 种子用主页天气的 IP 定位(只有城市, 同城置顶已够用)
+    std::string c = norm_city(GetHAL()->getConfig("wx_city", ""));
+    if (!c.empty()) _loc_city = c;
+}
+
+// worker: ip-api 中文 → ip.sb(英文, prov 走别名表) 兜底 → NVS radio_loc
+void AppRadio::_fetchLocation()
+{
+    for (int src = 0; src < 2; src++) {
+        auto r = GetHAL()->httpGet(src == 0 ? open_meteo::LOCATE_URL_1
+                                            : open_meteo::LOCATE_URL_2);
+        if (!r.ok) continue;
+        try {
+            auto j = PsramJson::parse(r.body);
+            if (src == 0 && j.value("status", std::string()) != "success") continue;
+            std::string prov = norm_prov(
+                j.value(src == 0 ? "regionName" : "region", std::string()));
+            std::string city = norm_city(j.value("city", std::string()));
+            if (prov.empty() && city.empty()) continue;
+            {
+                std::lock_guard<std::mutex> g(s_loc_mu);
+                _loc_prov = prov;
+                _loc_city = city;
+            }
+            std::string v = prov + "|" + city;
+            if (GetHAL()->getConfig("radio_loc", "") != v)
+                GetHAL()->setConfig("radio_loc", v);
+            _loc_dirty.store(true);   // onRunning(LVGL 线程)重建列表+徽标
+            mclog::tagInfo(TAG, "loc: {}·{}", prov, city);
+        } catch (const std::exception& e) {
+            mclog::tagWarn(TAG, "loc parse fail: {}", e.what());
+        }
+        return;   // 任一源成功/解析完即止
+    }
+}
+
+std::string AppRadio::_locText() const
+{
+    std::lock_guard<std::mutex> g(s_loc_mu);
+    std::string s = _loc_prov;
+    if (!_loc_city.empty()) {
+        if (!s.empty()) s += "·";
+        s += _loc_city;
+    }
+    return s;
+}
+
+// 本地置顶排序键: 0=同城 1=同省 2=其他(oneapp local_rank 同款)
+int AppRadio::_localRank(int idx) const
+{
+    StationDyn st;
+    if (!st_at(idx, st)) return 2;
+    std::lock_guard<std::mutex> g(s_loc_mu);
+    if (!_loc_city.empty() && st.city == _loc_city) return 0;
+    if (!_loc_prov.empty() && st.prov == _loc_prov) return 1;
+    return 2;
+}
+
+// ── 动态电台表(relay /radio/stations 下发; 2026-11-15 起带分组/归属地) ─
 void AppRadio::_fetchStations()
 {
     // 后台线程: 只碰 HTTP 与原子量, 不触 LVGL。失败静默(内置表兜底)。
@@ -742,8 +1141,21 @@ void AppRadio::_fetchStations()
             st.path = e.value("key", std::string());
             st.name = e.value("name", std::string());
             st.freq = e.value("freq", 0);
+            st.grp  = e.value("grp", std::string());
+            st.prov = e.value("prov", std::string());
+            st.city = e.value("city", std::string());
             if (!st.path.empty() && !st.name.empty())
                 v->push_back(std::move(st));
+        }
+        // 分组顺序表(oneapp GROUPS; 缺失/异常保内置)
+        std::vector<std::string> groups = s_groups;
+        if (j.contains("groups") && j["groups"].is_array()) {
+            std::vector<std::string> g2;
+            for (auto& g : j["groups"]) {
+                std::string s = g.get<std::string>();
+                if (!s.empty()) g2.push_back(s);
+            }
+            if (g2.size() >= 2 && g2.size() <= 4) groups = g2;
         }
         if (v->empty()) return;
         auto cur = st_snapshot();
@@ -751,7 +1163,9 @@ void AppRadio::_fetchStations()
         if (same)
             for (size_t i = 0; i < v->size(); i++)
                 if ((*cur)[i].path != (*v)[i].path) { same = false; break; }
-        if (same) return;   // 表没变, 不折腾
+        bool groups_same = groups.size() == s_groups.size() &&
+                           std::equal(groups.begin(), groups.end(), s_groups.begin());
+        if (same && groups_same) return;   // 表没变, 不折腾
         // 播放索引重映射(旧 path → 新下标); 播放中的台被删则停(want=-1)
         auto findNew = [&](const std::string& path) {
             for (size_t i = 0; i < v->size(); i++)
@@ -766,7 +1180,8 @@ void AppRadio::_fetchStations()
             if (_last_station < 0) _last_station = 0;
         }
         st_replace(v);
-        _stations_dirty.store(true);   // onRunning(LVGL 线程)重建列表
+        s_groups = groups;
+        _stations_dirty.store(true);   // onRunning(LVGL 线程)重建页签+列表
         mclog::tagInfo(TAG, "stations updated: {} 台", v->size());
     } catch (const std::exception& e) {
         mclog::tagWarn(TAG, "stations parse fail: {}", e.what());
@@ -792,57 +1207,89 @@ void AppRadio::onOpen()
 #ifdef PLATFORM_BUILD_WEB
     _output_sel = 0;   // web: 固定浏览器本机播放
 #endif
+    _favLoad();   // 收藏 + 归属地先同步载入(NVS), 首帧即有分组/排序
+    _locLoad();
 
     _scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(_scr, lv_color_hex(C_BG), 0);
     lv_obj_clear_flag(_scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── 左: 电台列表 ──
-    // 2026-11-02 加 5 个美式新闻台(共 19)超出 14 行一屏 → 启用滚动。
-    // 滚动容器会吃掉其区域内的上拨手势: 列表高度收到 y645, 屏幕 650 以下
-    // (上拨退出的起手区)保持空白, 手势不再被列表滚动吞掉。
-    // 行内容由 _rebuildStationRows() 按动态表生成(relay /stations 下发)。
+    // ── 左: 头部 + 分组页签 + 电台列表(oneapp draw_radio 同构) ──
+    lv_obj_t* hdr = lv_label_create(_scr);
+    lv_label_set_text(hdr, "电台");
+    lv_obj_set_style_text_font(hdr, zh_font_md(), 0);
+    lv_obj_set_style_text_color(hdr, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_pos(hdr, 40, 16);
+
+    _hdr_count = lv_label_create(_scr);
+    lv_obj_set_style_text_font(_hdr_count, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(_hdr_count, lv_color_hex(C_TEXT2), 0);
+    lv_obj_set_pos(_hdr_count, 96, 26);
+
+    _hdr_loc = lv_label_create(_scr);   // 归属地徽标, 右缘对齐列表右边界 x=680
+    lv_obj_set_style_text_font(_hdr_loc, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(_hdr_loc, lv_color_hex(C_ACCENT), 0);
+    lv_obj_align(_hdr_loc, LV_ALIGN_TOP_RIGHT, -600, 26);
+
+    _tabs = lv_obj_create(_scr);
+    lv_obj_set_pos(_tabs, 40, 58);
+    lv_obj_set_size(_tabs, 640, 48);
+    lv_obj_set_style_bg_opa(_tabs, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_tabs, 0, 0);
+    lv_obj_set_style_pad_all(_tabs, 0, 0);
+    lv_obj_clear_flag(_tabs, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 列表(直绘, 零行对象): 高度收到 y640, 底部 650+ 留给上拨手势起手区
+    // (滚动容器会吃掉其区域内的手势, 2026-11-02 教训)。
     _list = lv_obj_create(_scr);
-    lv_obj_set_pos(_list, 40, 28);
-    lv_obj_set_size(_list, 560, 617);
-    lv_obj_set_style_bg_opa(_list, LV_OPA_TRANSP, 0);   // 无卡片底: 与黑底一体
+    lv_obj_set_pos(_list, 40, 112);
+    lv_obj_set_size(_list, 640, 528);
+    lv_obj_set_style_bg_opa(_list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_list, 0, 0);
-    lv_obj_set_style_radius(_list, 18, 0);
+    lv_obj_set_style_radius(_list, 0, 0);
     lv_obj_set_style_pad_all(_list, 0, 0);
+    lv_obj_set_style_clip_corner(_list, true, 0);   // 直绘内容按容器裁剪(overflow:hidden)
     lv_obj_set_scrollbar_mode(_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_dir(_list, LV_DIR_VER);
-    _rebuildStationRows();
+    lv_obj_add_event_cb(_list, _list_draw_cb, LV_EVENT_DRAW_MAIN, this);
+    lv_obj_add_event_cb(_list, _list_event_cb, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(_list, _list_event_cb, LV_EVENT_LONG_PRESSED, this);
+    _list_spacer = lv_obj_create(_list);   // 撑起内容高度(直绘无行对象)
+    lv_obj_set_style_bg_opa(_list_spacer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_list_spacer, 0, 0);
+    lv_obj_clear_flag(_list_spacer, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    _rebuildTabs();
+    _rebuildRows();
+    lv_label_set_text_fmt(_hdr_count, "· %d 台", st_count());
+    {
+        std::string loc = _locText();
+        if (loc.empty()) lv_obj_add_flag(_hdr_loc, LV_OBJ_FLAG_HIDDEN);
+        else lv_label_set_text(_hdr_loc, ("本:" + loc).c_str());
+    }
 
-    // ── 右: 播放面板 ──
+    // ── 右: 播放面板(oneapp VU 卡片同款, 主题 card 底 + 描边) ──
     lv_obj_t* panel = lv_obj_create(_scr);
-    lv_obj_set_pos(panel, 640, 28);
-    lv_obj_set_size(panel, 600, 664);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_TRANSP, 0);  // 无卡片底: 与黑底一体
-    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_pos(panel, 720, 28);
+    lv_obj_set_size(panel, 520, 664);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(C_CARD), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(C_BORDER), 0);
     lv_obj_set_style_radius(panel, 18, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
 
-    _status_lbl = lv_label_create(panel);   // 状态即顶行文字(待机/连接中/正在播放/失败)
-    lv_label_set_text(_status_lbl, "待机");
+    _status_lbl = lv_label_create(panel);   // 状态行(未播放/连接中/播放中/失败)
+    lv_label_set_text(_status_lbl, "未播放");
     lv_obj_set_style_text_font(_status_lbl, zh_font_md(), 0);
     lv_obj_set_style_text_color(_status_lbl, lv_color_hex(C_TEXT2), 0);
-    lv_obj_set_pos(_status_lbl, 40, 20);
+    lv_obj_set_pos(_status_lbl, 24, 18);
 
-    // 频率读数: FM 台显示真实频点, 网络台不编造(leo-radio 原则)
-    _now_freq = lv_label_create(panel);
-    lv_label_set_text(_now_freq, "—");
-    lv_obj_set_style_text_font(_now_freq, zh_font_md(), 0);   // 含中文"网络电台"
-    lv_obj_set_style_text_color(_now_freq, lv_color_hex(C_AMBER), 0);
-    lv_obj_align(_now_freq, LV_ALIGN_TOP_RIGHT, -40, 14);
-
-    // ── 输出 chip(2026-11-01): 状态行与频率读数之间, 点开输出选择弹窗。
-    // 宽 132 右缘 x=432, 让开右对齐的频率/网络电台读数(最宽"106.2 MHz"
-    // 左缘≈440)——初版 190 宽曾盖住该读数
+    // 输出 chip(右上, oneapp「输出:xxx」同款文案): 点开输出选择弹窗
     _out_chip = lv_obj_create(panel);
-    lv_obj_set_pos(_out_chip, 300, 12);
-    lv_obj_set_size(_out_chip, 132, 42);
-    lv_obj_set_style_radius(_out_chip, 21, 0);
+    lv_obj_set_pos(_out_chip, 330, 14);
+    lv_obj_set_size(_out_chip, 166, 40);
+    lv_obj_set_style_radius(_out_chip, 20, 0);
     lv_obj_set_style_bg_color(_out_chip, lv_color_hex(C_CARD_ON), 0);
     lv_obj_set_style_bg_opa(_out_chip, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(_out_chip, 1, 0);
@@ -852,15 +1299,10 @@ void AppRadio::onOpen()
     lv_obj_clear_flag(_out_chip, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(_out_chip, LV_OBJ_FLAG_CLICKABLE);
     {
-        lv_obj_t* ic = lv_label_create(_out_chip);
-        lv_obj_set_style_text_font(ic, &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_color(ic, lv_color_hex(C_ACCENT), 0);
-        lv_label_set_text(ic, LV_SYMBOL_AUDIO);
-        lv_obj_align(ic, LV_ALIGN_LEFT_MID, 18, 0);
         lv_obj_t* tl = lv_label_create(_out_chip);   // 文字部分(_refreshOutputUi 刷新)
         lv_obj_set_style_text_font(tl, zh_font_md(), 0);
         lv_obj_set_style_text_color(tl, lv_color_hex(C_TEXT), 0);
-        lv_obj_align(tl, LV_ALIGN_LEFT_MID, 48, 0);
+        lv_obj_center(tl);
         lv_obj_set_user_data(_out_chip, tl);
     }
 #ifdef PLATFORM_BUILD_WEB
@@ -874,9 +1316,9 @@ void AppRadio::onOpen()
     lv_label_set_text(_now_name, "—");
     lv_obj_set_style_text_font(_now_name, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_now_name, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_pos(_now_name, 40, 58);
+    lv_obj_set_pos(_now_name, 24, 64);
     lv_label_set_long_mode(_now_name, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(_now_name, 520);
+    lv_obj_set_width(_now_name, 472);
 
     // ①ICY 正在播放歌名(20px 副行; 国内台 HLS 无 ICY = 恒空不占眼)
     _now_title = lv_label_create(panel);
@@ -884,69 +1326,18 @@ void AppRadio::onOpen()
     lv_obj_set_style_text_font(_now_title, zh_font_sm(), 0);
     lv_obj_set_style_text_color(_now_title, lv_color_hex(C_TEXT2), 0);
     lv_label_set_long_mode(_now_title, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(_now_title, 520);
-    lv_obj_set_pos(_now_title, 40, 98);
+    lv_obj_set_width(_now_title, 472);
+    lv_obj_set_pos(_now_title, 24, 104);
     if (uint32_t sq = s_np_seq.load()) {   // 后台播放中重进: 恢复已取到的歌名
         _np_seen = sq;
         lv_label_set_text(_now_title, s_np_title);
     }
 
-    // ── 调谐刻度盘(参考 leo-radio / Passport radio_app) ─────────────
-    // 88.0-108.0MHz 横向刻度: 主刻度每 2MHz 带数字, 副刻度每 0.5MHz;
-    // 刻度与基线走绘制事件直绘(零对象零分配), 指针+光晕是仅有的两个子对象。
-    {
-        constexpr int DIAL_X = 40, DIAL_Y = 128, DIAL_W = 520, DIAL_H = 92;
-        constexpr int TRK_L = 28, TRK_R = 492;             // 刻度轨道(盘内坐标)
-        _dial = lv_obj_create(panel);
-        lv_obj_set_pos(_dial, DIAL_X, DIAL_Y);
-        lv_obj_set_size(_dial, DIAL_W, DIAL_H);
-        lv_obj_set_style_bg_color(_dial, lv_color_hex(C_DIAL_BG), 0);
-        lv_obj_set_style_bg_opa(_dial, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(_dial, 1, 0);
-        lv_obj_set_style_border_color(_dial, lv_color_hex(C_BORDER), 0);
-        lv_obj_set_style_radius(_dial, 10, 0);
-        lv_obj_set_style_pad_all(_dial, 0, 0);
-        lv_obj_clear_flag(_dial, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-        lv_obj_add_event_cb(_dial, _dial_draw_cb, LV_EVENT_DRAW_MAIN, (void*)nullptr);
-
-        // 主刻度数字 88..108 每 2MHz(静态 label, 只建一次)
-        for (int mhz = 88; mhz <= 108; mhz += 2) {
-            int x = TRK_L + (long)(mhz * 10 - 880) * (TRK_R - TRK_L) / 200;
-            lv_obj_t* num = lv_label_create(_dial);
-            lv_obj_set_style_text_font(num, &lv_font_montserrat_16, 0);
-            lv_obj_set_style_text_color(num, lv_color_hex(C_TEXT2), 0);
-            lv_label_set_text_fmt(num, "%d", mhz);
-            lv_obj_set_style_text_align(num, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_set_width(num, 34);
-            lv_obj_set_pos(num, x - 17, 8);
-        }
-
-        // 指针光晕(跟随指针) + 琥珀指针
-        _needle_glow = lv_obj_create(_dial);
-        lv_obj_set_size(_needle_glow, 18, 8);
-        lv_obj_set_pos(_needle_glow, _needle_x(_freq_of(0)) - 9, 50);
-        lv_obj_set_style_bg_color(_needle_glow, lv_color_hex(C_AMBER), 0);
-        lv_obj_set_style_bg_opa(_needle_glow, LV_OPA_20, 0);
-        lv_obj_set_style_border_width(_needle_glow, 0, 0);
-        lv_obj_set_style_radius(_needle_glow, 4, 0);
-        lv_obj_clear_flag(_needle_glow, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-
-        _needle = lv_obj_create(_dial);
-        lv_obj_set_size(_needle, 4, 30);
-        lv_obj_set_pos(_needle, _needle_x(_freq_of(0)), 30);
-        lv_obj_set_style_bg_color(_needle, lv_color_hex(C_AMBER), 0);
-        lv_obj_set_style_bg_opa(_needle, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(_needle, 0, 0);
-        lv_obj_set_style_radius(_needle, 2, 0);
-        lv_obj_clear_flag(_needle, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-        lv_obj_set_user_data(_needle, _needle_glow);
-    }
-
-    // ── 电平图: 单条带对象, 20 根条在绘制事件里直绘(零对象开销) ──
-    // 刻度盘底 240 + 8 → 条带 248 起; 底 y=364(按钮顶 388 - 24), 最高 112px
+    // ── 电平图(oneapp VU 面板同款): 单条带对象绘制事件直绘 ──
+    // 20 根条: track 底 + 琥珀填充 + 峰值帽; 面板内 (24,146) 472×300
     _vu_strip = lv_obj_create(panel);
-    lv_obj_set_pos(_vu_strip, 40, 228);
-    lv_obj_set_size(_vu_strip, 520, 158);
+    lv_obj_set_pos(_vu_strip, 24, 146);
+    lv_obj_set_size(_vu_strip, 472, 300);
     lv_obj_set_style_bg_opa(_vu_strip, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_vu_strip, 0, 0);
     lv_obj_set_style_pad_all(_vu_strip, 0, 0);
@@ -975,23 +1366,23 @@ void AppRadio::onOpen()
         if (icon_out) *icon_out = ic;
         return b;
     };
-    lv_obj_t* prev = mk_btn(105, 428, 70, &lv_font_montserrat_28, LV_SYMBOL_PREV, nullptr);
+    lv_obj_t* prev = mk_btn(105, 482, 70, &lv_font_montserrat_28, LV_SYMBOL_PREV, nullptr);
     lv_obj_add_event_cb(prev, _prevClick_cb, LV_EVENT_CLICKED, this);
-    lv_obj_t* play = mk_btn(245, 408, 110, &lv_font_montserrat_32, LV_SYMBOL_PLAY, &_play_icon);
+    lv_obj_t* play = mk_btn(205, 464, 110, &lv_font_montserrat_32, LV_SYMBOL_PLAY, &_play_icon);
     lv_obj_add_event_cb(play, _playClick_cb, LV_EVENT_CLICKED, this);
-    lv_obj_t* next = mk_btn(425, 428, 70, &lv_font_montserrat_28, LV_SYMBOL_NEXT, nullptr);
+    lv_obj_t* next = mk_btn(345, 482, 70, &lv_font_montserrat_28, LV_SYMBOL_NEXT, nullptr);
     lv_obj_add_event_cb(next, _nextClick_cb, LV_EVENT_CLICKED, this);
 
     lv_obj_t* vl = lv_label_create(panel);
     lv_label_set_text(vl, "音量");
     lv_obj_set_style_text_font(vl, zh_font_md(), 0);
     lv_obj_set_style_text_color(vl, lv_color_hex(C_TEXT2), 0);
-    lv_obj_set_pos(vl, 40, 600);
+    lv_obj_set_pos(vl, 24, 612);
 
     int vol = xiaozhi_get_speaker_volume();
     _vol_slider = lv_slider_create(panel);
-    lv_obj_set_size(_vol_slider, 320, 14);
-    lv_obj_set_pos(_vol_slider, 130, 610);
+    lv_obj_set_size(_vol_slider, 300, 14);
+    lv_obj_set_pos(_vol_slider, 100, 622);
     lv_slider_set_range(_vol_slider, 0, 100);
     lv_slider_set_value(_vol_slider, vol, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_vol_slider, lv_color_hex(C_TRACK), LV_PART_MAIN);
@@ -1002,8 +1393,30 @@ void AppRadio::onOpen()
     _vol_lbl = lv_label_create(panel);
     lv_obj_set_style_text_font(_vol_lbl, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_vol_lbl, lv_color_hex(C_TEXT2), 0);
-    lv_obj_set_pos(_vol_lbl, 480, 605);
+    lv_obj_set_pos(_vol_lbl, 416, 616);
     lv_label_set_text_fmt(_vol_lbl, "%d%%", vol);
+
+    // OSD 提示(oneapp osd 同款: 已收藏·xx / 输出:xx, 1.6s 自隐; onRunning 收)
+    _toast = lv_obj_create(panel);
+    lv_obj_set_size(_toast, 400, 60);
+    lv_obj_align(_toast, LV_ALIGN_TOP_MID, 0, 250);
+    lv_obj_set_style_bg_color(_toast, lv_color_hex(C_CARD_ON), 0);
+    lv_obj_set_style_bg_opa(_toast, LV_OPA_90, 0);
+    lv_obj_set_style_border_width(_toast, 1, 0);
+    lv_obj_set_style_border_color(_toast, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_border_opa(_toast, LV_OPA_70, 0);
+    lv_obj_set_style_radius(_toast, 30, 0);
+    lv_obj_set_style_pad_all(_toast, 0, 0);
+    lv_obj_clear_flag(_toast, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    {
+        lv_obj_t* tl = lv_label_create(_toast);
+        lv_obj_set_style_text_font(tl, zh_font_md(), 0);
+        lv_obj_set_style_text_color(tl, lv_color_hex(C_TEXT), 0);
+        lv_label_set_text(tl, "");
+        lv_obj_center(tl);
+        lv_obj_set_user_data(_toast, tl);
+    }
+    lv_obj_add_flag(_toast, LV_OBJ_FLAG_HIDDEN);
 
     // 手势 alive 旗标重建 (app_stocks 同款): onClose 里 *_alive=false 后,
     // 旧 shared_ptr 永久作废 —— 不重建的话第二次进收音机上拨手势在 alive
@@ -1015,13 +1428,24 @@ void AppRadio::onOpen()
     // 外部输出在播中重进: 音量滑条同步外部设备音量(异步拉取, onRunning 应用)
     if (_output_sel > 0 && _ext_on.load()) _extVolSync();
 
-    // 动态电台表: 进 app 后台拉一次(relay 增删台对终端零改动)
+    // 动态电台表 + 归属地: 进 app 后台各拉一次(relay 增删台对终端零改动)
     GetHAL()->tryRunDetached([this]() { _fetchStations(); });
+    GetHAL()->tryRunDetached([this]() { _fetchLocation(); });
 
     // 几何版本标记: 从串口确证当前固件的布局参数(排查改了没生效)
-    mclog::tagInfo(TAG, "ui-geom: name_y=58 title_y=98 vu_base=384 vu_max=152 btn_play_y=388 vol_y=532");
+    mclog::tagInfo(TAG, "ui-geom: oneapp list=40,112,640x528 row56 tabs_y=58 "
+                        "panel=720,28,520x664 vu=24,146,472x300 btn_y=464 toast_y=250");
 
     _startTask();
+}
+
+void AppRadio::_showToast(const char* msg)
+{
+    if (!_toast) return;
+    if (auto* tl = static_cast<lv_obj_t*>(lv_obj_get_user_data(_toast)))
+        lv_label_set_text(tl, msg);
+    lv_obj_clear_flag(_toast, LV_OBJ_FLAG_HIDDEN);
+    _toast_at = lv_tick_get();
 }
 
 void AppRadio::onRunning()
@@ -1039,11 +1463,32 @@ void AppRadio::onRunning()
     if (_state.load() != _ui_state)        _refreshStateUi();
     if (_want_station.load() != _ui_station) _refreshStationUi();
 
-    // 动态表更新落地: 后台线程拉到新表后在这里(LVGL 线程)重建列表
+    // 动态表更新落地: 后台线程拉到新表后在这里(LVGL 线程)重建页签+列表
     if (_stations_dirty.exchange(false)) {
-        _rebuildStationRows();
-        _ui_station = -1;              // 表变了, 强制整套刷新(高亮/台名/指针)
+        _rebuildTabs();
+        _rebuildRows();
+        if (_hdr_count) lv_label_set_text_fmt(_hdr_count, "· %d 台", st_count());
+        _ui_station = -1;              // 表变了, 强制整套刷新(高亮/台名)
         _refreshStationUi();
+    }
+
+    // 归属地更新落地: 重建列表(本地置顶) + 徽标
+    if (_loc_dirty.exchange(false)) {
+        std::string loc = _locText();
+        if (_hdr_loc) {
+            if (loc.empty()) lv_obj_add_flag(_hdr_loc, LV_OBJ_FLAG_HIDDEN);
+            else {
+                lv_label_set_text(_hdr_loc, ("本:" + loc).c_str());
+                lv_obj_clear_flag(_hdr_loc, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        _rebuildRows();
+    }
+
+    // OSD 提示 1.6s 自隐(oneapp osd 同款)
+    if (_toast && _toast_at != 0 && lv_tick_elaps(_toast_at) > 1600) {
+        lv_obj_add_flag(_toast, LV_OBJ_FLAG_HIDDEN);
+        _toast_at = 0;
     }
 
     // ①歌名: 流任务换了新值才拷进 label(seq=0 是写入中, 跳过)
@@ -1080,13 +1525,13 @@ void AppRadio::_updateVu()
         float wt = w > 0.5f ? 2 * w - 1 : 0;          // 右半→treble
         float wm = 1 - wb - wt;                       // 中间→mid
         float v = (b * wb + m * wm + t * wt);
-        float target = 4 + v * 1.48f;                 // 4..152px(底 384, 刻度盘下 228 起)
-        if (target > 152) target = 152;
+        float target = 4 + v * 2.74f;                 // 4..278px(条带 300 高)
+        if (target > 278) target = 278;
         float k = target > _vu_cur[i] ? 0.45f : 0.10f + (i % 5) * 0.04f;
         _vu_cur[i] += (target - _vu_cur[i]) * k;
         int h = (int)(_vu_cur[i] + 0.5f);
         if (h < 3) h = 3;
-        if (h > 152) h = 152;
+        if (h > 278) h = 278;
         // ④峰值帽: 超峰即记, 8fps 每帧 ×0.92 缓降, 永不低于条顶(0.92^8≈0.5/s)
         float pk = s_vu_pk[i];
         if ((float)h >= pk) pk = (float)h;
@@ -1094,7 +1539,7 @@ void AppRadio::_updateVu()
         if (pk < (float)h) pk = (float)h;
         int ph = (int)(pk + 0.5f);
         if (ph < h) ph = h;
-        if (ph > 152) ph = 152;
+        if (ph > 278) ph = 278;
         bool pchg = ((uint16_t)ph != s_vu_pk[i]);
         s_vu_pk[i] = (uint16_t)ph;
         if ((uint16_t)h != s_vu_h[i] || pchg) { s_vu_h[i] = h; changed = true; } // 变化才重绘
@@ -1102,7 +1547,8 @@ void AppRadio::_updateVu()
     if (changed) lv_obj_invalidate(_vu_strip);
 }
 
-// 绘制事件: 20 根琥珀矩形自底(条带内 y=144)向上生长
+// 绘制事件(oneapp VU 同构): track 底柱 + 琥珀填充自底向上 + 峰值帽亮线
+// 几何: 条带 472×300, 20 根条 宽16 间隙6, x0=19, 条底 y=290, 最高 278
 void AppRadio::_vu_draw_cb(lv_event_t* e)
 {
     auto* obj = static_cast<lv_obj_t*>(lv_event_get_target(e));
@@ -1111,15 +1557,26 @@ void AppRadio::_vu_draw_cb(lv_event_t* e)
     lv_obj_get_coords(obj, &oc);
     lv_draw_rect_dsc_t dsc;
     lv_draw_rect_dsc_init(&dsc);
-    dsc.bg_opa = LV_OPA_90;
-    dsc.bg_color = lv_color_hex(C_AMBER);
     dsc.radius = 2;
     for (int i = 0; i < 20; i++) {
+        int x = 19 + i * 22;
+        // track 底柱(oneapp: 未跳动的柱也占位)
+        dsc.bg_opa = LV_OPA_60;
+        dsc.bg_color = lv_color_hex(C_TRACK);
+        lv_area_t ta;
+        ta.x1 = oc.x1 + x;
+        ta.x2 = ta.x1 + 15;
+        ta.y1 = oc.y1 + 12;
+        ta.y2 = oc.y1 + 290;
+        lv_draw_rect(layer, &dsc, &ta);
+        // 琥珀填充(自底向上)
         int h = s_vu_h[i];
+        dsc.bg_opa = LV_OPA_90;
+        dsc.bg_color = lv_color_hex(C_AMBER);
         lv_area_t a;
-        a.x1 = oc.x1 + i * 26;
-        a.x2 = a.x1 + 19;
-        a.y2 = oc.y1 + 156;          // 条底(条带内 y=156 → 面板 y=384)
+        a.x1 = oc.x1 + x;
+        a.x2 = a.x1 + 15;
+        a.y2 = oc.y1 + 290;
         a.y1 = a.y2 - h + 1;
         lv_draw_rect(layer, &dsc, &a);
     }
@@ -1131,9 +1588,9 @@ void AppRadio::_vu_draw_cb(lv_event_t* e)
         int ph = s_vu_pk[i];
         if (ph < 5) continue;
         lv_area_t a;
-        a.x1 = oc.x1 + i * 26;
-        a.x2 = a.x1 + 19;
-        a.y2 = oc.y1 + 156 - ph;
+        a.x1 = oc.x1 + 19 + i * 22;
+        a.x2 = a.x1 + 15;
+        a.y2 = oc.y1 + 290 - ph;
         a.y1 = a.y2 - 1;
         lv_draw_rect(layer, &dsc, &a);
     }
@@ -1160,90 +1617,6 @@ void AppRadio::onClose()
         lv_obj_delete(_scr);
         _scr = nullptr;
     }
-}
-
-// ── 刻度盘(参考 leo-radio) ─────────────────────────────────────────────
-// 轨道几何与 onOpen 里的 DIAL 常量一致
-static constexpr int kTrkL = 28, kTrkR = 492;
-static constexpr int kBandLow = 880, kBandHigh = 1080;   // 0.1MHz
-
-int AppRadio::_freq_of(int idx) const
-{
-    StationDyn st;
-    if (!st_at(idx, st)) return kBandLow;
-    if (st.freq != 0) return st.freq;
-    // 网络台按列表位置均布(两端内缩, 防指针贴边); 读数不编造频点
-    int span = kBandHigh - kBandLow;
-    return kBandLow + span / 8 + (long)idx * span * 3 / 4 / (st_count() - 1);
-}
-
-int AppRadio::_needle_x(int freq_tenths) const
-{
-    return kTrkL + (long)(freq_tenths - kBandLow) * (kTrkR - kTrkL) / (kBandHigh - kBandLow);
-}
-
-void AppRadio::_needle_anim_cb(void* var, int32_t v)
-{
-    auto* needle = static_cast<lv_obj_t*>(var);
-    lv_obj_set_x(needle, v);
-    if (auto* glow = static_cast<lv_obj_t*>(lv_obj_get_user_data(needle)))
-        lv_obj_set_x(glow, v - 9);
-}
-
-void AppRadio::_move_needle(int idx, bool animate)
-{
-    if (!_needle) return;
-    int target = _needle_x(_freq_of(idx));
-    int cur = lv_obj_get_x(_needle);
-    lv_anim_del(_needle, nullptr);
-    if (animate && target != cur) {
-        int dist = target > cur ? target - cur : cur - target;
-        lv_anim_t a;
-        lv_anim_init(&a);
-        lv_anim_set_var(&a, _needle);
-        lv_anim_set_exec_cb(&a, _needle_anim_cb);
-        lv_anim_set_values(&a, cur, target);
-        uint32_t dur = 220 + (uint32_t)dist * 2;
-        if (dur > 650) dur = 650;
-        lv_anim_set_duration(&a, dur);
-        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-        lv_anim_start(&a);
-    } else {
-        _needle_anim_cb(_needle, target);
-    }
-}
-
-// 刻度与基线直绘(LVGL9 绘制坐标为屏幕绝对坐标, 须加对象自身偏移)
-void AppRadio::_dial_draw_cb(lv_event_t* e)
-{
-    auto* obj = static_cast<lv_obj_t*>(lv_event_get_target(e));
-    auto* layer = lv_event_get_layer(e);
-    lv_area_t oc;
-    lv_obj_get_coords(obj, &oc);
-
-    lv_draw_rect_dsc_t dsc;
-    lv_draw_rect_dsc_init(&dsc);
-    dsc.bg_opa = LV_OPA_COVER;
-    auto rect = [&](int x, int y, int w, int h, uint32_t color, int radius = 0) {
-        dsc.bg_color = lv_color_hex(color);
-        dsc.radius = radius;
-        lv_area_t a;
-        a.x1 = oc.x1 + x;
-        a.y1 = oc.y1 + y;
-        a.x2 = a.x1 + w - 1;
-        a.y2 = a.y1 + h - 1;
-        lv_draw_rect(layer, &dsc, &a);
-    };
-
-    const int span = kTrkR - kTrkL;
-    for (int i = 0; i <= 40; i++) {          // 每 0.5MHz 一格, 每 2MHz 主刻度
-        bool major = (i % 4 == 0);
-        if (!major && (i % 2) != 0) continue; // 只画整 MHz 的副刻度
-        int x = kTrkL + (long)i * span / 40;
-        rect(x, major ? 32 : 38, major ? 2 : 1, major ? 14 : 8,
-             major ? C_AMBER_SOFT : 0x2A4A6A);
-    }
-    rect(kTrkL - 8, 47, span + 16, 2, 0x1E3A5C);   // 基线
 }
 
 // ── 状态/选台刷新 ──────────────────────────────────────────────────────
@@ -1299,18 +1672,9 @@ void AppRadio::_refreshStationUi()
     int show = (_ui_station >= 0) ? _ui_station : _last_station;
     StationDyn st;
     if (show < 0 || !st_at(show, st)) return;
-    if (_row_sel) {
-        lv_obj_set_y(_row_sel, _row_y(show));
-        lv_obj_scroll_to_view(_row_sel, LV_ANIM_ON);
-    }
     if (_now_name) lv_label_set_text(_now_name, st.name.c_str());
-    if (_now_freq) {
-        if (st.freq > 0)
-            lv_label_set_text_fmt(_now_freq, "%d.%d MHz", st.freq / 10, st.freq % 10);
-        else
-            lv_label_set_text(_now_freq, "网络电台");
-    }
-    _move_needle(show, true);
+    if (_list) lv_obj_invalidate(_list);   // ▶ 高亮跟随(直绘)
+    _scrollToPlaying();
 }
 
 // ── 交互 ───────────────────────────────────────────────────────────────
@@ -1330,41 +1694,44 @@ void AppRadio::_play(int idx)
 #endif
 }
 
-void AppRadio::_rowClick_cb(lv_event_t* e)
+void AppRadio::_stopPlayback()
 {
-    auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
-    app->_play((int)(intptr_t)lv_obj_get_user_data(
-        static_cast<lv_obj_t*>(lv_event_get_target(e))));
+    if (_ext_on.load()) _extStop();   // 外部: 停投(流任务见 ext_on=false+want<0 置待机)
+    _want_station.store(-1);          // 暂停(本机断流)
+#ifdef PLATFORM_BUILD_WEB
+    if (_output_sel == 0) webui::web_media_radio(nullptr, false);
+#endif
 }
 
 void AppRadio::_playClick_cb(lv_event_t* e)
 {
     auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
     int st = app->_state.load();
-    if (st == 1 || st == 2) {
-        if (app->_ext_on.load()) app->_extStop();   // 外部: 停投(流任务见 ext_on=false+want<0 置待机)
-        app->_want_station.store(-1);               // 暂停(本机断流)
-#ifdef PLATFORM_BUILD_WEB
-        if (app->_output_sel == 0) webui::web_media_radio(nullptr, false);
-#endif
-    }
+    if (st == 1 || st == 2) app->_stopPlayback();
     else                    app->_play(app->_last_station); // 播放/重试
+}
+
+// 上一台/下一台: 当前组列表内循环(oneapp ↑↓ 移动光标同语义)
+void AppRadio::_stepInGroup(int dir)
+{
+    int n = (int)_rows.size();
+    if (n <= 0) return;
+    int w = _want_station.load();
+    if (w < 0) w = _last_station;
+    int pos = 0;
+    for (int i = 0; i < n; i++)
+        if (_rows[i] == w) { pos = i; break; }
+    _play(_rows[(pos + dir + n) % n]);
 }
 
 void AppRadio::_prevClick_cb(lv_event_t* e)
 {
-    auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
-    int n = st_count();
-    if (n <= 0) return;
-    app->_play((app->_last_station - 1 + n) % n);
+    static_cast<AppRadio*>(lv_event_get_user_data(e))->_stepInGroup(-1);
 }
 
 void AppRadio::_nextClick_cb(lv_event_t* e)
 {
-    auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
-    int n = st_count();
-    if (n <= 0) return;
-    app->_play((app->_last_station + 1) % n);
+    static_cast<AppRadio*>(lv_event_get_user_data(e))->_stepInGroup(1);
 }
 
 void AppRadio::_vol_cb(lv_event_t* e)
@@ -1486,7 +1853,7 @@ void AppRadio::_refreshOutputUi()
     if (!_out_chip) return;
     auto* tl = static_cast<lv_obj_t*>(lv_obj_get_user_data(_out_chip));
     if (tl && _output_sel >= 0 && _output_sel < kOutputCount)
-        lv_label_set_text(tl, kOutputs[_output_sel].name);
+        lv_label_set_text_fmt(tl, "输出:%s", kOutputs[_output_sel].name);
 }
 
 void AppRadio::_setOutput(int i)
@@ -1495,6 +1862,9 @@ void AppRadio::_setOutput(int i)
     _output_sel = i;
     GetHAL()->setConfig("radio_out", std::to_string(i));
     _refreshOutputUi();
+    char tb[48];
+    snprintf(tb, sizeof(tb), "输出: %s", kOutputs[i].full);
+    _showToast(tb);   // oneapp O 键 OSD 同款
     bool playing = _want_station.load() >= 0;   // 本机在播/外部在播/连接中
     if (i == 0) {
         // 切回本机: 停外部(异步); want>=0 时流任务见 ext_on=false 自动接播

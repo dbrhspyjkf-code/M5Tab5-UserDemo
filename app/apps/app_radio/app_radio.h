@@ -1,16 +1,17 @@
 #pragma once
 /*
- * app_radio — 网络收音机（参考 AI Passport 的 radio_app，适配 Tab5 触摸大屏）。
+ * app_radio — 网络收音机（oneapp 同款, 2026-11-15 改版）。
  *
- * 数据链路与 Passport 相同：OrangePi 8769 端口的 radio_relay.py 用 ffmpeg 把
- * 电台流转码成 16kHz 单声道 s16le PCM，设备 HTTP 直读 → PSRAM 环形缓冲 →
- * I2S 直写，零解码。播放期间必须关 WiFi 省电（Passport 实测：省电开着必断流）。
- * 2026-11-01 多输出播放：输出可选 本机 / 客厅 Sonos / 起居室 HomePod ——
- * 外部播放经 relay → Music Assistant(player_queues/play_media) 转投。
+ * 数据链路不变：OrangePi 8769 radio_relay.py 把电台流转码成 16kHz 单声道
+ * s16le PCM，设备 HTTP 直读 → PSRAM 环形缓冲 → I2S 直写，零解码。外部输出
+ * (客厅 Sonos / 起居室 HomePod) 经 relay → Music Assistant 转投。
+ * 电台表 = oneapp 同源(radio_stations.py 经 relay /radio/stations 下发):
+ * 四组页签(★收藏/国家/省级/地方/国际) + 收藏(NVS) + IP 归属地本地置顶。
  *
- * UI 差异：Tab5 是 1280×720 触摸屏 —— 左侧电台列表（点击换台），右侧播放
- * 控制（上一台/播放暂停/下一台 + 音量滑条），上拨回主屏（后台继续播放，
- * 2026-10-28；主页状态栏 ♪ 图标可回）。彻底停止需在收音机页按暂停。
+ * UI(oneapp 电台页同构): 左=分组页签+电台列表(点台播放/长按收藏, 列表
+ * 单容器绘制事件直绘 — 204 台若一行一个对象会压垮内部 RAM), 右=播放面板
+ * (状态/输出 chip/台名/ICY 歌名/VU 电平/播放控制/音量)。上拨回主屏(后台
+ * 继续播放, 主页状态栏 ♪ 图标可回), 彻底停止需在收音机页按暂停。
  */
 #include <mooncake.h>
 #include <lvgl.h>
@@ -18,6 +19,7 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include <vector>
 
 class AppRadio : public mooncake::AppAbility {
 public:
@@ -53,19 +55,35 @@ private:
     std::function<void(bool)> _block;
     // ── UI ──
     lv_obj_t* _scr        = nullptr;
-    lv_obj_t* _status_lbl = nullptr;   // 顶栏右侧状态
+    lv_obj_t* _status_lbl = nullptr;   // 右面板状态(未播放/连接中/播放中/失败)
+    lv_obj_t* _play_icon  = nullptr;   // 播放/暂停按钮内容
     lv_obj_t* _now_name   = nullptr;   // 右侧当前台名
     lv_obj_t* _now_title  = nullptr;   // ICY 正在播放歌名(20px 副行, relay 收割)
     uint32_t  _np_seen    = 0;         // 已刷进 UI 的歌名序号
-    lv_obj_t* _play_icon  = nullptr;   // 播放/暂停按钮内容
-    lv_obj_t* _vol_slider = nullptr;
-    lv_obj_t* _vol_lbl    = nullptr;
-    lv_obj_t* _row_sel    = nullptr;   // 列表选中高亮条
-    lv_obj_t* _list       = nullptr;   // 电台列表容器(动态表重建)
-    int       _row_y(int i) const;
+    lv_obj_t* _hdr_count  = nullptr;   // 头部 "· N 台"
+    lv_obj_t* _hdr_loc    = nullptr;   // 头部归属地徽标 "本:广东·深圳"
+    lv_obj_t* _tabs       = nullptr;   // 分组页签容器(★/国家/省级/地方/国际)
+    lv_obj_t* _tab_btns[5] = {nullptr};
+    lv_obj_t* _list       = nullptr;   // 电台列表容器(内容直绘, 零行对象)
+    lv_obj_t* _toast      = nullptr;   // OSD 提示(已收藏·xx / 输出:xx, 1.5s 自隐)
+    uint32_t  _toast_at   = 0;         // 显示起始 tick(0=未显示)
+    void _showToast(const char* msg);
+
+    // ── oneapp 同款列表状态(LVGL 线程专用) ──
+    int  _radio_grp = 0;               // 0=★收藏 1..4=四组
+    std::vector<int> _rows;            // 当前组显示的绝对下标序列
+    lv_obj_t* _list_spacer = nullptr;  // 撑起滚动内容高度(直绘无行对象)
+    void _setGroup(int g);
+    void _rebuildTabs();
+    void _rebuildRows();
+    void _scrollToPlaying();
+    int  _rowAt(int y) const;          // 屏幕纵坐标 → 行号(-1 无效)
+    static void _list_draw_cb(lv_event_t* e);
+    static void _list_event_cb(lv_event_t* e);   // CLICKED=播/停 LONG_PRESSED=收藏
+    static void _tab_cb(lv_event_t* e);
+
     // ── 动态电台表(2026-11-02): relay /radio/stations 下发, 内置表兜底 ──
     std::atomic<bool> _stations_dirty{false};
-    void _rebuildStationRows();
     void _fetchStations();
 
     // ── 电平图(真分频 VU): 单对象绘制事件直绘 20 根琥珀条 ──
@@ -76,17 +94,6 @@ private:
     std::atomic<int> _lvl_b{0}, _lvl_m{0}, _lvl_t{0};   // 0..100, 流任务写
     void _updateVu();
     static void _vu_draw_cb(lv_event_t* e);
-
-    // ── 刻度盘(参考 leo-radio: 88-108MHz 刻度 + 琥珀指针扫动) ──
-    lv_obj_t* _dial       = nullptr;   // 刻度盘容器(刻度走绘制事件, 零对象)
-    lv_obj_t* _needle     = nullptr;   // 调谐指针
-    lv_obj_t* _needle_glow= nullptr;   // 指针光晕
-    lv_obj_t* _now_freq   = nullptr;   // 频率读数(FM 台才有, 网络台显示"网络电台")
-    int  _freq_of(int idx) const;      // 电台在刻度上的位置(0.1MHz; 网络台均布)
-    int  _needle_x(int freq_tenths) const;
-    void _move_needle(int idx, bool animate);
-    static void _needle_anim_cb(void* var, int32_t v);
-    static void _dial_draw_cb(lv_event_t* e);
 
     // ── 流任务通信（全部原子量，任务绝不触碰 LVGL）──
     std::atomic<int>  _want_station{-2};   // -2 初始 / -1 停止 / 其余=电台下标
@@ -100,13 +107,29 @@ private:
 
     void _startTask();
     void _play(int idx);
+    void _stopPlayback();                  // 暂停: 外部→停投 + 本机断流(web 同)
+    void _stepInGroup(int dir);            // 上一台/下一台: 当前组内循环
     void _refreshStationUi();
     void _refreshStateUi();
-    static void _rowClick_cb(lv_event_t* e);
     static void _playClick_cb(lv_event_t* e);
     static void _prevClick_cb(lv_event_t* e);
     static void _nextClick_cb(lv_event_t* e);
     static void _vol_cb(lv_event_t* e);
+
+    // ── 收藏(oneapp radio_fav 同款; NVS radio_favs 逗号分隔 key 表) ──
+    std::vector<std::string> _favs;        // key 顺序表(仅 LVGL 线程访问)
+    void _favLoad();
+    void _favSave();
+    bool _favHas(const std::string& key) const;
+    void _favToggle(int idx);              // 绝对下标 + OSD
+
+    // ── IP 归属地(oneapp radio_local 同款; 本地台置顶 + "本" 徽标) ──
+    std::string _loc_prov, _loc_city;      // norm 后短名(空=未定位; 锁内读写)
+    std::atomic<bool> _loc_dirty{false};
+    void _locLoad();
+    void _fetchLocation();                 // worker: ip-api → NVS radio_loc
+    std::string _locText() const;          // "广东·深圳" 或 ""
+    int  _localRank(int idx) const;        // 0=同城 1=同省 2=其他
 
     // ── 播放输出选择(2026-11-01): 本机 / 客厅 Sonos / 起居室 HomePod ──
     // 外部播放经 relay(:8769)→Music Assistant 转投; 命令一律在 detach
@@ -118,8 +141,10 @@ private:
     std::atomic<int>  _ext_vol{-1};      // 外部音量查询结果(消费即清 -1)
     std::atomic<bool> _ext_vol_wait{false};
     std::atomic<bool> _np_kick{false};   // 请求流任务立即刷新歌名
-    lv_obj_t* _out_chip = nullptr;       // 顶栏输出 chip
+    lv_obj_t* _out_chip = nullptr;       // 右面板输出 chip
     lv_obj_t* _out_modal = nullptr;      // 输出选择弹窗(layer_top, delete_async 关)
+    lv_obj_t* _vol_slider = nullptr;
+    lv_obj_t* _vol_lbl    = nullptr;
     void _openOutputModal();
     void _closeOutputModal();
     void _setOutput(int i);
