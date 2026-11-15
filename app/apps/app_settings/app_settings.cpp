@@ -1,4 +1,5 @@
 #include "app_settings.h"
+#include "../app_voice_input/app_voice_input.h"
 #include "../utils/psram_json.h"
 #include "../utils/theme/theme.h"
 #include "../utils/assets/assets_partition.h"
@@ -211,9 +212,10 @@ std::string       g_fx_source = "static";
 
 // Static-member definitions for the shared email cache (declared in
 // app_settings.h). Mirrors the g_fx_* pattern above: detached fetch worker
-// writes email_list under email_list_mutex and flips email_updated; the UI
-// loop detects the flag in onRunning() and rebuilds the lv_list. AppHome's
-// status-bar icon polls fetchEmail() every 120s and reads email_unread_total.
+// writes email_list under email_list_mutex and flips email_updated (badge
+// data only since 2026-11-15 — the email sub-page is now the direct
+// five-layer client on /api/mail/*). AppHome's status-bar icon polls
+// fetchEmail() every 120s and reads email_unread_total.
 std::atomic<int>        AppSettings::email_unread_total{0};  // total, from j["count"]
 std::atomic<int>        AppSettings::email_flagged_total{0}; // 红旗总数
 std::atomic<bool>       AppSettings::email_updated{false};
@@ -223,12 +225,32 @@ std::string             AppSettings::email_error_msg;
 std::mutex              AppSettings::email_list_mutex;
 std::vector<EmailItem>  AppSettings::email_list;
 std::vector<EmailFolderInfo> AppSettings::email_folders;
-// 旗标操作 (car-dash 同款) — worker 写, onRunning 读
-std::atomic<bool>       AppSettings::email_act_done{false};
-std::atomic<bool>       AppSettings::email_act_ok{false};
-std::atomic<bool>       AppSettings::email_act_busy{false};
-std::atomic<uint32_t>   AppSettings::email_refetch_at{0};
-std::string             AppSettings::email_act_msg;
+
+// ── 邮件客户端 (五层直连, 2026-11-15) 静态 worker 结果 — worker 写, onRunning 读
+std::mutex        AppSettings::mailc_mutex;
+std::vector<AppSettings::MailAcct>   AppSettings::mailc_accts;
+std::vector<AppSettings::MailFolder> AppSettings::mailc_folders;
+std::vector<AppSettings::MailMsg>    AppSettings::mailc_msgs;
+int      AppSettings::mailc_total = 0;
+AppSettings::MailMsg AppSettings::mailc_cur_msg;
+std::string AppSettings::mailc_body;
+std::string AppSettings::mailc_body_uid, AppSettings::mailc_body_fld;
+AppSettings::MailMeta AppSettings::mailc_meta;
+std::string AppSettings::mailc_err;
+std::string AppSettings::mailc_folders_email, AppSettings::mailc_list_folder;
+std::string AppSettings::mailc_act_action, AppSettings::mailc_act_uid;
+std::string AppSettings::mailc_act_fld, AppSettings::mailc_act_tip;
+std::string AppSettings::mailc_act_err, AppSettings::mailc_send_err;
+std::string AppSettings::mailc_login_email;
+int      AppSettings::mailc_login_unread = 0;
+std::atomic<bool> AppSettings::mailc_accts_done{false},   AppSettings::mailc_accts_ok{false};
+std::atomic<bool> AppSettings::mailc_folders_done{false}, AppSettings::mailc_folders_ok{false};
+std::atomic<bool> AppSettings::mailc_list_done{false},   AppSettings::mailc_list_ok{false};
+std::atomic<bool> AppSettings::mailc_body_done{false},   AppSettings::mailc_body_ok{false};
+std::atomic<bool> AppSettings::mailc_act_done{false},    AppSettings::mailc_act_ok{false};
+std::atomic<bool> AppSettings::mailc_send_done{false},   AppSettings::mailc_send_ok{false};
+std::atomic<bool> AppSettings::mailc_login_done{false},  AppSettings::mailc_login_ok{false};
+std::atomic<bool> AppSettings::mailc_del_done{false},    AppSettings::mailc_del_ok{false};
 
 AppSettings::AppSettings()
 {
@@ -285,40 +307,140 @@ void AppSettings::onRunning()
     if (g_fx_updated.exchange(false) && _fx_page) {
         _fxRecompute();
     }
-    // Same pattern for the email cache: worker fills email_list + flips
-    // email_updated; we rebuild the list on the UI loop. 滑开的行正被操作时
-    // 跳过重建 (flag 留给后续帧, 行合拢后立即重建)。
-    if (!_mail_swipe_open && email_updated.exchange(false) && _email_page) {
-        _emailRefresh();
-    }
-    if (email_error.exchange(false) && _email_page) {
-        _emailShowError();
-    }
-    // 邮件旗标操作完成 → 反馈; 成功则合拢滑开的行 + 3.5s 后重拉
-    // (等服务端 _wake 秒级重轮询完成, car-dash 同款时序)
-    if (email_act_done.exchange(false) && _email_page) {
-        bool act_ok;
-        std::string msg;
-        {
-            std::lock_guard<std::mutex> lk(email_list_mutex);
-            act_ok = email_act_ok.load();
-            msg = email_act_msg;
+    // Same pattern for the email client: worker fills statics + flips done
+    // flags; we rebuild on the UI loop. 滑开的行正被操作时跳过列表重建
+    // (flag 留给后续帧, 行合拢后立即重建)。
+    if (_email_page) {
+        // 事件回调记下的层切换/重渲染/关页 → 本帧统一执行 (见 _mail_pending 注释)
+        if (_mail_pending_close) {
+            _mail_pending_close = false;
+            _closeEmail();
+        } else if (_mail_pending) {
+            _mail_pending = false;
+            _mailSetLv(_mail_pending_lv);
+        } else if (_mail_pending_render) {
+            _mail_pending_render = false;
+            if (!_mail_swipe_open) _mailRender();
         }
-        if (_email_status_lbl) lv_label_set_text(_email_status_lbl, msg.c_str());
-        if (act_ok) {
-            _emailCollapseSwipe(false);
-            email_refetch_at.store(lv_tick_get() + 3500);
+        if (!_email_page) return;   // pending_close 已把页关了
+        if (mailc_accts_done.exchange(false) && _mail_lv == MailLv::Acct)
+            _mailRender();
+        if (mailc_folders_done.exchange(false) && _mail_lv == MailLv::Folders) {
+            bool match;
+            {
+                std::lock_guard<std::mutex> lk(mailc_mutex);
+                match = (mailc_folders_email == _mail_acct);   // 快速换账号弃旧回执
+            }
+            if (match) _mailRender();
+        }
+        if (mailc_list_done.exchange(false) && _mail_lv == MailLv::List) {
+            _mail_got = true;
+            bool match;
+            {
+                std::lock_guard<std::mutex> lk(mailc_mutex);
+                match = (mailc_list_folder == _mail_folder);   // 快速换夹弃旧回执
+            }
+            if (match && !_mail_swipe_open) _mailRender();
+        }
+        if (mailc_body_done.exchange(false) && _mail_body_lbl) {
+            bool ok;
+            std::string txt, buid, bfld;
+            {
+                std::lock_guard<std::mutex> lk(mailc_mutex);
+                ok = mailc_body_ok.load();
+                txt = mailc_body;
+                buid = mailc_body_uid;
+                bfld = mailc_body_fld;
+            }
+            // 回执对号: 快速换信时旧正文不作数 (oneapp mail_body 同款)
+            if (buid == mailc_cur_msg.uid && bfld == mailc_cur_msg.fld) {
+                if (ok) {
+                    lv_label_set_text(_mail_body_lbl, txt.c_str());
+                    if (_mail_content) lv_obj_scroll_to_y(_mail_content, 0, LV_ANIM_OFF);
+                } else {
+                    lv_label_set_text(_mail_body_lbl, ("获取失败: " + mailc_body).c_str());
+                }
+            }
+        }
+        if (mailc_act_done.exchange(false)) {
+            bool ok;
+            std::string tip, err, act, uid, fld;
+            {
+                std::lock_guard<std::mutex> lk(mailc_mutex);
+                ok = mailc_act_ok.load();
+                tip = mailc_act_tip;
+                err = mailc_act_err;
+                act = mailc_act_action;
+                uid = mailc_act_uid;
+                fld = mailc_act_fld;
+            }
+            if (ok) {
+                _mailStatus(tip);
+                // 乐观旗标已在点击时应用 + 下一帧重渲染 (onRunning 消费
+                // _mail_pending_render); 这里只出反馈文案
+            } else {
+                mailcApplyFlags(act, uid, fld, false);   // 回滚 (oneapp mail_mark 失败分支)
+                _mailStatus("标记失败: " + err);
+                if (_mail_lv == MailLv::List && !_mail_swipe_open) _mailRender();
+                if (_mail_lv == MailLv::Detail) _mailRender();
+            }
+        }
+        if (mailc_send_done.exchange(false)) {
+            bool ok;
+            std::string err;
+            {
+                std::lock_guard<std::mutex> lk(mailc_mutex);
+                ok = mailc_send_ok.load();
+                err = mailc_send_err;
+            }
+            _mail_sending = false;
+            if (ok) {
+                bool was_reply = _mail_reply;
+                _mail_reply = false;
+                _mail_quote.clear();
+                _mailStatus("已发送 ✓");
+                _mailSetLv(was_reply ? MailLv::Detail : MailLv::List);
+            } else {
+                _mailStatus("发送失败: " + err);   // 草稿保留在写信层 (oneapp 同款)
+            }
+        }
+        if (mailc_login_done.exchange(false) && _mail_lv == MailLv::Login) {
+            bool ok;
+            std::string em, err;
+            int un;
+            {
+                std::lock_guard<std::mutex> lk(mailc_mutex);
+                ok = mailc_login_ok.load();
+                em = mailc_login_email;
+                err = mailc_err;
+                un = mailc_login_unread;
+            }
+            if (ok) {
+                _mail_acct = em;
+                _mailStatus(std::string("已登录 · INBOX 未读 ") + std::to_string(un));
+                _mailSetLv(MailLv::Folders);
+            } else {
+                _mailStatus("登录失败: " + err);
+            }
+        }
+        if (mailc_del_done.exchange(false) && _mail_lv == MailLv::Acct) {
+            bool ok;
+            std::string em, err;
+            {
+                std::lock_guard<std::mutex> lk(mailc_mutex);
+                ok = mailc_del_ok.load();
+                err = mailc_err;
+            }
+            if (ok) {
+                _mailStatus("已删除账号");
+                mailcFetchAccts();   // 重拉角标 → accts_done 后重渲染
+            } else {
+                _mailStatus("删除失败: " + err);
+            }
         }
     }
-    uint32_t refetch_deadline = email_refetch_at.load();
-    if (refetch_deadline != 0 && (int32_t)(lv_tick_get() - refetch_deadline) >= 0) {
-        email_refetch_at.store(0);
-        if (_email_status_lbl) lv_label_set_text(_email_status_lbl, "刷新中…");
-        fetchEmail();
-    }
-    // (移除 500ms 倒计时 — lv_label_set_text 触发 lvgl layer 重新分配 1200x16 横条
-    //  buffer (76.8KB), 在 ESP32-P4 上连续失败, 渲染管线堵塞, onRunning 自己都
-    //  拿不到 LVGL lock, status 文字卡死. worker 完成时改一次 status 即可.)
+    // (旧状态页的 email_updated/email_act onRunning 块已随五层客户端移除;
+    //  fetchEmail 仍每 120s 由主页调用刷新信封角标 email_unread_total。)
 }
 
 void AppSettings::onClose()
@@ -340,7 +462,22 @@ void AppSettings::onClose()
     _calc_expr_lbl = _calc_res_lbl = nullptr;
     _fx_from_dd = _fx_to_dd = _fx_amt_lbl = _fx_res_lbl = _fx_rate_lbl = nullptr;
     _unit_cat_dd = _unit_from_dd = _unit_to_dd = _unit_amt_lbl = _unit_res_lbl = _unit_eq_lbl = nullptr;
-    _email_page = _email_hint = _email_list = nullptr;
+    // 邮件子页对象随 _scr 整体删除, 只清指针 + 层状态 (静态缓存保留供下次秒开)
+    AppVoiceInput::dismissMicButton();
+    _email_page = _mail_title = _mail_status = _mail_actions = nullptr;
+    _mail_content = _mail_hint = _mail_kb = nullptr;
+    _mail_ta_email = _mail_ta_auth = _mail_ta_to = _mail_ta_subj = _mail_ta_body = nullptr;
+    _mail_body_lbl = nullptr;
+    _mail_swipe_open = nullptr;
+    _mail_lv = MailLv::Acct;
+    _mail_acct.clear();
+    _mail_folder.clear();
+    _mail_folder_disp.clear();
+    _mail_got = false;
+    _mail_reply = false;
+    _mail_sending = false;
+    _mail_quote.clear();
+    _mail_del_arm.clear();
     // 不清零 email_unread_total: 本 app 只展示邮件列表, 没有"标记已读"功能,
     // 退出不代表邮件已读. 未读数是服务器真实状态 (由轮询刷新), 退出后状态栏
     // 信封图标 / 灯阵 NEW EMAIL 应继续按真实未读显示.
@@ -408,7 +545,14 @@ void AppSettings::_installSwipeGesture()
                     // foreground — its joystick drags must not close us.
                     if (!app->_scr || lv_screen_active() != app->_scr) return;
                     // Back out of the deepest open sub-page first.
-                    if (app->_email_page)   app->_closeEmail();
+                    // 邮件子页 = 五层客户端: 上拨先逐层回退 (oneapp Esc 同款,
+                    // lv_async 内执行 — 可同步删/切), 账号层再上拨才关整页回工具页。
+                    if (app->_email_page) {
+                        bool close = false;
+                        MailLv nxt = app->_mailBackTarget(&close);
+                        if (close) app->_closeEmail();
+                        else app->_mailSetLv(nxt);
+                    }
                     else if (app->_unit_page)   app->_closeUnit();
                     else if (app->_fx_page) app->_closeFx();
                     else if (app->_calc_page) app->_closeCalculator();
@@ -1979,82 +2123,318 @@ void AppSettings::_unitBack_cb(lv_event_t* e)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  Email (邮件) — car-dash 邮件面板同款 (2026-11-07 对齐):
-//  未读/红旗 双视图页签 + 左右滑露操作钮 (红旗/取消红旗、已读/标未读)
-//  + 刷新钮, 旗标操作走 8768 POST /api/email/action (IMAP STORE)。
-//  数据: /api/email/status 新 schema (每文件夹最近 30 封带 uid/seen/flagged)
+//  Email client (邮件) — 2026-11-15 oneapp(CardputerZero) 同款五层客户端:
+//  账号(多账号+未读角标+二段确认删除) / 登录(邮箱+授权码) / 文件夹(聚合虚拟夹
+//  置顶+真实夹) / 列表(滑动行 红旗/已读 + 点面卡进详情) / 详情(正文滚动+
+//  标已读/旗标+回复) / 写信(收件人/主题/正文 + 回复引用块, SMTP 直发)。
+//  协议层 = Pi 8768 /api/mail/* (mail_client.py, oneapp mail.py 移植:
+//  授权码 IMAP 收 + SMTP 发, 会话复用, GBK/RFC2047/UTF-7 服务端全解)。
+//  主页信封角标仍走 fetchEmail() (/api/email/status) 不变。
+//  层间导航: 返回钮/上拨逐层回退 (oneapp mail_esc 同款), 账号层回工具页;
+//  事件回调里不同步删事件目标祖先 — 层切换记 _mail_pending 下一帧执行。
 // ════════════════════════════════════════════════════════════════════════════
 
-// 操作钮上下文 (heap 分配, 挂按钮 user_data, DELETE 事件释放)
 namespace {
-struct MailActCtx {
+
+// 通用点击上下文 (heap 分配, 挂 user_data, DELETE 事件释放):
+//   账号行 a=email / 面卡 a=uid b=fld / 文件夹行 a=raw b=disp /
+//   动作钮 a=action b=folder(raw) c=uid / 删除 chip a=email
+struct MailCtx {
     AppSettings* self;
-    const char*  action;   // 指向静态字面量, 不拥有
-    std::string  folder;
-    std::string  uid;
+    std::string a, b, c;
 };
+
+void mail_ctx_del_cb(lv_event_t* e)
+{
+    delete static_cast<MailCtx*>(lv_event_get_user_data(e));
 }
 
-// IMAP modified UTF-7 → 显示名 ("&XfJT0ZAB-" → "已发送")。非法序列原样回退。
-static std::string imap_utf7_display(const std::string& name)
+// PsramString → std::string (worker 解析取值; 桌面/网页回退标准 json)
+std::string mc_s(const PsramString& s) { return std::string(s.data(), s.size()); }
+
+// worker 通用 POST /api/mail/*: HTTP/JSON/业务失败统一归 false + 用户可读文案
+struct McResp {
+    bool ok = false;
+    std::string err;
+    PsramJson j;
+};
+
+McResp mc_post(const char* path, const std::string& body)
 {
-    auto b64val = [](char c) -> int {
-        if (c >= 'A' && c <= 'Z') return c - 'A';
-        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-        if (c >= '0' && c <= '9') return c - '0' + 52;
-        if (c == '+') return 62;
-        if (c == '/') return 63;
-        return -1;
-    };
-    std::string out;
-    size_t i = 0;
-    while (i < name.size()) {
-        if (name[i] != '&') { out += name[i++]; continue; }
-        size_t end = name.find('-', i);
-        if (end == std::string::npos) { out += name[i++]; continue; }
-        std::string raw = name.substr(i, end - i + 1);   // "&....-"
-        std::string b64 = name.substr(i + 1, end - i - 1);
-        i = end + 1;
-        if (b64.empty()) { out += '&'; continue; }       // "&-" = 字面 '&'
-        std::replace(b64.begin(), b64.end(), ',', '/');  // modified base64
-        std::string bytes;
-        int val = 0, bits = 0;
-        bool bad = false;
-        for (char c : b64) {
-            int v = b64val(c);
-            if (v < 0) { bad = true; break; }
-            val = (val << 6) | v;
-            bits += 6;
-            if (bits >= 8) { bits -= 8; bytes += (char)((val >> bits) & 0xFF); }
-        }
-        if (bad || bytes.empty() || (bytes.size() & 1)) { out += raw; continue; }
-        for (size_t k = 0; k + 1 < bytes.size(); k += 2) {  // UTF-16BE → UTF-8
-            uint32_t cp = ((uint8_t)bytes[k] << 8) | (uint8_t)bytes[k + 1];
-            if (cp >= 0xD800 && cp <= 0xDBFF && k + 3 < bytes.size()) {
-                uint32_t lo = ((uint8_t)bytes[k + 2] << 8) | (uint8_t)bytes[k + 3];
-                if (lo >= 0xDC00 && lo <= 0xDFFF) {
-                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                    k += 2;
-                }
-            }
-            if (cp < 0x80) {
-                out += (char)cp;
-            } else if (cp < 0x800) {
-                out += (char)(0xC0 | (cp >> 6));
-                out += (char)(0x80 | (cp & 0x3F));
-            } else if (cp < 0x10000) {
-                out += (char)(0xE0 | (cp >> 12));
-                out += (char)(0x80 | ((cp >> 6) & 0x3F));
-                out += (char)(0x80 | (cp & 0x3F));
-            } else {
-                out += (char)(0xF0 | (cp >> 18));
-                out += (char)(0x80 | ((cp >> 12) & 0x3F));
-                out += (char)(0x80 | ((cp >> 6) & 0x3F));
-                out += (char)(0x80 | (cp & 0x3F));
-            }
-        }
+    McResp r;
+    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");
+    std::string url = "http://" + host + ":8768" + path;
+    auto resp = GetHAL()->httpPost(url, body, {{"Content-Type", "application/json"}});
+    if (!resp.ok) {
+        r.err = resp.status == 0 ? "网络/timeout (检查 8768)"
+                                : ("HTTP " + std::to_string(resp.status));
+        return r;
     }
-    return out;
+    try {
+        r.j = PsramJson::parse(resp.body);
+    } catch (const std::exception& ex) {
+        r.err = std::string("JSON 解析失败: ") + ex.what();
+        return r;
+    }
+    r.ok = r.j.value("ok", false);
+    if (!r.ok) r.err = mc_s(r.j.value("err", PsramString("操作失败")));
+    return r;
+}
+
+// 乐观旗标应用/回滚 (单条; forward=true 应用动作语义, false 回滚;
+// oneapp mail_mark 口径: mark_read→seen=true / flag→flagged=true …)
+void mailc_apply_flag(const std::string& action, bool forward, AppSettings::MailMsg& m)
+{
+    if (action == "mark_read")        m.seen = forward;
+    else if (action == "mark_unread") m.seen = !forward;
+    else if (action == "flag")        m.flagged = forward;
+    else if (action == "unflag")      m.flagged = !forward;
+}
+
+// ── UI 小件 (cb/ud 由成员渲染函数传入 — 匿名空间拿不到私有静态 cb) ───────────
+lv_obj_t* mail_card(lv_obj_t* parent, lv_coord_t w, int h, uint32_t bg,
+                    lv_event_cb_t cb, void* ud)
+{
+    lv_obj_t* c = lv_obj_create(parent);
+    lv_obj_set_size(c, w, h);
+    lv_obj_set_style_bg_color(c, lv_color_hex(bg), 0);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(c, 18, 0);
+    lv_obj_set_style_border_width(c, 0, 0);
+    lv_obj_set_style_shadow_width(c, 0, 0);
+    lv_obj_set_style_pad_all(c, 0, 0);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    if (cb) lv_obj_add_event_cb(c, cb, LV_EVENT_CLICKED, ud);
+    return c;
+}
+
+lv_obj_t* mail_label(lv_obj_t* parent, const char* txt, uint32_t color,
+                     const lv_font_t* font, int x, int y, int w,
+                     lv_label_long_mode_t mode)
+{
+    lv_obj_t* l = lv_label_create(parent);
+    lv_label_set_text(l, txt);
+    lv_obj_set_style_text_font(l, font, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+    lv_obj_set_pos(l, x, y);
+    lv_obj_set_width(l, w);
+    lv_label_set_long_mode(l, mode);
+    return l;
+}
+
+lv_obj_t* mail_pill(lv_obj_t* parent, int x, int w, const char* txt, uint32_t bg,
+                    uint32_t fg, lv_event_cb_t cb, void* ud)
+{
+    lv_obj_t* b = mail_card(parent, w, 58, bg, cb, ud);
+    lv_obj_set_style_radius(b, 16, 0);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, txt);
+    lv_obj_set_style_text_font(l, zh_font_30(), 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(fg), 0);
+    lv_obj_center(l);
+    return b;
+}
+
+lv_obj_t* mail_ta(lv_obj_t* parent, int x, int y, int w, int h, bool one_line,
+                  bool pwd, lv_event_cb_t cb, void* ud)
+{
+    lv_obj_t* ta = lv_textarea_create(parent);
+    lv_obj_set_pos(ta, x, y);
+    lv_obj_set_size(ta, w, h);
+    lv_textarea_set_one_line(ta, one_line);
+    if (pwd) lv_textarea_set_password_mode(ta, true);
+    lv_obj_set_style_text_font(ta, zh_font_30(), 0);
+    lv_obj_set_style_text_color(ta, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_bg_color(ta, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_opa(ta, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ta, 0, 0);
+    lv_obj_set_style_pad_all(ta, 0, 0);
+    lv_obj_add_event_cb(ta, cb, LV_EVENT_ALL, ud);
+    return ta;
+}
+
+// 回复主题去叠加前缀 (oneapp mail_compose_open 同款语义: Re:/FW:/回复:/转发:…)
+std::string mail_strip_reply_prefix(std::string s)
+{
+    for (;;) {
+        size_t p = s.find_first_not_of(" \t");
+        s = (p == std::string::npos) ? "" : s.substr(p);
+        if (s.empty()) break;
+        std::string low;
+        for (char c : s.substr(0, 12)) low += (char)std::tolower((unsigned char)c);
+        if (low.rfind("re:", 0) == 0)        s = s.substr(3);
+        else if (low.rfind("fw:", 0) == 0)   s = s.substr(3);
+        else if (low.rfind("aw:", 0) == 0)   s = s.substr(3);
+        else if (low.rfind("sv:", 0) == 0)   s = s.substr(3);
+        else if (s.rfind("回复：", 0) == 0)  s = s.substr(9);
+        else if (s.rfind("回复:", 0) == 0)   s = s.substr(7);
+        else if (s.rfind("转发：", 0) == 0)  s = s.substr(9);
+        else if (s.rfind("转发:", 0) == 0)   s = s.substr(7);
+        else break;
+    }
+    return s;
+}
+
+}  // namespace
+
+// 乐观旗标应用到 cur_msg + msgs (worker 失败回滚共用)。action 支持逗号分隔
+// 多动作 ("mark_read,flag" = flagread 两连发), 逐一应用/回滚。
+void AppSettings::mailcApplyFlags(const std::string& actions_csv, const std::string& uid,
+                                  const std::string& fld, bool forward)
+{
+    std::lock_guard<std::mutex> lk(mailc_mutex);
+    std::string act = actions_csv;
+    size_t pos;
+    while ((pos = act.find(',')) != std::string::npos) {
+        std::string one = act.substr(0, pos);
+        act = act.substr(pos + 1);
+        if (!one.empty()) mailc_apply_one(one, uid, fld, forward);
+    }
+    if (!act.empty()) mailc_apply_one(act, uid, fld, forward);
+}
+
+void AppSettings::mailc_apply_one(const std::string& action, const std::string& uid,
+                                  const std::string& fld, bool forward)
+{
+    if (mailc_cur_msg.uid == uid && mailc_cur_msg.fld == fld)
+        mailc_apply_flag(action, forward, mailc_cur_msg);
+    for (auto& m : mailc_msgs)
+        if (m.uid == uid && m.fld == fld) mailc_apply_flag(action, forward, m);
+}
+
+// 旗标动作统一入口 (详情钮 + 列表滑动钮): 乐观应用 → 发 worker; spawn 失败
+// 立即回滚。重渲染走 _mail_pending_render 下一帧 (不同步删事件目标祖先)。
+void AppSettings::mail_do_action(const std::string& action,
+                                 const std::string& uid, const std::string& fld,
+                                 const char* tip)
+{
+    if (uid.empty()) return;
+    mailcApplyFlags(action, uid, fld, true);
+    if (!mailcAction(_mail_acct, action, fld, uid, tip)) {
+        mailcApplyFlags(action, uid, fld, false);
+        _mailStatus("操作失败 (线程忙/创建失败)");
+        return;
+    }
+    _mailStatus("操作中…");
+    _mail_pending_render = true;
+}
+
+// ── 旧状态页数据源 (主页信封角标 + 潜在回退路径): 保留 fetchEmail 管线不动 ──
+// 五层客户端本体走 /api/mail/*, 这套 /api/email/status 缓存只喂状态栏图标。
+void AppSettings::fetchEmail()
+{
+    // spawn 失败退避闸 (!spawned 分支设置): 退避期内静默跳过, 既能自愈又不
+    // 形成 16ms 一发的紧循环. (int32_t) 差值比较兼容 lv_tick 回绕.
+    static uint32_t s_retry_not_before = 0;
+    {
+        uint32_t now_tick = lv_tick_get();
+        if (s_retry_not_before != 0 && (int32_t)(now_tick - s_retry_not_before) < 0) return;
+    }
+    // 多轮询去重: 主页状态栏 120s 一轮, 45s 内完成过一次就复用上次结果。
+    static uint32_t s_last_done_tick = 0;
+    {
+        uint32_t now_tick = lv_tick_get();
+        if (s_last_done_tick != 0 && (int32_t)(now_tick - s_last_done_tick) < 45000) return;
+    }
+    if (email_fetching.exchange(true)) {
+        mclog::tagWarn(_tag, "fetchEmail: already in flight, skip");
+        return;
+    }
+
+    // email-status-server.py 跑在 8768 端口, 直接读 /tmp/email-status.json
+    // 缓存, <10ms 返回, 不需要 IMAP 同步。用 svc_host 而不是 ha_host:
+    // ha_host 指向 HA 主机, svc_host 才是 hermes + email-status-server 跑的机器.
+    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");   // 默认与主页一致 (模拟器无 NVS 配置)
+    // 申请端按自身内存决定拿多少: Tab5 小内存 → 每夹最多 30 封 + 预览截 100 字
+    std::string url  = "http://" + host + ":8768/api/email/status?limit=30&preview=100";
+
+    // ETag 协商: 内容没变服务端回 304 空 body, 下载+解析整个跳过
+    // (轮询 99% 走这条路, 内部堆 churn 归零)。仅 worker 线程读写,
+    // 由 email_fetching 闸串行化。
+    static std::string s_etag;
+    std::vector<std::pair<std::string, std::string>> req_headers;
+    if (!s_etag.empty()) req_headers.emplace_back("If-None-Match", s_etag);
+
+    bool spawned = GetHAL()->tryRunDetached([url, req_headers]() {
+        auto resp = GetHAL()->httpGet(url, req_headers);
+        if (resp.status == 304) {
+            // 304 早退也必须清闸, 否则 in-flight 旗标永久卡死 (2026-11-09 实锤).
+            s_last_done_tick = lv_tick_get();
+            email_fetching.store(false);
+            return;
+        }
+        if (resp.ok) {
+            for (auto& [k, v] : resp.resp_headers) {
+                std::string lk = k;
+                for (auto& c : lk) c = (char)std::tolower((unsigned char)c);
+                if (lk == "etag" && !v.empty()) { s_etag = v; break; }
+            }
+            try {
+                auto j = PsramJson::parse(resp.body);
+                auto to_std = [](const PsramString& s) {
+                    return std::string(s.data(), s.size());
+                };
+                std::lock_guard<std::mutex> lk(email_list_mutex);
+                email_list.clear();
+                email_folders.clear();
+                if (j.contains("folders") && j["folders"].is_array()) {
+                    int total = 0;
+                    for (const auto& f : j["folders"]) {
+                        if (!f.is_object()) continue;
+                        std::string name = to_std(f.value("name", PsramString("?")));
+                        EmailFolderInfo fi;
+                        fi.name    = name;
+                        fi.unread  = f.value("unread", 0);
+                        fi.flagged = f.value("flagged", 0);
+                        total += fi.unread;
+                        email_folders.push_back(fi);
+                        if (f.contains("messages") && f["messages"].is_array()) {
+                            for (const auto& m : f["messages"]) {
+                                if (!m.is_object()) continue;
+                                EmailItem it;
+                                it.uid     = to_std(m.value("uid", PsramString()));
+                                it.from    = to_std(m.value("from", PsramString("?")));
+                                it.subject = to_std(m.value("subject", PsramString("(无主题)")));
+                                it.date    = to_std(m.value("date", PsramString()));
+                                it.preview = to_std(m.value("preview", PsramString()));
+                                it.folder  = name;
+                                it.seen    = m.value("seen", false);
+                                it.flagged = m.value("flagged", false);
+                                email_list.push_back(std::move(it));
+                            }
+                        }
+                    }
+                    email_unread_total.store(total);
+                    email_flagged_total.store(j.value("flagged_total", 0));
+                    email_updated.store(true);
+                    mclog::tagInfo(_tag, "email badge list updated ({} folders, {} mails, {} unread)",
+                                   email_folders.size(), email_list.size(),
+                                   email_unread_total.load());
+                } else {
+                    email_error.store(true);
+                    email_error_msg = to_std(j.value("error", PsramString("未知错误")));
+                }
+            } catch (const std::exception& ex) {
+                mclog::tagWarn(_tag, "email parse failed: {}", ex.what());
+                email_error.store(true);
+                email_error_msg = std::string("JSON 解析失败: ") + ex.what();
+            }
+        } else {
+            mclog::tagWarn(_tag, "email fetch failed (status={})", resp.status);
+            email_error.store(true);
+            email_error_msg = resp.status == 0 ? "网络/timeout (status=0)"
+                                               : ("HTTP " + std::to_string(resp.status));
+        }
+        s_last_done_tick = lv_tick_get();
+        email_fetching.store(false);
+    });
+    if (!spawned) {
+        mclog::tagWarn(_tag, "emailFetch: tryRunDetached failed (pthread_create?)");
+        email_error.store(true);
+        email_error_msg = "本地线程创建失败 (内存不足?)";
+        email_fetching.store(false);
+        s_retry_not_before = lv_tick_get() + 60 * 1000;
+    }
 }
 
 void AppSettings::openEmailPage()
@@ -2085,83 +2465,64 @@ void AppSettings::_openEmail()
     lv_obj_set_style_pad_all(_email_page, 0, 0);
     lv_obj_clear_flag(_email_page, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 顶栏 (car-dash mail-head 同款): 未读/红旗 页签 + 计数/反馈 + 刷新钮。
-    // (旧版 2026-10-28 曾应要求去顶栏; 现按 car-dash 对齐恢复页签+刷新)
-    auto mk_pill = [&](int x, int w, const char* txt) {
-        lv_obj_t* b = lv_obj_create(_email_page);
-        lv_obj_set_size(b, w, 58);
-        lv_obj_set_pos(b, x, 20);
-        lv_obj_set_style_bg_color(b, lv_color_hex(C_CARD), 0);
-        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(b, 16, 0);
-        lv_obj_set_style_border_width(b, 0, 0);
-        lv_obj_set_style_shadow_width(b, 0, 0);
-        lv_obj_set_style_pad_all(b, 0, 0);
-        lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_t* l = lv_label_create(b);
-        lv_label_set_text(l, txt);
-        lv_obj_set_style_text_font(l, zh_font_30(), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(C_DIM), 0);
-        lv_obj_center(l);
-        return b;
-    };
-    _email_tabs[0] = mk_pill(20, 150, "未 读");
-    _email_tabs[1] = mk_pill(182, 150, "红 旗");
-    for (int i = 0; i < 2; i++)
-        lv_obj_add_event_cb(_email_tabs[i], _emailTab_cb, LV_EVENT_CLICKED, this);
-    lv_obj_t* rbtn = mk_pill(1070, 150, "刷 新");
-    lv_obj_add_event_cb(rbtn, _emailRefreshBtn_cb, LV_EVENT_CLICKED, this);
-    _emailUpdateTabs();
+    // 顶栏: 返回钮 (逐层回退, 账号层=关页回工具页) + 标题 + 状态行 + 动作区
+    // (动作区每层重建: List=刷新+写邮件 / Login=登录 / Compose=发送)
+    mail_pill(_email_page, 20, 120, "返 回", C_CARD, C_TEXT, _mailBack_cb, this);
+    _mail_title = mail_label(_email_page, "邮件", C_TEXT, zh_font_30(), 156, 26, 350,
+                             LV_LABEL_LONG_DOT);
+    _mail_status = mail_label(_email_page, "", C_DIM, zh_font_md(), 520, 34, 330,
+                              LV_LABEL_LONG_DOT);
+    _mail_actions = lv_obj_create(_email_page);
+    lv_obj_set_size(_mail_actions, 400, 58);
+    lv_obj_set_pos(_mail_actions, 860, 13);
+    lv_obj_set_style_bg_opa(_mail_actions, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_mail_actions, 0, 0);
+    lv_obj_set_style_pad_all(_mail_actions, 0, 0);
+    lv_obj_clear_flag(_mail_actions, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 计数/操作反馈行 (car-dash tool-sub)
-    _email_status_lbl = lv_label_create(_email_page);
-    lv_obj_set_style_text_font(_email_status_lbl, zh_font_md(), 0);
-    lv_obj_set_style_text_color(_email_status_lbl, lv_color_hex(C_DIM), 0);
-    lv_label_set_text(_email_status_lbl, "");
-    lv_obj_set_pos(_email_status_lbl, 364, 34);
-    lv_obj_set_width(_email_status_lbl, 680);
-    lv_label_set_long_mode(_email_status_lbl, LV_LABEL_LONG_DOT);
+    // 层内容容器 (每层 lv_obj_clean 重建; 不用 lv_list — 其 clip layer 会反复
+    // 分配 1200x16 RGBA8888 缓冲把渲染管线堵死, 2026-11-07 实锤)
+    _mail_content = lv_obj_create(_email_page);
+    lv_obj_set_size(_mail_content, 1240, 608);
+    lv_obj_set_pos(_mail_content, 20, 96);
+    lv_obj_set_style_bg_color(_mail_content, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_opa(_mail_content, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_mail_content, 0, 0);
+    lv_obj_set_style_radius(_mail_content, 0, 0);
+    lv_obj_set_style_pad_all(_mail_content, 0, 0);
+    lv_obj_set_scroll_dir(_mail_content, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(_mail_content, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_set_flex_flow(_mail_content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(_mail_content, 12, 0);
 
-    // 卡片列 (上下拉查看更多; 左右边距 20 = 上下边距。
-    // 不用 lv_list — 其内部 scroll/clip 渲染会触发 1200x16 RGBA8888 layer
-    // buffer (76.8KB) 反复分配, LVGL 死循环)
-    _email_list = lv_obj_create(_email_page);
-    lv_obj_set_size(_email_list, 1240, 608);
-    lv_obj_set_pos(_email_list, 20, 96);
-    lv_obj_set_style_bg_color(_email_list, lv_color_hex(C_BG), 0);
-    lv_obj_set_style_bg_opa(_email_list, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(_email_list, 0, 0);
-    lv_obj_set_style_radius(_email_list, 0, 0);
-    lv_obj_set_style_pad_all(_email_list, 0, 0);
-    lv_obj_set_scroll_dir(_email_list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(_email_list, LV_SCROLLBAR_MODE_ACTIVE);
-    lv_obj_set_flex_flow(_email_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(_email_list, 12, 0);   // 184*3 + 12*2 = 576 ≤ 608
+    // 内容区居中提示 (加载中/失败/空; 挂 page 防被 flex 顶走)
+    _mail_hint = mail_label(_email_page, "加载中…", C_DIM, zh_font_30(), 0, 370, 1280,
+                            LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(_mail_hint, LV_TEXT_ALIGN_CENTER, 0);
 
-    // 列表内居中提示 (加载中 / 失败 / 空) — 挂 page 上悬浮列表区中心
-    // (挂 _email_list 会被 flex 布局顶走; 有卡片时隐藏)
-    _email_hint = lv_label_create(_email_page);
-    lv_label_set_text(_email_hint, "加载中…");
-    lv_obj_set_style_text_color(_email_hint, lv_color_hex(C_DIM), 0);
-    lv_obj_set_style_text_font(_email_hint, zh_font_30(), 0);
-    lv_obj_align(_email_hint, LV_ALIGN_TOP_MID, 0, 370);
+    // 滑开行 5s 无操作自动合拢 (沿用旧机制)
+    _mail_swipe_timer = lv_timer_create(_mailSwipeTimer_cb, 500, this);
 
-    // 滑开行 5s 无操作自动合拢 (car-dash mailSwipeTimer 同款)
-    _mail_swipe_timer = lv_timer_create(_emailSwipeTimer_cb, 500, this);
+    // 层状态复位 (静态缓存保留 — 下次打开秒显上次数据)
+    _mail_lv = MailLv::Acct;
+    _mail_acct.clear();
+    _mail_folder.clear();
+    _mail_folder_disp.clear();
+    _mail_got = false;
+    _mail_reply = false;
+    _mail_sending = false;
+    _mail_quote.clear();
+    _mail_del_arm.clear();
+    _mail_pending = _mail_pending_render = _mail_pending_close = false;
 
-    // 已有缓存列表先渲染 (状态条轮询成功过的数据直接显示, 不空等)
-    if (!email_list.empty() && _email_list) _emailRefresh();
-    // 清残留错误 (旧失败若在子页未开时发生, 打开时不该显示旧错误)
-    email_error.store(false);
-    email_error_msg.clear();
-
-    mclog::tagInfo(_tag, "_openEmail: dispatching fetchEmail");
-    fetchEmail();
-    mclog::tagInfo(_tag, "_openEmail: done");
+    _mailRender();
+    mclog::tagInfo(_tag, "_openEmail: dispatching mailcFetchAccts");
+    mailcFetchAccts();
 }
 
 void AppSettings::_closeEmail()
 {
+    _mailKbHide();
     if (_mail_swipe_timer) {
         lv_timer_del(_mail_swipe_timer);
         _mail_swipe_timer = nullptr;
@@ -2169,293 +2530,365 @@ void AppSettings::_closeEmail()
     _mail_swipe_open = nullptr;   // 行随 page 删除, 指针一并清
     if (_email_page) {
         lv_obj_delete(_email_page);
-        _email_page = _email_hint = _email_list = nullptr;
+        _email_page = nullptr;
     }
-    _email_tabs[0] = _email_tabs[1] = nullptr;
-    _email_status_lbl = nullptr;
+    _mail_kb = nullptr;           // 键盘是 page 子对象, 已随删
+    _mail_title = _mail_status = _mail_actions = nullptr;
+    _mail_content = _mail_hint = nullptr;
+    _mail_ta_email = _mail_ta_auth = _mail_ta_to = _mail_ta_subj = _mail_ta_body = nullptr;
+    _mail_body_lbl = nullptr;
+    // 层状态复位 (静态缓存保留供下次秒开)
+    _mail_lv = MailLv::Acct;
+    _mail_acct.clear();
+    _mail_folder.clear();
+    _mail_folder_disp.clear();
+    _mail_got = false;
+    _mail_reply = false;
+    _mail_sending = false;
+    _mail_quote.clear();
+    _mail_del_arm.clear();
+    _mail_pending = _mail_pending_render = _mail_pending_close = false;
     if (_tools_page) lv_obj_clear_flag(_tools_page, LV_OBJ_FLAG_HIDDEN);
 }
 
-// ── 邮件 JSON 解析落 PSRAM ─────────────────────────────────────────────
-// nlohmann DOM 的每个节点/字符串都是小块 malloc, 默认全落内部堆 (<16KB 的
-// PSRAM 阈值): 307 封 × 7 字段 ≈ 4K 个节点, 每分钟 churn 两次把内部堆搅碎
-// (27KB 空闲分不出 181B → WiFi SDIO 断言, 2026-11-07)。自定义分配器让
-// 节点+字符串整棵落 PSRAM; 解析出的紧凑 email_list 仍走内部堆 (常驻小体量)。
-
-void AppSettings::fetchEmail()
+void AppSettings::_mailStatus(const std::string& s)
 {
-    // spawn 失败退避闸 (!spawned 分支设置): 退避期内静默跳过, 既能自愈又不
-    // 形成 16ms 一发的紧循环. (int32_t) 差值比较兼容 lv_tick 回绕.
-    static uint32_t s_retry_not_before = 0;
-    {
-        uint32_t now_tick = lv_tick_get();
-        if (s_retry_not_before != 0 && (int32_t)(now_tick - s_retry_not_before) < 0) return;
-    }
-    // 多轮询去重: 主页状态栏 (120s) / 工具页都打本端点 (2026-11-12 前 LED
-    // 通知器也轮询, 实录常有相隔 3 秒的成对请求 08:54:53 + :56, 白白多一轮
-    // 84KB 往返)。45s 内完成过一次就复用上次结果直接跳过; 手动刷新场景这个
-    // 新鲜度也够。s_last_done_tick 由 worker 在两个完成点写, 32 位对齐写无撕裂。
-    static uint32_t s_last_done_tick = 0;
-    {
-        uint32_t now_tick = lv_tick_get();
-        if (s_last_done_tick != 0 && (int32_t)(now_tick - s_last_done_tick) < 45000) return;
-    }
-    if (email_fetching.exchange(true)) {
-        mclog::tagWarn(_tag, "fetchEmail: already in flight, skip");
-        return;
-    }
-    mclog::tagInfo(_tag, "fetchEmail: entered");
+    if (_mail_status) lv_label_set_text(_mail_status, s.c_str());
+}
 
-    // email-status-server.py 跑在 8768 端口, 直接读 /tmp/email-status.json
-    // 缓存 (由 cron email-led.py 周期更新), <10ms 返回, 不需要 IMAP 同步.
-    // 跟桌面 Übersicht unread-emails.widget 是同一个数据源, 完全同步.
-    // 用 svc_host 而不是 ha_host:
-    // ha_host 指向 HA 主机, svc_host 才是 hermes + email-status-server 跑的机器.
-    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");   // 默认与主页一致 (模拟器无 NVS 配置)
-    // 申请端按自身内存决定拿多少: Tab5 小内存 → 每夹最多 30 封 + 预览截 100 字
-    // (服务端不带参数=全量, car-dash/浏览器端不受影响)。
-    std::string url  = "http://" + host + ":8768/api/email/status?limit=30&preview=100";
-    mclog::tagInfo(_tag, "emailFetch: url={}", url);
+void AppSettings::_mailKbShow(lv_obj_t* ta, bool voice)
+{
+    if (GetHAL()->usbKeyboardDetect()) return;   // 实体键盘在线不开软键盘 (app_ssh 同款)
+    if (!_mail_kb) {
+        _mail_kb = lv_keyboard_create(_email_page);
+        lv_obj_set_size(_mail_kb, 1280, 260);
+        lv_obj_align(_mail_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_add_event_cb(_mail_kb, _mailKb_cb, LV_EVENT_ALL, this);
+    }
+    lv_keyboard_set_textarea(_mail_kb, ta);
+    lv_obj_clear_flag(_mail_kb, LV_OBJ_FLAG_HIDDEN);
+    if (voice) AppVoiceInput::requestVoiceInput(ta, 300);   // 中文输入 = 语音 (app_home 同款)
+}
 
-    // ETag 协商: 内容没变服务端回 304 空 body, 下载+解析整个跳过
-    // (轮询 99% 走这条路, 内部堆 churn 归零)。仅 worker 线程读写,
-    // 由 email_fetching 闸串行化。
-    static std::string s_etag;
-    std::vector<std::pair<std::string, std::string>> req_headers;
-    if (!s_etag.empty()) req_headers.emplace_back("If-None-Match", s_etag);
+void AppSettings::_mailKbHide()
+{
+    if (_mail_kb) lv_obj_add_flag(_mail_kb, LV_OBJ_FLAG_HIDDEN);
+    AppVoiceInput::dismissMicButton();
+}
 
-    bool spawned = GetHAL()->tryRunDetached([url, req_headers]() {
-        mclog::tagInfo(_tag, "emailFetch: worker started");
-        auto resp = GetHAL()->httpGet(url, req_headers);
-        mclog::tagInfo(_tag, "emailFetch: httpGet done, ok={}, status={}, body_len={}",
-                       resp.ok, resp.status, resp.body.size());
-        if (resp.status == 304) {
-            mclog::tagInfo(_tag, "emailFetch: unchanged (304), skip parse");
-            // 304 早退也必须清闸, 否则 in-flight 旗标永久卡死, 轮询从此
-            // 全部 "already in flight, skip" 直到重启 (2026-11-09 实锤).
-            s_last_done_tick = lv_tick_get();
-            email_fetching.store(false);
-            return;
-        }
-        if (resp.ok) {
-            for (auto& [k, v] : resp.resp_headers) {
-                std::string lk = k;
-                for (auto& c : lk) c = (char)std::tolower((unsigned char)c);
-                if (lk == "etag" && !v.empty()) { s_etag = v; break; }
-            }
-            try {
-                auto j = PsramJson::parse(resp.body);
-                auto to_std = [](const PsramString& s) {
-                    return std::string(s.data(), s.size());
-                };
-                std::lock_guard<std::mutex> lk(email_list_mutex);
-                email_list.clear();
-                email_folders.clear();
-                // 8768 新 schema (car-dash 同源): {unread, count, flagged_total,
-                // folders:[{name, unread, flagged, messages:[{uid, subject, from,
-                // date, preview, seen, flagged}]}], error, account, time}
-                if (j.contains("folders") && j["folders"].is_array()) {
-                    // 草稿箱里的"未读"是自己没写完的草稿, 不算真正的未读邮件.
-                    // 按 folder 名 (含 "draft" / "草稿", 大小写不敏感) 跳过, 并用
-                    // 各 folder 的 unread 重新累加 total (不再直接用服务器 count).
-                    auto is_draft = [](std::string n) {
-                        for (auto& c : n) c = (char)std::tolower((unsigned char)c);
-                        return n.find("draft") != std::string::npos ||
-                               n.find("草稿") != std::string::npos;
-                    };
-                    int total = 0;
-                    for (const auto& f : j["folders"]) {
-                        if (!f.is_object()) continue;
-                        std::string name = to_std(f.value("name", PsramString("?")));
-                        if (is_draft(name)) continue;  // 跳过草稿箱
-                        EmailFolderInfo fi;
-                        fi.name    = name;
-                        fi.unread  = f.value("unread", 0);
-                        fi.flagged = f.value("flagged", 0);
-                        total += fi.unread;
-                        email_folders.push_back(fi);
-                        // 每封拍平成一条卡片数据 (服务器倒序=最新在前; 最近 30 封,
-                        // 含已读 — 红旗视图需要); messages 缺字段时回退 latest_*
-                        if (f.contains("messages") && f["messages"].is_array()) {
-                            for (const auto& m : f["messages"]) {
-                                if (!m.is_object()) continue;
-                                EmailItem it;
-                                it.uid     = to_std(m.value("uid", PsramString()));
-                                it.from    = to_std(m.value("from", PsramString("?")));
-                                it.subject = to_std(m.value("subject", PsramString("(无主题)")));
-                                it.date    = to_std(m.value("date", PsramString()));
-                                it.preview = to_std(m.value("preview", PsramString()));
-                                it.folder  = name;
-                                it.seen    = m.value("seen", false);
-                                it.flagged = m.value("flagged", false);
-                                email_list.push_back(std::move(it));
-                            }
-                        } else {
-                            EmailItem it;   // 兜底条目无 uid → 不可旗标操作
-                            it.from    = to_std(f.value("latest_from", PsramString("?")));
-                            it.subject = to_std(f.value("latest_subject", PsramString("(无主题)")));
-                            it.preview = to_std(f.value("latest_preview", PsramString()));
-                            it.folder  = name;
-                            email_list.push_back(std::move(it));
-                        }
-                    }
-                    email_unread_total.store(total);
-                    email_flagged_total.store(j.value("flagged_total", 0));
-                    // 数据签名不变则不触发重建 — 60s 后台轮询若每次都重建,
-                    // 会把用户正在读的列表拽回顶部 (滑开状态也被打断)。
-                    // worker 由 email_fetching 闸串行化, 静态签名无并发。
-                    static std::string s_sig;
-                    std::string sig = std::to_string(total) + "/" +
-                                      std::to_string(email_flagged_total.load()) + "/";
-                    for (const auto& fi : email_folders)
-                        sig += fi.name + ":" + std::to_string(fi.unread) + "," +
-                               std::to_string(fi.flagged) + ";";
-                    for (const auto& it2 : email_list)
-                        sig += it2.uid + (it2.seen ? "s" : "") + (it2.flagged ? "f" : "") + ".";
-                    bool changed = (sig != s_sig);
-                    s_sig = sig;
-                    if (changed) email_updated.store(true);
-                    mclog::tagInfo(_tag, "email list updated ({} folders, {} mails, {} unread, {} flagged{})",
-                                   email_folders.size(), email_list.size(),
-                                   email_unread_total.load(), email_flagged_total.load(),
-                                   changed ? "" : ", unchanged");
-                } else {
-                    email_error.store(true);
-                    email_error_msg = to_std(j.value("error", PsramString("未知错误")));
-                }
-            } catch (const std::exception& ex) {
-                mclog::tagWarn(_tag, "email parse failed: {}", ex.what());
-                email_error.store(true);
-                email_error_msg = std::string("JSON 解析失败: ") + ex.what();
-            }
-        } else {
-            // resp.status == 0 通常是 timeout / 连接失败 / DNS 失败
-            mclog::tagWarn(_tag, "email fetch failed (status={}, body={})",
-                           resp.status, resp.body);
-            email_error.store(true);
-            if (resp.status == 0) {
-                email_error_msg = "网络/timeout (status=0) — 检查 8768 email-status-server";
-            } else {
-                email_error_msg = "HTTP " + std::to_string(resp.status);
-            }
-        }
-        s_last_done_tick = lv_tick_get();
-        email_fetching.store(false);
-    });
-    if (!spawned) {
-        mclog::tagWarn(_tag, "emailFetch: tryRunDetached failed (pthread_create?)");
-        email_error.store(true);
-        email_error_msg = "本地线程创建失败 (内存不足?)";
-        // 复位闸 + 60s 退避 (见函数入口的 s_retry_not_before). 原实现把
-        // email_fetching 永久留 true, 指望「worker 完成时清」— 但这条路径
-        // 根本没有 worker 被创建, 一次 pthread 失败 = 轮询从此全部 skip
-        // 直到重启 (2026-11-09 日志实锤). 复位后靠退避闸防 16ms 紧循环:
-        // 退避期内入口直接 return, 不再创建线程, 内存压力不叠加.
-        email_fetching.store(false);
-        s_retry_not_before = lv_tick_get() + 60 * 1000;
+void AppSettings::_mailSetLv(MailLv lv)
+{
+    _mailKbHide();
+    _mail_lv = lv;
+    _mailRender();
+    switch (lv) {
+    case MailLv::Acct:    mailcFetchAccts(); break;
+    case MailLv::Folders: mailcFetchFolders(_mail_acct); break;
+    case MailLv::List:
+        mailcFetchList(_mail_acct, _mail_folder);
+        _mailStatus("获取中…");
+        break;
+    default: break;   // Login/Detail/Compose 不自动拉
     }
 }
 
-void AppSettings::_emailRefresh()
+AppSettings::MailLv AppSettings::_mailBackTarget(bool* close)
 {
-    if (!_email_list) return;
-    // lv_list_clean 不存在于本项目 LVGL 版本, 用通用 lv_obj_clean 删子对象
-    lv_obj_clean(_email_list);
-    _mail_swipe_open = nullptr;   // 旧行已删, 滑开状态一并清
-
-    std::vector<EmailItem> items;
-    std::vector<EmailFolderInfo> folders;
-    {
-        std::lock_guard<std::mutex> lk(email_list_mutex);
-        items = email_list;
-        folders = email_folders;
+    *close = false;
+    switch (_mail_lv) {
+    case MailLv::Compose:  return _mail_reply ? MailLv::Detail : MailLv::List;
+    case MailLv::Detail:   return MailLv::List;
+    case MailLv::List:     return MailLv::Folders;
+    case MailLv::Folders:  return MailLv::Acct;
+    case MailLv::Login:    return MailLv::Acct;
+    case MailLv::Acct: default: *close = true; return MailLv::Acct;
     }
-    const int unread_total  = email_unread_total.load();
-    const int flagged_total = email_flagged_total.load();
+}
 
-    _emailUpdateTabs();
-    if (_email_status_lbl) {
-        std::string s;
-        if (_email_view == 0)
-            s = unread_total ? std::to_string(unread_total) + " 封未读" : "无未读";
+// ── 渲染 (每层: 顶栏标题/状态/动作 + 内容容器重建) ───────────────────────────
+
+void AppSettings::_mailRender()
+{
+    if (!_email_page || !_mail_content) return;
+    lv_obj_clean(_mail_actions);
+    lv_obj_clean(_mail_content);
+    _mail_swipe_open = nullptr;
+    _mail_body_lbl = nullptr;
+    _mail_ta_email = _mail_ta_auth = _mail_ta_to = _mail_ta_subj = _mail_ta_body = nullptr;
+    lv_obj_add_flag(_mail_hint, LV_OBJ_FLAG_HIDDEN);
+    switch (_mail_lv) {
+    case MailLv::Acct:    _mailRenderAcct();    break;
+    case MailLv::Login:   _mailRenderLogin();   break;
+    case MailLv::Folders: _mailRenderFolders(); break;
+    case MailLv::List:    _mailRenderList();    break;
+    case MailLv::Detail:  _mailRenderDetail();  break;
+    case MailLv::Compose: _mailRenderCompose(); break;
+    }
+}
+
+void AppSettings::_mailRenderAcct()
+{
+    lv_label_set_text(_mail_title, "邮件 · 账号");
+    std::vector<MailAcct> accts;
+    std::string err;
+    bool ok;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        accts = mailc_accts;
+        err = mailc_err;
+        ok = mailc_accts_ok.load();
+    }
+    _mailStatus(std::to_string(accts.size()) + " 个账号");
+
+    for (const auto& a : accts) {
+        auto* ctx = new MailCtx{this, a.email, "", ""};
+        lv_obj_t* row = mail_card(_mail_content, LV_PCT(100), 110, C_CARD,
+                                  _mailAcctRow_cb, ctx);
+        lv_obj_add_event_cb(row, mail_ctx_del_cb, LV_EVENT_DELETE, ctx);
+        mail_label(row, a.email.c_str(), C_TEXT, zh_font_30(), 24, 40, 820,
+                   LV_LABEL_LONG_DOT);
+        if (a.unread > 0) {
+            std::string un = "未读 " + std::to_string(a.unread);
+            mail_label(row, un.c_str(), C_ACCENT, zh_font_md(), 850, 44, 160,
+                       LV_LABEL_LONG_DOT);
+        }
+        // 删除 chip (二段确认: 点一下变红「确 认」, 5s 内再点才删)
+        auto* dctx = new MailCtx{this, a.email, "", ""};
+        lv_obj_t* del = mail_card(row, 120, 70, C_CARD, _mailAcctDel_cb, dctx);
+        lv_obj_add_event_cb(del, mail_ctx_del_cb, LV_EVENT_DELETE, dctx);
+        lv_obj_align(del, LV_ALIGN_RIGHT_MID, -20, 0);
+        lv_obj_set_style_radius(del, 14, 0);
+        lv_obj_t* dl = lv_label_create(del);
+        lv_label_set_text(dl, "删 除");
+        lv_obj_set_style_text_font(dl, zh_font_md(), 0);
+        lv_obj_set_style_text_color(dl, lv_color_hex(C_DANGER), 0);
+        lv_obj_center(dl);
+    }
+
+    // ＋ 添加账号
+    lv_obj_t* add = mail_card(_mail_content, LV_PCT(100), 110, C_CARD,
+                              _mailAddAcct_cb, this);
+    lv_obj_t* al = lv_label_create(add);
+    lv_label_set_text(al, "＋ 添加账号");
+    lv_obj_set_style_text_font(al, zh_font_30(), 0);
+    lv_obj_set_style_text_color(al, lv_color_hex(C_ACCENT), 0);
+    lv_obj_center(al);
+
+    if (accts.empty()) {
+        if (!ok && !err.empty())
+            lv_label_set_text(_mail_hint, ("拉取失败: " + err).c_str());
         else
-            s = flagged_total ? std::to_string(flagged_total) + " 封红旗" : "无红旗";
-        lv_label_set_text(_email_status_lbl, s.c_str());
-    }
-
-    bool any = false;
-    if (_email_view == 1) {
-        // 红旗视图: 跨文件夹扁平列表 (car-dash mailRender flagged 分支)
-        for (const auto& m : items) {
-            if (!m.flagged) continue;
-            _emailMakeRow(m);
-            any = true;
-        }
-    } else {
-        // 未读视图: 文件夹分组, 组内只显示未读 (car-dash mail-sec 同款;
-        // unread==0 且无未读的文件夹整组隐藏)
-        for (const auto& f : folders) {
-            int shown = 0;
-            for (const auto& m : items)
-                if (m.folder == f.name && !m.seen) shown++;
-            if (f.unread <= 0 && shown == 0) continue;
-            any = true;
-            lv_obj_t* h = lv_label_create(_email_list);
-            std::string ht =
-                imap_utf7_display(f.name) + " · " + std::to_string(f.unread) + " 未读";
-            lv_label_set_text(h, ht.c_str());
-            lv_obj_set_style_text_font(h, zh_font_md(), 0);
-            lv_obj_set_style_text_color(h, lv_color_hex(C_SOFT), 0);
-            lv_obj_set_width(h, LV_PCT(100));
-            lv_label_set_long_mode(h, LV_LABEL_LONG_DOT);
-            for (const auto& m : items) {
-                if (m.folder == f.name && !m.seen) _emailMakeRow(m);
-            }
-        }
-    }
-
-    if (!any) {
-        lv_label_set_text(_email_hint,
-                          _email_view == 0 ? "没有未读邮件" : "没有红旗邮件");
-        lv_obj_clear_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text(_mail_hint, "还没有账号 · 点「＋ 添加账号」登录");
+        lv_obj_clear_flag(_mail_hint, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-void AppSettings::_emailSetView(int v)
+void AppSettings::_mailRenderLogin()
 {
-    if (_email_view == v) return;
-    _email_view = v;
-    _emailRefresh();   // 数据不动, 只换视图 (car-dash 页签行为)
+    lv_label_set_text(_mail_title, "邮件 · 添加账号");
+    _mailStatus("已登录账号更新授权码走同一入口");
+    mail_pill(_mail_actions, 202, 190, "登 录", C_ACCENT, C_BG, _mailLoginGo_cb, this);
+
+    lv_obj_t* c1 = mail_card(_mail_content, LV_PCT(100), 96, C_CARD, nullptr, nullptr);
+    mail_label(c1, "邮 箱", C_DIM, zh_font_md(), 24, 36, 100, LV_LABEL_LONG_DOT);
+    _mail_ta_email = mail_ta(c1, 150, 18, 1050, 60, true, false, _mailTa_cb, this);
+
+    lv_obj_t* c2 = mail_card(_mail_content, LV_PCT(100), 96, C_CARD, nullptr, nullptr);
+    mail_label(c2, "授权码", C_DIM, zh_font_md(), 24, 36, 100, LV_LABEL_LONG_DOT);
+    _mail_ta_auth = mail_ta(c2, 150, 18, 1050, 60, true, true, _mailTa_cb, this);
+
+    // 授权码获取提示 (oneapp draw_mail_login 同款口径)
+    mail_label(_mail_content,
+        "邮箱网页版 设置 → POP3/SMTP/IMAP 开启服务并生成授权码\n"
+        "(163: 设置→POP3/SMTP/IMAP · QQ: 设置→账号→POP3/IMAP/SMTP 服务)",
+        C_DIM, zh_font_md(), 24, 12, 1192, LV_LABEL_LONG_WRAP);
 }
 
-void AppSettings::_emailUpdateTabs()
+void AppSettings::_mailRenderFolders()
 {
-    for (int i = 0; i < 2; i++) {
-        lv_obj_t* b = _email_tabs[i];
-        if (!b) continue;
-        bool on = (i == _email_view);
-        lv_obj_set_style_bg_color(b, lv_color_hex(on ? C_ACCENT : C_CARD), 0);
-        lv_obj_t* l = lv_obj_get_child(b, 0);
-        if (l) lv_obj_set_style_text_color(l, lv_color_hex(on ? C_BG : C_DIM), 0);
+    lv_label_set_text(_mail_title, _mail_acct.c_str());
+    std::vector<MailFolder> folders;
+    std::string err;
+    bool ok;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        folders = mailc_folders;
+        err = mailc_err;
+        ok = mailc_folders_ok.load();
+    }
+    _mailStatus(folders.empty() && !ok ? "连接中…"
+              : std::to_string(folders.size()) + " 个文件夹");
+    for (const auto& f : folders) {
+        auto* ctx = new MailCtx{this, f.raw, f.name, ""};
+        lv_obj_t* row = mail_card(_mail_content, LV_PCT(100), 100,
+                                  f.virt ? C_CARD_PR : C_CARD, _mailFolderRow_cb, ctx);
+        lv_obj_add_event_cb(row, mail_ctx_del_cb, LV_EVENT_DELETE, ctx);
+        mail_label(row, f.name.c_str(), f.virt ? C_ACCENT : C_TEXT, zh_font_30(),
+                   24, 32, 800, LV_LABEL_LONG_DOT);
+        if (f.unread > 0) {
+            std::string un = "未读 " + std::to_string(f.unread);
+            mail_label(row, un.c_str(), C_ACCENT, zh_font_md(), 850, 36, 160,
+                       LV_LABEL_LONG_DOT);
+        }
+        if (f.total >= 0) {
+            std::string tt = "共 " + std::to_string(f.total);
+            lv_obj_t* tl = mail_label(row, tt.c_str(), C_DIM, zh_font_md(), 1010, 36,
+                                      206, LV_LABEL_LONG_DOT);
+            lv_obj_set_style_text_align(tl, LV_TEXT_ALIGN_RIGHT, 0);
+        }
+    }
+    if (folders.empty()) {
+        lv_label_set_text(_mail_hint, ok ? "无文件夹" : ("拉取失败: " + err).c_str());
+        lv_obj_clear_flag(_mail_hint, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-void AppSettings::_emailCollapseSwipe(bool anim)
+void AppSettings::_mailRenderList()
+{
+    lv_label_set_text(_mail_title, _mail_folder_disp.c_str());
+    mail_pill(_mail_actions, 0, 190, "刷 新", C_CARD, C_TEXT, _mailRefreshBtn_cb, this);
+    mail_pill(_mail_actions, 202, 190, "写邮件", C_ACCENT, C_BG, _mailComposeBtn_cb, this);
+
+    // 列表口径 = 未读或旗标 (服务端 UNSEEN∪FLAGGED 同款; 本地过滤兜乐观更新:
+    // 标已读且无旗标的行即时消失, 旗标行保留变已读 — oneapp _mail_view_msgs)
+    std::vector<MailMsg> view;
+    int total = 0;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        for (const auto& m : mailc_msgs)
+            if (!m.seen || m.flagged) view.push_back(m);
+        total = mailc_total;
+    }
+    _mailStatus(std::to_string(view.size()) + "/" + std::to_string(total) + " 封");
+
+    const bool agg = _mail_folder.rfind("@", 0) == 0;   // 聚合视图标注来源夹
+    for (const auto& m : view) _mailMakeRow(m, agg);
+
+    if (view.empty()) {
+        std::string err;
+        bool ok;
+        {
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            err = mailc_err;
+            ok = mailc_list_ok.load();
+        }
+        if (_mail_got && !ok && !err.empty())
+            lv_label_set_text(_mail_hint, ("拉取失败: " + err).c_str());
+        else
+            lv_label_set_text(_mail_hint, _mail_got ? "没有未读/旗标邮件" : "获取中…");
+        lv_obj_clear_flag(_mail_hint, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void AppSettings::_mailRenderDetail()
+{
+    MailMsg cur;
+    std::string body_txt;
+    bool body_ok = false;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        cur = mailc_cur_msg;
+        body_txt = mailc_body;
+        body_ok = mailc_body_ok.load();
+    }
+    lv_label_set_text(_mail_title, cur.from.c_str());
+    _mailStatus(cur.date);
+
+    // 头部: 发件人 + 日期 / 主题 (≤2 行) / 分隔线
+    lv_obj_t* head = mail_card(_mail_content, LV_PCT(100), 152, C_BG, nullptr, nullptr);
+    lv_obj_set_style_radius(head, 0, 0);
+    mail_label(head, cur.from.c_str(), C_TEXT, zh_font_30(), 24, 10, 850,
+               LV_LABEL_LONG_DOT);
+    lv_obj_t* d = mail_label(head, cur.date.c_str(), C_DIM, zh_font_md(), 1000, 16,
+                             216, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(d, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_t* subj = mail_label(head, cur.subject.c_str(), C_TEXT, zh_font_30(),
+                                24, 56, 1192, LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(subj, 88);   // 最多两行, 超出裁剪 (防吃掉正文区)
+    lv_obj_t* div = mail_card(head, 1192, 2, C_CARD, nullptr, nullptr);
+    lv_obj_set_style_radius(div, 0, 0);
+    lv_obj_set_pos(div, 24, 148);
+
+    // 正文滚动区 (服务端截 6000 字; body done 由 onRunning 填 _mail_body_lbl)
+    lv_obj_t* body = mail_card(_mail_content, LV_PCT(100), 350, C_BG, nullptr, nullptr);
+    lv_obj_set_style_radius(body, 0, 0);
+    lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(body, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_set_style_pad_all(body, 12, 0);
+    _mail_body_lbl = mail_label(body,
+                                body_ok ? body_txt.c_str() : "加载中…",
+                                C_SOFT, zh_font_md(), 0, 0, 1180, LV_LABEL_LONG_WRAP);
+    if (!body_ok && !body_txt.empty())
+        lv_label_set_text(_mail_body_lbl, ("获取失败: " + body_txt).c_str());
+
+    // 动作条: 标已读/未读 | 红旗/取旗 | 回复 (乐观更新, oneapp mail_mark 口径)
+    lv_obj_t* bar = mail_card(_mail_content, LV_PCT(100), 84, C_BG, nullptr, nullptr);
+    lv_obj_set_style_radius(bar, 0, 0);
+    mail_pill(bar, 0, 380, cur.seen ? "标未读" : "标已读", C_CARD, C_TEXT,
+              _mailMarkBtn_cb, this);
+    mail_pill(bar, 430, 380, cur.flagged ? "取 旗" : "红 旗", C_CARD,
+              cur.flagged ? C_DIM : C_WARN, _mailFlagBtn_cb, this);
+    mail_pill(bar, 860, 380, "回 复", C_ACCENT, C_BG, _mailReplyBtn_cb, this);
+}
+
+void AppSettings::_mailRenderCompose()
+{
+    lv_label_set_text(_mail_title, _mail_reply ? "回复" : "写邮件");
+    _mailStatus(_mail_acct);
+    mail_pill(_mail_actions, 202, 190, "发 送", C_ACCENT, C_BG, _mailSendBtn_cb, this);
+
+    lv_obj_t* c1 = mail_card(_mail_content, LV_PCT(100), 96, C_CARD, nullptr, nullptr);
+    mail_label(c1, "收件人", C_DIM, zh_font_md(), 24, 36, 110, LV_LABEL_LONG_DOT);
+    _mail_ta_to = mail_ta(c1, 160, 18, 1040, 60, true, false, _mailTa_cb, this);
+
+    lv_obj_t* c2 = mail_card(_mail_content, LV_PCT(100), 96, C_CARD, nullptr, nullptr);
+    mail_label(c2, "主 题", C_DIM, zh_font_md(), 24, 36, 110, LV_LABEL_LONG_DOT);
+    _mail_ta_subj = mail_ta(c2, 160, 18, 1040, 60, true, false, _mailTa_cb, this);
+
+    lv_obj_t* c3 = mail_card(_mail_content, LV_PCT(100), 280, C_CARD, nullptr, nullptr);
+    _mail_ta_body = mail_ta(c3, 24, 14, 1192, 240, false, false, _mailTa_cb, this);
+
+    // 回复引用块 (暗色只读, 发送时拼在用户文字后 — oneapp 同款)
+    if (_mail_reply && !_mail_quote.empty()) {
+        lv_obj_t* qc = mail_card(_mail_content, LV_PCT(100), 200, C_CARD, nullptr, nullptr);
+        lv_obj_add_flag(qc, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scroll_dir(qc, LV_DIR_VER);
+        lv_obj_set_scrollbar_mode(qc, LV_SCROLLBAR_MODE_ACTIVE);
+        lv_obj_set_style_pad_all(qc, 12, 0);
+        lv_obj_t* ql = mail_label(qc, _mail_quote.c_str(), C_DIM, zh_font_md(),
+                                  0, 0, 1160, LV_LABEL_LONG_WRAP);
+        (void)ql;
+    }
+
+    // 回复预填: 收件人 = 回信地址, 主题 = Re: 去叠加前缀 (oneapp 同款)
+    if (_mail_reply) {
+        std::string to, subj;
+        {
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            to = mailc_meta.from_addr;
+            subj = mailc_meta.subject;
+        }
+        lv_textarea_set_text(_mail_ta_to, to.c_str());
+        lv_textarea_set_text(_mail_ta_subj, ("Re: " + mail_strip_reply_prefix(subj)).c_str());
+    }
+}
+
+// ── 列表滑动行 (旧版 _emailMakeRow 移植: 行 = 横向滚动视口, 点面卡进详情) ─────
+
+void AppSettings::_mailCollapseSwipe(bool anim)
 {
     lv_obj_t* row = _mail_swipe_open;
     _mail_swipe_open = nullptr;
     if (row) lv_obj_scroll_to_x(row, 200, anim ? LV_ANIM_ON : LV_ANIM_OFF);
 }
 
-lv_obj_t* AppSettings::_emailMakeRow(const EmailItem& m)
+lv_obj_t* AppSettings::_mailMakeRow(const MailMsg& m, bool agg)
 {
-    // 行结构 (car-dash .mail-swipe 移植): 行 = 1240 宽横向滚动视口, 内容三段
-    // [左操作区 200 | 面卡 1240 | 右操作区 200], 初始 scroll_x=200 只露面卡。
-    // 左滑 (scroll_x→400) 露右区 = 未读视图「红旗」/红旗视图「已读」;
-    // 右滑 (→0) 露左区 = 未读视图「已读」/红旗视图「取消红旗」(主手势)。
-    lv_obj_t* row = lv_obj_create(_email_list);
+    // 行结构: 1240 宽横向滚动视口, 内容三段 [左操作区 | 面卡 | 右操作区],
+    // 初始 scroll_x=200 只露面卡。左滑(→400)露右区 / 右滑(→0)露左区;
+    // 红旗视图主手势=右滑取消红旗, 其余视图主手势=左滑已读+红旗。
+    lv_obj_t* row = lv_obj_create(_mail_content);
     lv_obj_set_size(row, LV_PCT(100), 184);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(row, 0, 0);
@@ -2466,9 +2899,9 @@ lv_obj_t* AppSettings::_emailMakeRow(const EmailItem& m)
     lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLL_CHAIN_HOR);  // 拖到头不链给纵向列表
 
-    const bool flagged_view = (_email_view == 1);
+    const bool flagged_view = (_mail_folder == "@flagged");
     const bool act_avail = !m.uid.empty();
-    // 已读钮: 未读→「已读」(强调) / 已读→「标未读」(弱化, car-dash is-on)
+    // 已读钮: 未读→「已读」(强调) / 已读→「标未读」(弱化)
     const char* read_txt = m.seen ? "标未读" : "已 读";
     const char* read_act = m.seen ? "mark_unread" : "mark_read";
     const uint32_t read_fg = m.seen ? C_DIM : C_ACCENT;
@@ -2497,15 +2930,15 @@ lv_obj_t* AppSettings::_emailMakeRow(const EmailItem& m)
         lv_obj_set_style_text_color(l, lv_color_hex(fg), 0);
         lv_obj_center(l);
         lv_obj_add_flag(b, LV_OBJ_FLAG_EVENT_BUBBLE);  // PRESSED 冒泡给行做单开合拢
-        if (!act_avail) return;  // 兜底条目 (无 uid) 不可旗标操作
-        auto* ctx = new MailActCtx{this, act, m.folder, m.uid};
-        lv_obj_add_event_cb(b, _emailAct_cb, LV_EVENT_CLICKED, ctx);
-        lv_obj_add_event_cb(b, _emailActDel_cb, LV_EVENT_DELETE, ctx);
+        if (!act_avail) return;  // 兜底条目 (无 uid) 不可操作
+        auto* ctx = new MailCtx{this, act, m.fld, m.uid};
+        lv_obj_add_event_cb(b, _mailAct_cb, LV_EVENT_CLICKED, ctx);
+        lv_obj_add_event_cb(b, mail_ctx_del_cb, LV_EVENT_DELETE, ctx);
     };
     mk_zone(8, l_txt, l_act, l_fg);        // 左区 (右滑露)
     mk_zone(1456, r_txt, r_act, r_fg);     // 右区 (左滑露); 内容右缘 1640 = 满程 400
 
-    // 面卡 (可点击 — 拖它滚行; 无 CLICKED 处理器即无副作用)
+    // 面卡 (可点击 → 详情; 拖它滚行)
     lv_obj_t* face = lv_obj_create(row);
     lv_obj_set_size(face, 1240, 184);
     lv_obj_set_pos(face, 200, 0);
@@ -2517,6 +2950,11 @@ lv_obj_t* AppSettings::_emailMakeRow(const EmailItem& m)
     lv_obj_set_style_pad_all(face, 0, 0);
     lv_obj_clear_flag(face, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(face, LV_OBJ_FLAG_EVENT_BUBBLE);
+    if (act_avail) {
+        auto* octx = new MailCtx{this, m.uid, m.fld, ""};
+        lv_obj_add_event_cb(face, _mailMsgOpen_cb, LV_EVENT_CLICKED, octx);
+        lv_obj_add_event_cb(face, mail_ctx_del_cb, LV_EVENT_DELETE, octx);
+    }
 
     auto mk_label = [&](const char* txt, uint32_t color, const lv_font_t* font,
                         int x, int y, int w, lv_label_long_mode_t mode) {
@@ -2549,21 +2987,23 @@ lv_obj_t* AppSettings::_emailMakeRow(const EmailItem& m)
         lv_obj_clear_flag(fl, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_clear_flag(fl, LV_OBJ_FLAG_CLICKABLE);
     }
-    // 主题: 未读亮色 (car-dash unread 加粗) / 已读弱化
+    // 主题: 未读亮色 / 已读弱化
     mk_label(m.subject.c_str(), m.seen ? C_DIM : C_TEXT, zh_font_30(),
              24, 58, 1192, LV_LABEL_LONG_DOT);
     if (!m.preview.empty()) {
-        // 内容: 2 行换行区 (服务器预览 800 字符, 这里显 ~130 汉字)
-        lv_obj_t* p = mk_label(m.preview.c_str(), C_DIM, zh_font_md(),
-                               24, 104, 1192, LV_LABEL_LONG_WRAP);
+        std::string pv = m.preview;
+        if (agg && !m.fldn.empty() && m.fld != _mail_folder)
+            pv = "[" + m.fldn + "] " + pv;   // 聚合视图标注来源夹 (oneapp 同款)
+        lv_obj_t* p = mk_label(pv.c_str(), C_DIM, zh_font_md(), 24, 104, 1192,
+                               LV_LABEL_LONG_WRAP);
         lv_obj_set_height(p, 64);
         lv_obj_set_style_text_line_space(p, 2, 0);
     }
 
-    // 单开原则: 按下新行时合拢已开的旧行 (car-dash 新触摸先 mailSwipeReset)
-    lv_obj_add_event_cb(row, _emailRowPressed_cb, LV_EVENT_PRESSED, this);
+    // 单开原则: 按下新行时合拢已开的旧行
+    lv_obj_add_event_cb(row, _mailRowPressed_cb, LV_EVENT_PRESSED, this);
     // 松手吸合 {0, 200, 400} + 单开登记
-    lv_obj_add_event_cb(row, _emailRowScroll_cb, LV_EVENT_SCROLL_END, this);
+    lv_obj_add_event_cb(row, _mailRowScroll_cb, LV_EVENT_SCROLL_END, this);
 
     // 初始 scroll_x=200 恰好只露面卡 (先强制布局, 否则 range 未算好被钳到 0)
     lv_obj_update_layout(row);
@@ -2571,93 +3011,596 @@ lv_obj_t* AppSettings::_emailMakeRow(const EmailItem& m)
     return row;
 }
 
-void AppSettings::_emailRefreshGo()
+// ── worker (全部 tryRunDetached; 失败必须复位闸 + 给 UI 出口 — 2026-11-09 铁律)
+
+void AppSettings::mailcFetchAccts()
 {
-    if (_email_status_lbl) lv_label_set_text(_email_status_lbl, "刷新中…");
+    static std::atomic<bool> s_busy{false};
+    if (s_busy.exchange(true)) return;
     bool spawned = GetHAL()->tryRunDetached([]() {
         std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");
-        // 先 /refresh 唤醒服务端轮询线程 (只 set _wake), 等 IMAP 重拉完成再取
-        // 状态 — 服务端 poll 一次 ~1-3s, 2.5s 后 status 基本已新
-        auto resp = GetHAL()->httpGet("http://" + host + ":8768/api/email/refresh");
-        (void)resp;
-        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
-        AppSettings::fetchEmail();
-    });
-    if (!spawned) {
-        // 铁律: tryRunDetached 失败必须给 UI 出口
-        if (_email_status_lbl)
-            lv_label_set_text(_email_status_lbl, "刷新失败 (线程创建失败)");
-    }
-}
-
-void AppSettings::_emailRunAction(const std::string& act, const std::string& folder,
-                                  const std::string& uid, const char* tip)
-{
-    if (email_act_busy.exchange(true)) return;
-    if (_email_status_lbl) lv_label_set_text(_email_status_lbl, "操作中…");
-
-    std::string tipstr(tip);
-    bool spawned = GetHAL()->tryRunDetached([act, folder, uid, tipstr]() {
-        std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");
-        std::string url  = "http://" + host + ":8768/api/email/action";
+        auto resp = GetHAL()->httpGet("http://" + host + ":8768/api/mail/accounts");
         bool ok = false;
         std::string err;
-        auto post1 = [&](const std::string& a) {
-            nlohmann::json body = {{"action", a}, {"folder", folder}, {"uid", uid}};
-            auto resp = GetHAL()->httpPost(url, body.dump(),
-                                           {{"Content-Type", "application/json"}});
-            if (!resp.ok) {
-                err = "网络失败 (HTTP " + std::to_string(resp.status) + ")";
-                return false;
-            }
+        std::vector<MailAcct> out;
+        if (resp.ok) {
             try {
-                auto r = PsramJson::parse(resp.body);
-                if (r.value("ok", false)) return true;
-                err = r.value("error", std::string("未知错误"));
+                auto j = PsramJson::parse(resp.body);
+                ok = j.value("ok", false);
+                if (!ok) {
+                    err = mc_s(j.value("err", PsramString("获取失败")));
+                } else if (j.contains("accounts") && j["accounts"].is_array()) {
+                    for (const auto& a : j["accounts"]) {
+                        if (!a.is_object()) continue;
+                        MailAcct m;
+                        m.email  = mc_s(a.value("email", PsramString()));
+                        m.unread = (int)a.value("unread", 0);
+                        out.push_back(std::move(m));
+                    }
+                }
             } catch (const std::exception& ex) {
-                err = std::string("响应异常: ") + ex.what();
+                ok = false;
+                err = std::string("JSON 解析失败: ") + ex.what();
             }
-            return false;
-        };
-        if (act == "flagread") {          // car-dash 同款: 红旗前先标已读
-            ok = post1("mark_read");
-            if (ok) ok = post1("flag");
         } else {
-            ok = post1(act);
+            err = resp.status == 0 ? "网络/timeout (检查 8768)"
+                                   : ("HTTP " + std::to_string(resp.status));
         }
         {
-            std::lock_guard<std::mutex> lk(email_list_mutex);
-            email_act_ok.store(ok);
-            email_act_msg = ok ? tipstr : ("操作失败 (" + err + ")");
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            mailc_accts = std::move(out);
+            mailc_err = err;
         }
-        email_act_done.store(true);
-        email_act_busy.store(false);
+        mailc_accts_ok.store(ok);
+        mailc_accts_done.store(true);
+        s_busy.store(false);
     });
     if (!spawned) {
-        // 铁律: 失败必须给 UI 出口, 且不能卡死 busy 闸
-        email_act_busy.store(false);
-        if (_email_status_lbl)
-            lv_label_set_text(_email_status_lbl, "操作失败 (线程创建失败)");
+        s_busy.store(false);
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_err = "线程创建失败 (内存不足?)";
+        mailc_accts_ok.store(false);
+        mailc_accts_done.store(true);
     }
 }
 
-void AppSettings::_emailTab_cb(lv_event_t* e)
+void AppSettings::mailcLogin(const std::string& email, const std::string& auth)
 {
-    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
-    lv_obj_t* t = lv_event_get_current_target_obj(e);   // LVGL9.2: get_target 返回 void*
-    if (!self || !t) return;
-    self->_emailSetView(t == self->_email_tabs[1] ? 1 : 0);
+    static std::atomic<bool> s_busy{false};
+    if (s_busy.exchange(true)) return;
+    bool spawned = GetHAL()->tryRunDetached([email, auth]() {
+        nlohmann::json body = {{"email", email}, {"auth", auth}};
+        auto r = mc_post("/api/mail/accounts", body.dump());
+        {
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            mailc_login_ok.store(r.ok);
+            mailc_login_email = email;
+            mailc_login_unread = r.ok ? (int)r.j.value("unread", 0) : 0;
+            mailc_err = r.ok ? "" : r.err;
+        }
+        mailc_login_done.store(true);
+        s_busy.store(false);
+    });
+    if (!spawned) {
+        s_busy.store(false);
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_login_ok.store(false);
+        mailc_err = "线程创建失败 (内存不足?)";
+        mailc_login_done.store(true);
+    }
 }
 
-void AppSettings::_emailRefreshBtn_cb(lv_event_t* e)
+void AppSettings::mailcDelAcct(const std::string& email)
 {
-    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
-    if (self) self->_emailRefreshGo();
+    static std::atomic<bool> s_busy{false};
+    if (s_busy.exchange(true)) return;
+    bool spawned = GetHAL()->tryRunDetached([email]() {
+        nlohmann::json body = {{"email", email}};
+        auto r = mc_post("/api/mail/accounts/delete", body.dump());
+        {
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            mailc_del_ok.store(r.ok);
+            mailc_err = r.ok ? "" : r.err;
+        }
+        mailc_del_done.store(true);
+        s_busy.store(false);
+    });
+    if (!spawned) {
+        s_busy.store(false);
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_del_ok.store(false);
+        mailc_err = "线程创建失败 (内存不足?)";
+        mailc_del_done.store(true);
+    }
 }
 
-void AppSettings::_emailAct_cb(lv_event_t* e)
+void AppSettings::mailcFetchFolders(const std::string& email)
 {
-    auto* ctx = static_cast<MailActCtx*>(lv_event_get_user_data(e));
+    static std::atomic<bool> s_busy{false};
+    if (s_busy.exchange(true)) return;
+    bool spawned = GetHAL()->tryRunDetached([email]() {
+        nlohmann::json body = {{"email", email}};
+        auto r = mc_post("/api/mail/folders", body.dump());
+        bool ok = r.ok;
+        std::vector<MailFolder> out;
+        if (ok && r.j.contains("folders") && r.j["folders"].is_array()) {
+            for (const auto& f : r.j["folders"]) {
+                if (!f.is_object()) continue;
+                MailFolder mf;
+                mf.raw    = mc_s(f.value("raw", PsramString()));
+                mf.name   = mc_s(f.value("name", PsramString("?")));
+                mf.unread = (int)f.value("unread", -1);
+                mf.total  = (int)f.value("total", -1);
+                mf.virt   = mf.raw.rfind("@", 0) == 0;   // 服务端预置聚合虚拟夹
+                out.push_back(std::move(mf));
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            mailc_folders = std::move(out);
+            mailc_folders_email = email;   // 回执对号 (快速换账号弃旧结果)
+            mailc_err = ok ? "" : r.err;
+        }
+        mailc_folders_ok.store(ok);
+        mailc_folders_done.store(true);
+        s_busy.store(false);
+    });
+    if (!spawned) {
+        s_busy.store(false);
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_err = "线程创建失败 (内存不足?)";
+        mailc_folders_ok.store(false);
+        mailc_folders_done.store(true);
+    }
+}
+
+void AppSettings::mailcFetchList(const std::string& email, const std::string& folder)
+{
+    static std::atomic<bool> s_busy{false};
+    if (s_busy.exchange(true)) return;
+    bool spawned = GetHAL()->tryRunDetached([email, folder]() {
+        nlohmann::json body = {{"email", email}, {"folder", folder}, {"limit", 30}};
+        auto r = mc_post("/api/mail/list", body.dump());
+        bool ok = r.ok;
+        std::vector<MailMsg> out;
+        int total = 0;
+        if (ok && r.j.contains("msgs") && r.j["msgs"].is_array()) {
+            total = (int)r.j.value("total", 0);
+            for (const auto& m : r.j["msgs"]) {
+                if (!m.is_object()) continue;
+                MailMsg mm;
+                mm.uid     = mc_s(m.value("uid", PsramString()));
+                mm.fld     = mc_s(m.value("fld", PsramString(folder)));
+                mm.fldn    = mc_s(m.value("fldn", PsramString()));
+                mm.from    = mc_s(m.value("from", PsramString("?")));
+                mm.subject = mc_s(m.value("subject", PsramString("(无主题)")));
+                mm.date    = mc_s(m.value("date", PsramString()));
+                mm.preview = mc_s(m.value("preview", PsramString()));
+                mm.seen    = m.value("seen", false);
+                mm.flagged = m.value("flagged", false);
+                out.push_back(std::move(mm));
+            }
+        }
+        size_t n = out.size();
+        {
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            mailc_msgs = std::move(out);
+            mailc_total = total;
+            mailc_list_folder = folder;   // 回执对号 (快速换夹弃旧结果)
+            mailc_err = ok ? "" : r.err;
+        }
+        mailc_list_ok.store(ok);
+        mailc_list_done.store(true);
+        s_busy.store(false);
+        mclog::tagInfo(_tag, "mailc list: folder={} ok={} msgs={} total={}",
+                       folder, ok, (int)n, total);
+    });
+    if (!spawned) {
+        s_busy.store(false);
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_err = "线程创建失败 (内存不足?)";
+        mailc_list_ok.store(false);
+        mailc_list_done.store(true);
+    }
+}
+
+void AppSettings::mailcFetchBody(const std::string& email, const std::string& folder,
+                                 const std::string& uid)
+{
+    static std::atomic<bool> s_busy{false};
+    if (s_busy.exchange(true)) {
+        // 上一封正文还在取: 本次的请求让位 — 回执按本次 uid/fld 出, UI 显示
+        // 失败文案 (用户返回重进即重取; 1-3s 的取正文窗口里连开两信才撞上)
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_body_uid = uid;
+        mailc_body_fld = folder;
+        mailc_body_ok.store(false);
+        mailc_body = "上一封正文还在获取, 稍后重进重试";
+        mailc_body_done.store(true);
+        return;
+    }
+    bool spawned = GetHAL()->tryRunDetached([email, folder, uid]() {
+        nlohmann::json body = {{"email", email}, {"folder", folder}, {"uid", uid}};
+        auto r = mc_post("/api/mail/body", body.dump());
+        {
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            mailc_body_uid = uid;          // 回执对号 (快速换信弃旧结果)
+            mailc_body_fld = folder;
+            mailc_body_ok.store(r.ok);
+            if (r.ok) {
+                mailc_body = mc_s(r.j.value("text", PsramString("(空邮件)")));
+                mailc_meta.msg_id    = mc_s(r.j.value("msg_id", PsramString()));
+                mailc_meta.refs      = mc_s(r.j.value("refs", PsramString()));
+                mailc_meta.from_addr = mc_s(r.j.value("from_addr", PsramString()));
+                mailc_meta.date      = mc_s(r.j.value("date", PsramString()));
+                mailc_meta.subject   = mc_s(r.j.value("subject", PsramString()));
+            } else {
+                mailc_body = r.err;        // 失败文案走同一通道 (UI 判 ok 区分)
+            }
+        }
+        mailc_body_done.store(true);
+        s_busy.store(false);
+    });
+    if (!spawned) {
+        s_busy.store(false);
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_body_uid = uid;
+        mailc_body_fld = folder;
+        mailc_body_ok.store(false);
+        mailc_body = "线程创建失败 (内存不足?)";
+        mailc_body_done.store(true);
+    }
+}
+
+bool AppSettings::mailcAction(const std::string& email, const std::string& actions_csv,
+                              const std::string& folder, const std::string& uid,
+                              const char* tip)
+{
+    static std::atomic<bool> s_busy{false};
+    if (s_busy.exchange(true)) return false;
+    std::string tipstr(tip);
+    bool spawned = GetHAL()->tryRunDetached([email, actions_csv, folder, uid, tipstr]() {
+        // flagread = "mark_read,flag" 两连发 (服务端不组合, 顺序由 RLock 串行保证)
+        bool ok = true;
+        std::string err;
+        std::string act = actions_csv;
+        size_t pos;
+        while ((pos = act.find(',')) != std::string::npos) {
+            std::string one = act.substr(0, pos);
+            act = act.substr(pos + 1);
+            if (one.empty()) continue;
+            nlohmann::json body = {{"email", email}, {"folder", folder},
+                                   {"uid", uid}, {"action", one}};
+            auto r = mc_post("/api/mail/action", body.dump());
+            if (!r.ok) { ok = false; err = r.err; break; }
+        }
+        if (ok && !act.empty()) {
+            nlohmann::json body = {{"email", email}, {"folder", folder},
+                                   {"uid", uid}, {"action", act}};
+            auto r = mc_post("/api/mail/action", body.dump());
+            if (!r.ok) { ok = false; err = r.err; }
+        }
+        {
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            mailc_act_ok.store(ok);
+            mailc_act_err = ok ? "" : err;
+            mailc_act_tip = tipstr;
+            mailc_act_action = actions_csv;   // 回滚按 csv 逐一反向
+            mailc_act_uid = uid;
+            mailc_act_fld = folder;
+        }
+        mailc_act_done.store(true);
+        s_busy.store(false);
+    });
+    if (!spawned) {
+        s_busy.store(false);
+        return false;   // 调用方立即回滚
+    }
+    return true;
+}
+
+void AppSettings::mailcSend(const std::string& email, const std::string& to,
+                            const std::string& subject, const std::string& body,
+                            const std::string& in_reply_to,
+                            const std::string& references)
+{
+    static std::atomic<bool> s_busy{false};
+    if (s_busy.exchange(true)) return;
+    bool spawned = GetHAL()->tryRunDetached(
+        [email, to, subject, body, in_reply_to, references]() {
+        nlohmann::json body_j = {{"email", email}, {"to", to},
+                                 {"subject", subject}, {"body", body}};
+        if (!in_reply_to.empty()) {           // 回复线程头 (oneapp send_mail 同款)
+            body_j["in_reply_to"] = in_reply_to;
+            body_j["references"] = references;
+        }
+        auto r = mc_post("/api/mail/send", body_j.dump());
+        {
+            std::lock_guard<std::mutex> lk(mailc_mutex);
+            mailc_send_ok.store(r.ok);
+            mailc_send_err = r.ok ? "" : r.err;
+        }
+        mailc_send_done.store(true);
+        s_busy.store(false);
+    });
+    if (!spawned) {
+        s_busy.store(false);
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_send_ok.store(false);
+        mailc_send_err = "线程创建失败 (内存不足?)";
+        mailc_send_done.store(true);
+    }
+}
+
+// ── 回调 ──────────────────────────────────────────────────────────────────────
+
+void AppSettings::_mailBack_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self || !self->_email_page) return;
+    bool close = false;
+    MailLv nxt = self->_mailBackTarget(&close);
+    if (close) self->_mail_pending_close = true;      // 账号层 → 关页回工具页
+    else { self->_mail_pending_lv = nxt; self->_mail_pending = true; }
+}
+
+void AppSettings::_mailAcctRow_cb(lv_event_t* e)
+{
+    auto* ctx = static_cast<MailCtx*>(lv_event_get_user_data(e));
+    if (!ctx || !ctx->self) return;
+    ctx->self->_mail_acct = ctx->a;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_folders.clear();                        // 进新账号先清旧夹列表
+    }
+    ctx->self->_mail_pending_lv = MailLv::Folders;
+    ctx->self->_mail_pending = true;
+}
+
+void AppSettings::_mailAcctDel_cb(lv_event_t* e)
+{
+    auto* ctx = static_cast<MailCtx*>(lv_event_get_user_data(e));
+    if (!ctx || !ctx->self) return;
+    AppSettings* self = ctx->self;
+    lv_obj_t* chip = lv_event_get_current_target_obj(e);
+    if (self->_mail_del_arm != ctx->a ||
+        lv_tick_elaps(self->_mail_del_arm_ts) > 5000) {
+        self->_mail_del_arm = ctx->a;
+        self->_mail_del_arm_ts = lv_tick_get();
+        lv_obj_set_style_bg_color(chip, lv_color_hex(C_DANGER), 0);
+        lv_obj_t* l = lv_obj_get_child(chip, 0);
+        if (l) {
+            lv_label_set_text(l, "确 认");
+            lv_obj_set_style_text_color(l, lv_color_hex(C_BG), 0);
+        }
+        self->_mailStatus("再点一次确认删除 " + ctx->a);
+        return;
+    }
+    self->_mail_del_arm.clear();
+    self->_mailStatus("删除中…");
+    mailcDelAcct(ctx->a);
+}
+
+void AppSettings::_mailAddAcct_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self) return;
+    self->_mail_pending_lv = MailLv::Login;
+    self->_mail_pending = true;
+}
+
+void AppSettings::_mailLoginGo_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self || !self->_mail_ta_email || !self->_mail_ta_auth) return;
+    std::string em = lv_textarea_get_text(self->_mail_ta_email);
+    std::string au = lv_textarea_get_text(self->_mail_ta_auth);
+    // trim (oneapp 同款)
+    auto trim = [](std::string s) {
+        size_t p = s.find_first_not_of(" \t\r\n");
+        if (p == std::string::npos) return std::string();
+        size_t q = s.find_last_not_of(" \t\r\n");
+        return s.substr(p, q - p + 1);
+    };
+    em = trim(em);
+    au = trim(au);
+    if (em.empty() || au.empty()) {
+        self->_mailStatus("邮箱/授权码未填");
+        return;
+    }
+    size_t at = em.find('@');
+    if (at == std::string::npos || em.find('.', at) == std::string::npos) {
+        self->_mailStatus("邮箱格式不对 (如 xx@163.com)");
+        return;
+    }
+    self->_mailStatus("连接中… (IMAP 验证)");
+    mailcLogin(em, au);
+}
+
+void AppSettings::_mailFolderRow_cb(lv_event_t* e)
+{
+    auto* ctx = static_cast<MailCtx*>(lv_event_get_user_data(e));
+    if (!ctx || !ctx->self) return;
+    ctx->self->_mail_folder = ctx->a;
+    ctx->self->_mail_folder_disp = ctx->b;
+    ctx->self->_mail_total = 0;
+    ctx->self->_mail_got = false;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_msgs.clear();                           // 进新夹先清旧列表
+        mailc_total = 0;
+    }
+    ctx->self->_mail_pending_lv = MailLv::List;
+    ctx->self->_mail_pending = true;
+}
+
+void AppSettings::_mailMsgOpen_cb(lv_event_t* e)
+{
+    auto* ctx = static_cast<MailCtx*>(lv_event_get_user_data(e));
+    if (!ctx || !ctx->self) return;
+    AppSettings* self = ctx->self;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        const MailMsg* found = nullptr;
+        for (const auto& m : mailc_msgs)
+            if (m.uid == ctx->a && m.fld == ctx->b) { found = &m; break; }
+        if (!found) return;                           // 乐观更新后行可能已被滤掉
+        mailc_cur_msg = *found;
+        mailc_body.clear();                           // 详情数据清空等回执
+        mailc_body_uid.clear();
+        mailc_body_fld.clear();
+        mailc_body_ok.store(false);
+        mailc_meta = MailMeta();
+    }
+    self->_mail_pending_lv = MailLv::Detail;
+    self->_mail_pending = true;
+    mailcFetchBody(self->_mail_acct, ctx->b, ctx->a);
+}
+
+void AppSettings::_mailMarkBtn_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self) return;
+    std::string uid, fld;
+    bool seen;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        uid = mailc_cur_msg.uid;
+        fld = mailc_cur_msg.fld;
+        seen = mailc_cur_msg.seen;
+    }
+    self->mail_do_action(seen ? "mark_unread" : "mark_read", uid, fld,
+                         seen ? "已标为未读" : "已标为已读");
+}
+
+void AppSettings::_mailFlagBtn_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self) return;
+    std::string uid, fld;
+    bool flagged;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        uid = mailc_cur_msg.uid;
+        fld = mailc_cur_msg.fld;
+        flagged = mailc_cur_msg.flagged;
+    }
+    self->mail_do_action(flagged ? "unflag" : "flag", uid, fld,
+                         flagged ? "已取消红旗" : "已红旗");
+}
+
+void AppSettings::_mailReplyBtn_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self) return;
+    std::string msg_id, refs, from_addr, date, subj, body_txt;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        msg_id    = mailc_meta.msg_id;
+        refs      = mailc_meta.refs;
+        from_addr = mailc_meta.from_addr;
+        date      = mailc_meta.date;
+        subj      = mailc_meta.subject;
+        body_txt  = mailc_body;
+    }
+    if (msg_id.empty() && from_addr.empty()) {
+        self->_mailStatus("正文未加载完, 稍后再试");
+        return;
+    }
+    // 引用块: 截 500 字 → "> " 逐行 (oneapp mail_compose_open 同款)
+    std::string q = body_txt;
+    if (q.size() > 500) q = q.substr(0, 500) + " …(截断)";
+    std::string quote = "在 " + (date.empty() ? "?" : date) + "，" +
+                        (from_addr.empty() ? "对方" : from_addr) + " 写道：\n";
+    size_t start = 0;
+    while (start <= q.size()) {
+        size_t nl = q.find('\n', start);
+        std::string line = q.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        quote += "> " + line + "\n";
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+    self->_mail_quote = quote;
+    self->_mail_reply = true;
+    self->_mail_pending_lv = MailLv::Compose;
+    self->_mail_pending = true;
+}
+
+void AppSettings::_mailRefreshBtn_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self) return;
+    self->_mailStatus("刷新中…");
+    mailcFetchList(self->_mail_acct, self->_mail_folder);
+}
+
+void AppSettings::_mailComposeBtn_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self) return;
+    self->_mail_reply = false;
+    self->_mail_quote.clear();
+    self->_mail_pending_lv = MailLv::Compose;
+    self->_mail_pending = true;
+}
+
+void AppSettings::_mailSendBtn_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    if (!self || !self->_mail_ta_to) return;
+    if (self->_mail_sending) return;
+    auto trim = [](std::string s) {
+        size_t p = s.find_first_not_of(" \t\r\n");
+        if (p == std::string::npos) return std::string();
+        size_t q = s.find_last_not_of(" \t\r\n");
+        return s.substr(p, q - p + 1);
+    };
+    std::string to = trim(lv_textarea_get_text(self->_mail_ta_to));
+    std::string subj = self->_mail_ta_subj ? lv_textarea_get_text(self->_mail_ta_subj) : "";
+    std::string body = self->_mail_ta_body ? lv_textarea_get_text(self->_mail_ta_body) : "";
+    if (to.find('@') == std::string::npos) {
+        self->_mailStatus("收件人格式不对");
+        return;
+    }
+    std::string in_reply_to, references;
+    if (self->_mail_reply) {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        in_reply_to = mailc_meta.msg_id;         // 回复线程头 (oneapp send_mail 同款)
+        references = mailc_meta.refs;
+        if (!self->_mail_quote.empty())
+            body = body + "\n\n" + self->_mail_quote;   // 引用拼在用户文字后
+    }
+    self->_mail_sending = true;
+    self->_mailStatus("发送中… (SMTP)");
+    mailcSend(self->_mail_acct, to, trim(subj), body, in_reply_to, references);
+}
+
+void AppSettings::_mailTa_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    lv_obj_t* ta = lv_event_get_current_target_obj(e);   // LVGL9.2: 返回 void*
+    lv_event_code_t code = lv_event_get_code(e);
+    if (!self || !ta) return;
+    if (code == LV_EVENT_FOCUSED) {
+        bool voice = (ta == self->_mail_ta_subj || ta == self->_mail_ta_body);
+        self->_mailKbShow(ta, voice);
+        if (self->_mail_content) lv_obj_scroll_to_view(ta, LV_ANIM_ON);
+    } else if (code == LV_EVENT_DEFOCUSED) {
+        self->_mailKbHide();
+    }
+}
+
+void AppSettings::_mailKb_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
+    lv_event_code_t code = lv_event_get_code(e);
+    if (self && (code == LV_EVENT_READY || code == LV_EVENT_CANCEL))
+        self->_mailKbHide();
+}
+
+void AppSettings::_mailAct_cb(lv_event_t* e)
+{
+    auto* ctx = static_cast<MailCtx*>(lv_event_get_user_data(e));
     if (!ctx || !ctx->self) return;
     static const struct { const char* act; const char* tip; } kTips[] = {
         {"flagread",    "已读 + 红旗"},
@@ -2667,25 +3610,24 @@ void AppSettings::_emailAct_cb(lv_event_t* e)
     };
     const char* tip = "已完成";
     for (const auto& k : kTips)
-        if (std::strcmp(ctx->action, k.act) == 0) { tip = k.tip; break; }
-    ctx->self->_emailRunAction(ctx->action, ctx->folder, ctx->uid, tip);
+        if (ctx->a == k.act) { tip = k.tip; break; }
+    // flagread = 已读+红旗两连发 (csv 一次 worker 顺序两请求, 失败整体回滚)
+    if (ctx->a == "flagread")
+        ctx->self->mail_do_action("mark_read,flag", ctx->c, ctx->b, "已读 + 红旗");
+    else
+        ctx->self->mail_do_action(ctx->a, ctx->c, ctx->b, tip);
 }
 
-void AppSettings::_emailActDel_cb(lv_event_t* e)
-{
-    delete static_cast<MailActCtx*>(lv_event_get_user_data(e));
-}
-
-void AppSettings::_emailRowPressed_cb(lv_event_t* e)
+void AppSettings::_mailRowPressed_cb(lv_event_t* e)
 {
     auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
     lv_obj_t* row = lv_event_get_current_target_obj(e);
     if (!self || !row) return;
     if (self->_mail_swipe_open && self->_mail_swipe_open != row)
-        self->_emailCollapseSwipe(true);
+        self->_mailCollapseSwipe(true);
 }
 
-void AppSettings::_emailRowScroll_cb(lv_event_t* e)
+void AppSettings::_mailRowScroll_cb(lv_event_t* e)
 {
     auto* self = static_cast<AppSettings*>(lv_event_get_user_data(e));
     lv_obj_t* row = lv_event_get_current_target_obj(e);
@@ -2704,19 +3646,11 @@ void AppSettings::_emailRowScroll_cb(lv_event_t* e)
     }
 }
 
-void AppSettings::_emailSwipeTimer_cb(lv_timer_t* t)
+void AppSettings::_mailSwipeTimer_cb(lv_timer_t* t)
 {
     auto* self = static_cast<AppSettings*>(lv_timer_get_user_data(t));
     if (!self || !self->_email_page || !self->_mail_swipe_open) return;
     if (lv_tick_elaps(self->_mail_swipe_ts) < 5000) return;
-    self->_emailCollapseSwipe(true);   // 5s 无操作自动合拢 (car-dash 同款)
+    self->_mailCollapseSwipe(true);   // 5s 无操作自动合拢
 }
 
-void AppSettings::_emailShowError()
-{
-    if (!_email_hint) return;
-    mclog::tagWarn(_tag, "email page: 拉取失败 ({})", email_error_msg);
-    lv_label_set_text(_email_hint,
-        ("拉取失败: " + email_error_msg).c_str());
-    lv_obj_clear_flag(_email_hint, LV_OBJ_FLAG_HIDDEN);
-}

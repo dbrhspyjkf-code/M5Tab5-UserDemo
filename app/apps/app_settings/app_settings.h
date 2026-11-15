@@ -90,27 +90,20 @@ public:
     void setYtAppId(int id) { _yt_id = id; }
     void openYt();       // 工具页 tile → 打开油管 app
 
-    // ── Shared email cache (status-bar poll + sub-page both read these) ──
+    // ── Shared email cache (status-bar poll reads these; 旧状态页数据源) ──
     // Worker in fetchEmail() writes; the AppHome status bar polls every 120s
     // and reads email_unread_total to decide whether to show the icon.
+    // (2026-11-15 邮件子页改五层直连客户端后, email_list 仅剩兜底缓存价值,
+    //  fetchEmail 管线保留 — 主页信封角标 + 潜在回退路径仍依赖。)
     static std::atomic<int>  email_unread_total;   // total, from j["count"]
     static std::atomic<int>  email_flagged_total;  // 红旗总数, j["flagged_total"]
     static std::atomic<bool> email_updated;        // list changed → UI rebuild
     static std::atomic<bool> email_fetching;       // in-flight guard
     static std::atomic<bool> email_error;          // last fetch failed
     static std::string       email_error_msg;
-    static std::mutex        email_list_mutex;     // guards email_list/email_folders/email_act_msg
+    static std::mutex        email_list_mutex;     // guards email_list/email_folders
     static std::vector<EmailItem> email_list;      // parsed messages (全文件夹最近 30 封)
     static std::vector<EmailFolderInfo> email_folders;  // 文件夹行 (与 email_list 同序)
-
-    // 旗标操作 (POST /api/email/action, car-dash 同款): worker 完成 →
-    // email_act_done 置位 → onRunning 反馈; 成功后 email_refetch_at 记
-    // 3.5s 重拉期限 (等服务端 _wake 秒级重轮询)。
-    static std::atomic<bool> email_act_done;
-    static std::atomic<bool> email_act_ok;
-    static std::atomic<bool> email_act_busy;
-    static std::atomic<uint32_t> email_refetch_at;  // tick 期限, 0=无
-    static std::string       email_act_msg;
 
     // Kick off an async fetch from hermes :8768. In-flight safe (the second
     // call while one is running is a no-op). Safe to call from anywhere —
@@ -122,6 +115,14 @@ public:
     // status-bar mail icon). No-op if the app hasn't been opened yet — caller
     // should mooncake::openApp(settings_id) first if needed.
     void openEmailPage();
+
+    // ── Email client (五层直连, 2026-11-15) 公开数据类型 (匿名空间 helper 也要用) ──
+    enum class MailLv : int { Acct, Login, Folders, List, Detail, Compose };
+    struct MailAcct   { std::string email; int unread = 0; };
+    struct MailFolder { std::string raw, name; int unread = -1, total = -1; bool virt = false; };
+    struct MailMsg    { std::string uid, fld, fldn, from, subject, date, preview;
+                        bool seen = false, flagged = false; };
+    struct MailMeta   { std::string msg_id, refs, from_addr, date, subject; };
 
 private:
     std::function<void()> _close_cb;
@@ -172,17 +173,64 @@ private:
     std::string _unit_entry   = "1";      // amount string
     int         _unit_cat_idx = 0;        // current category
 
-    // ── Email (邮件) — car-dash 同款: 未读/红旗 双视图 + 左右滑露操作钮 ──────────
+    // ── Email client (邮件, 2026-11-15 oneapp 同款五层直连客户端) ──────────────
+    // 协议层在 Pi email-status-server /api/mail/* (mail_client.py = oneapp
+    // mail.py 移植): 多账号授权码 IMAP 收 + SMTP 发。固件只做层间导航 +
+    // HTTP/JSON。主页信封角标仍走旧 fetchEmail() (/api/email/status) 不变。
     bool        _email_open_pending = false;  // app 未打开时点了主页邮件图标, onOpen 建屏后补开
     lv_obj_t*   _email_page   = nullptr;
-    lv_obj_t*   _email_hint   = nullptr;  // 列表区居中提示 (加载中/失败/空)
-    lv_obj_t*   _email_list   = nullptr;  // 卡片列 (横向滑动的行 + 文件夹组头)
-    lv_obj_t*   _email_tabs[2] = {nullptr, nullptr};  // 未读 / 红旗 页签
-    lv_obj_t*   _email_status_lbl = nullptr;  // "N 封未读" / 操作反馈 (car-dash tool-sub)
-    int         _email_view = 0;              // 0=未读 1=红旗 (car-dash mailView)
-    lv_obj_t*   _mail_swipe_open = nullptr;   // 当前滑开的行 (单开原则, car-dash mailSwipeOpen)
+    lv_obj_t*   _mail_title   = nullptr;    // 顶栏标题 (每层 set_text)
+    lv_obj_t*   _mail_status  = nullptr;    // 顶栏状态/反馈行 (LONG_DOT)
+    lv_obj_t*   _mail_actions = nullptr;    // 顶栏右侧动作钮容器 (每层重建)
+    lv_obj_t*   _mail_content = nullptr;    // 层内容容器 (每层 lv_obj_clean 重建)
+    lv_obj_t*   _mail_hint    = nullptr;    // 内容区居中提示 (加载中/失败/空)
+    lv_obj_t*   _mail_kb      = nullptr;    // 软键盘 (login/compose, 惰性创建)
+
+    MailLv      _mail_lv = MailLv::Acct;
+    std::string _mail_acct;                 // 当前账号 email (登录后)
+    std::string _mail_folder;               // 当前夹 raw 名 (@uf/@unread/@flagged/raw)
+    std::string _mail_folder_disp;          // 当前夹显示名 (顶栏标题用)
+    int         _mail_total = 0;            // 服务端命中总数 (N/M 封)
+    bool        _mail_got = false;          // 当前夹收到过列表结果 (区分空/加载中)
+    lv_obj_t*   _mail_ta_email = nullptr;   // 登录表单
+    lv_obj_t*   _mail_ta_auth  = nullptr;
+    lv_obj_t*   _mail_ta_to   = nullptr;    // 写信三字段
+    lv_obj_t*   _mail_ta_subj = nullptr;
+    lv_obj_t*   _mail_ta_body = nullptr;
+    lv_obj_t*   _mail_body_lbl = nullptr;   // 详情正文 label (body done 后填文本)
+    std::string _mail_quote;                // 回复引用块 (显示+发送拼接, 不可编辑)
+    bool        _mail_reply = false;        // 回复态 (完成回 Detail, 新邮件回 List)
+    bool        _mail_sending = false;      // SMTP 发送中 (busy 闸)
+    std::string _mail_del_arm;              // 删除二段确认: 已点过一次的 email
+    uint32_t    _mail_del_arm_ts = 0;
+    lv_obj_t*   _mail_swipe_open = nullptr;   // 当前滑开的行 (单开原则)
     uint32_t    _mail_swipe_ts = 0;           // 滑开时刻 → 5s 无操作自动合拢
     lv_timer_t* _mail_swipe_timer = nullptr;  // 500ms 巡检自动合拢
+
+    // Worker 结果 (fetchEmail 同款管线: worker 只写静态+翻旗, onRunning 消费)
+    static std::mutex        mailc_mutex;
+    static std::vector<MailAcct>   mailc_accts;      // 账号+角标
+    static std::vector<MailFolder> mailc_folders;    // 虚拟夹置顶 + 真实夹
+    static std::vector<MailMsg>    mailc_msgs;       // 当前夹列表
+    static int      mailc_total;                     // 服务端命中总数
+    static MailMsg  mailc_cur_msg;                   // 详情对应的信 (乐观旗标)
+    static std::string mailc_body;                   // 详情正文
+    static std::string mailc_body_uid, mailc_body_fld;  // 正文回执对号
+    static MailMeta mailc_meta;                      // 回信元数据 (msg_id/refs/from_addr/date)
+    static std::string mailc_err;                    // accts/folders/list 最近错误
+    static std::string mailc_folders_email, mailc_list_folder;  // 回执对号 (快速换账号/夹弃旧结果)
+    static std::string mailc_act_action, mailc_act_uid, mailc_act_fld;  // 失败回滚定位
+    static std::string mailc_act_tip, mailc_act_err, mailc_send_err;
+    static std::string mailc_login_email;
+    static int      mailc_login_unread;
+    static std::atomic<bool> mailc_accts_done, mailc_accts_ok;
+    static std::atomic<bool> mailc_folders_done, mailc_folders_ok;
+    static std::atomic<bool> mailc_list_done, mailc_list_ok;
+    static std::atomic<bool> mailc_body_done, mailc_body_ok;
+    static std::atomic<bool> mailc_act_done, mailc_act_ok;
+    static std::atomic<bool> mailc_send_done, mailc_send_ok;
+    static std::atomic<bool> mailc_login_done, mailc_login_ok;
+    static std::atomic<bool> mailc_del_done, mailc_del_ok;
 
     void _buildToolsPage();
     void _openCalculator();
@@ -205,22 +253,66 @@ private:
 
     void _openEmail();
     void _closeEmail();
-    void _emailRefresh();       // UI thread: 按当前视图重建列表
-    void _emailShowError();
-    void _emailSetView(int v);  // 页签切换 → 重渲染
-    void _emailUpdateTabs();    // 页签 on 态高亮
-    void _emailCollapseSwipe(bool anim);  // 合拢滑开的行 (切视图/操作后/5s 超时)
-    lv_obj_t* _emailMakeRow(const EmailItem& m);  // 一行 = 左右操作区 + 可横滑面卡
-    void _emailRefreshGo();     // 刷新钮: 先 /refresh 唤醒再拉状态
-    void _emailRunAction(const std::string& act, const std::string& folder,
-                         const std::string& uid, const char* tip);
-    static void _emailTab_cb(lv_event_t* e);
-    static void _emailRefreshBtn_cb(lv_event_t* e);
-    static void _emailAct_cb(lv_event_t* e);
-    static void _emailActDel_cb(lv_event_t* e);      // MailActCtx 释放
-    static void _emailRowPressed_cb(lv_event_t* e);  // 按新行时合拢旧行 (单开)
-    static void _emailRowScroll_cb(lv_event_t* e);   // SCROLL_END 吸合 + 单开登记
-    static void _emailSwipeTimer_cb(lv_timer_t* e);
+    void _mailRender();          // UI 线程: 按当前层重建 (顶栏动作 + 内容)
+    void _mailRenderAcct();
+    void _mailRenderLogin();
+    void _mailRenderFolders();
+    void _mailRenderList();
+    void _mailRenderDetail();
+    void _mailRenderCompose();
+    void _mailSetLv(MailLv lv);  // 切层 (收键盘) + 按需拉数
+    MailLv _mailBackTarget(bool* close);  // 逐层回退目标; close=true=账号层(关邮件页)
+    void _mailStatus(const std::string& s);
+    void _mailKbShow(lv_obj_t* ta, bool voice);
+    void _mailKbHide();
+    // 事件回调里不许同步删事件目标的祖先 (_mail_content/_mail_actions 子树,
+    // LVGL 事件分发期删目标=UAF, 万年历 dropdown 双删同源) — 层切换/重渲染/
+    // 关页一律记 pending, 下一帧 onRunning 执行
+    bool        _mail_pending = false;
+    bool        _mail_pending_render = false;
+    bool        _mail_pending_close = false;
+    MailLv      _mail_pending_lv = MailLv::Acct;
+    void _mailCollapseSwipe(bool anim);          // 合拢滑开的行 (切层/操作后/5s 超时)
+    lv_obj_t* _mailMakeRow(const MailMsg& m, bool agg);  // 一行 = 左右操作区 + 可横滑面卡 (点面卡进详情; agg=聚合视图标来源夹)
+    static void mailcFetchAccts();               // GET  /api/mail/accounts (角标)
+    static void mailcLogin(const std::string& email, const std::string& auth);
+    static void mailcFetchFolders(const std::string& email);
+    static void mailcFetchList(const std::string& email, const std::string& folder);
+    static void mailcFetchBody(const std::string& email, const std::string& folder,
+                               const std::string& uid);
+    static bool mailcAction(const std::string& email, const std::string& actions_csv,
+                            const std::string& folder, const std::string& uid,
+                            const char* tip);
+    static void mailcSend(const std::string& email, const std::string& to,
+                          const std::string& subject, const std::string& body,
+                          const std::string& in_reply_to, const std::string& references);
+    static void mailcDelAcct(const std::string& email);
+    static void mailcApplyFlags(const std::string& actions_csv, const std::string& uid,
+                                const std::string& fld, bool forward);  // 乐观旗标 (csv 多动作)
+    static void mailc_apply_one(const std::string& action, const std::string& uid,
+                                const std::string& fld, bool forward);
+    void mail_do_action(const std::string& action, const std::string& uid,
+                        const std::string& fld, const char* tip);  // 乐观+发 worker
+    static void _mailBack_cb(lv_event_t* e);
+    static void _mailRefreshBtn_cb(lv_event_t* e);
+    static void _mailComposeBtn_cb(lv_event_t* e);
+    static void _mailSendBtn_cb(lv_event_t* e);
+    static void _mailAcctRow_cb(lv_event_t* e);      // 账号行 → 文件夹层
+    static void _mailAcctDel_cb(lv_event_t* e);      // 删除 chip (二段确认)
+    static void _mailAddAcct_cb(lv_event_t* e);      // ＋添加账号 → 登录层
+    static void _mailLoginGo_cb(lv_event_t* e);      // 登录钮
+    static void _mailFolderRow_cb(lv_event_t* e);    // 文件夹行 → 列表层
+    static void _mailMsgOpen_cb(lv_event_t* e);      // 面卡 CLICKED → 详情层
+    static void _mailMarkBtn_cb(lv_event_t* e);      // 详情: 标已读/未读 (乐观)
+    static void _mailFlagBtn_cb(lv_event_t* e);      // 详情: 红旗/取旗 (乐观)
+    static void _mailReplyBtn_cb(lv_event_t* e);     // 详情: 回复 → 写信层
+    static void _mailTa_cb(lv_event_t* e);           // ta FOCUSED/DEFOCUSED → 软键盘+语音
+    static void _mailKb_cb(lv_event_t* e);           // 软键盘 READY/CANCEL 收起
+    static void _mailAct_cb(lv_event_t* e);
+    static void _mailActDel_cb(lv_event_t* e);       // MailActCtx 释放
+    static void _mailRowPressed_cb(lv_event_t* e);   // 按新行时合拢旧行 (单开)
+    static void _mailRowScroll_cb(lv_event_t* e);    // SCROLL_END 吸合 + 单开登记
+    static void _mailSwipeTimer_cb(lv_timer_t* e);
 
     void _installSwipeGesture();
     void _removeSwipeGesture();

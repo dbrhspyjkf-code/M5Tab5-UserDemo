@@ -50,6 +50,9 @@ static bool _is_slow_hermes_url(const std::string& url)
 {
     return url.find(":8768/api/email/status") != std::string::npos
         || url.find(":8766/api/ssq/") != std::string::npos
+        // /api/mail/*: Tab5 邮件客户端直连 IMAP (mail_client.py 会话复用下
+        // 列表/文件夹 1-6s, 冷连接+聚合更久), 30s 档
+        || url.find(":8768/api/mail/") != std::string::npos
         // /yt/search: yt-dlp 冷搜 ~10-25s (服务端缓存 10min, 热搜毫秒级)
         || url.find(":8766/yt/search") != std::string::npos;
 }
@@ -153,8 +156,11 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPost(
     config.event_handler  = _http_event_handler;
     config.user_data      = &ctx;
     // ssq/ticket: 服务端多方向×逐行×3变换 OCR 全管线 >10s, 60s 上限
+    // /api/mail/send: SMTP_SSL 登录+发信 15s 超时 + 发后 IMAP APPEND 已发送,
+    // 再加 TLS/网络余量 → 40s
     config.timeout_ms     = _is_claude_gateway_url(url) ? 240000
-                          : (url.find("/api/ssq/ticket") != std::string::npos ? 60000 : 10000);
+                          : (url.find("/api/ssq/ticket") != std::string::npos ? 60000
+                          : (url.find(":8768/api/mail/") != std::string::npos ? 40000 : 10000));
     config.buffer_size    = kPsramBufThreshold;
     config.buffer_size_tx = 2048;
     config.crt_bundle_attach = esp_crt_bundle_attach;
