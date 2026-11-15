@@ -9,6 +9,7 @@
 #include <mutex>
 #include <functional>
 #include <memory>
+#include <unordered_map>
 
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <freertos/FreeRTOS.h>
@@ -26,17 +27,23 @@ public:
     void onClose()   override;
 
 private:
+    // 自选股卡片数据 (本地自选 + 腾讯实时行情合并后的视图模型)
     struct StockItem {
-        std::string code;
+        std::string code;    // qt 代码 sh600519 / sz000001 / bj430047
         std::string name;
         float price   {0};
         float chg     {0};   // 涨跌幅 %
         float pchg    {0};   // 涨跌额
-        float turnover{0};
-        float liangbi {0};
-        std::string one_sentence;
-        std::string analysis_summary;
-        std::string analysis_date;
+        bool  has_quote {false};   // false = 行情未到/停牌, 卡片显示 "--"
+    };
+    // 本地自选股 (NVS 持久化, oneapp 同款: 设备自己维护列表, 不依赖服务端)
+    struct WatchItem {
+        std::string code;    // qt 代码 (带 sh/sz/bj 前缀, 幂等)
+        std::string name;    // 添加后异步补 (腾讯 ifzq UTF-8 名字), 未知时回退代码
+    };
+    struct Quote {
+        bool  ok {false};
+        float price {0}, chg {0}, pchg {0};
     };
 
     // ── Layout ─────────────────────────────────────────────────────────
@@ -76,12 +83,12 @@ private:
     // ── 大宗商品·加密货币页 (2026-11-05): 第三页, 左右拨循环切换 ──
     // 外盘贵金属/原油/汇率 = 设备直连腾讯 qt.gtimg (hf_ 逗号分隔 / wh 波浪号,
     // 只取数字字段, 名字本地写死 — GBK 无需解码, 指数页同做法);
-    // 比特币 = hermes /api/market/overview (服务端 gate.io 60s 缓存 + 兜底).
+    // 比特币 = 设备直连 gate.io spot tickers (oneapp 同源, 无服务端依赖).
     struct CommodDef { const char* name; const char* unit; const char* tencent; int dec; };
     static constexpr CommodDef kCommods[10] = {
         {"黄金",        "美元/盎司", "hf_XAU",    2},
         {"白银",        "美元/盎司", "hf_XAG",    2},
-        {"比特币",      "USDT",      nullptr,     1},   // nullptr → hermes market
+        {"比特币",      "USDT",      nullptr,     1},   // nullptr → gate.io 直连
         {"美元/人民币", "在岸",      "whUSDCNY",  4},
         {"WTI 原油",    "美元/桶",   "hf_CL",     2},
         {"布伦特原油",  "美元/桶",   "hf_OIL",    2},
@@ -137,15 +144,22 @@ private:
 
     // ── State ──────────────────────────────────────────────────────────
     std::function<void()> _close_cb;
-    std::vector<StockItem> _items;
+    std::vector<StockItem> _items;      // 自选股视图 (watch × quotes 合并)
     std::mutex             _items_mu;
-    bool                   _fetch_error {false};
-    std::string            _fetch_error_msg;
+    // 本地自选股 (NVS) + 腾讯行情缓存. 2026-11-15 去 OrangePi:
+    // 列表由设备自己维护 (oneapp 同款), 行情腾讯直连, 比特币 gate.io 直连.
+    std::vector<WatchItem> _watch;      // guarded by _watch_mu
+    std::mutex             _watch_mu;
+    std::unordered_map<std::string, Quote> _quotes;   // key = qt 代码
+    std::mutex             _quotes_mu;
+    std::atomic<bool>      _quotes_ready {false};     // worker 完成 → onRunning 消费
+    std::atomic<bool>      _name_ready   {false};     // 异步补名字完成 → onRunning 消费
     int64_t                _last_fetch_ms {0};
     // app 是否在前台. 退出时先置 false, 防止在途的 fetch worker 完成后碰已拆 UI.
     std::atomic<bool>      _app_open {false};
     // 同一时间只允许一个 HTTP 请求，避免刷新边界上重复创建 worker。
     std::atomic<bool>      _fetch_in_flight {false};
+    std::atomic<bool>      _fetch_pending   {false};  // 在飞期间的新请求 → 完成后补一轮
     static constexpr int   FETCH_INTERVAL_MS = 5 * 1000;   // 2026-10-27 用户指定 60s→5s (仅交易时段生效)
     static constexpr int   FETCH_TIMEOUT_MS  = 5 * 1000;
 
@@ -157,8 +171,17 @@ private:
     std::vector<lv_obj_t*> _card_chg;
     std::vector<lv_obj_t*> _card_amt;   // 涨跌额 (2026-10-27 用户加)
     lv_obj_t* _stocks_scroll {nullptr};  // 纵向滚动容器 (承载卡片网格)
+    lv_obj_t* _add_tile      {nullptr};  // 首格「+ 添加自选股」卡位 (常驻可见)
+    lv_obj_t* _empty_label   {nullptr};  // 自选股为空时的提示
     int         _n_cards     = 0;        // 当前实际卡位数
     lv_obj_t* _detail_modal{nullptr};
+
+    // 添加自选股弹窗 (代码输入 + 屏幕键盘)
+    lv_obj_t* _add_modal {nullptr};
+    lv_obj_t* _add_ta    {nullptr};
+    lv_obj_t* _add_kb    {nullptr};
+    lv_obj_t* _add_hint  {nullptr};
+    bool      _add_closing {false};   // 已排 lv_async_call 关闭, 防重入
 
     // ── 分时图 / K线图 (腾讯行情接口, 2026-10-27) ──
     struct ChartData {
@@ -183,6 +206,7 @@ private:
     void*          _chart_pixels  {nullptr};  // canvas 像素堆缓冲 (chart 绘制专用)
     std::atomic<bool> _chart_ready{false}; // worker 完成 → onRunning 消费
     std::string    _chart_code;             // 当前弹窗的股票代码
+    std::string    _chart_watch_code;       // 非空 = 从自选股打开, 弹窗内可删除
 
     lv_timer_t* _poll_timer{nullptr};
 
@@ -215,13 +239,23 @@ private:
     void _zoomKline(int delta);                 // 日K 可视窗口 ±根数 (缩放)
     void _chartFetchWorker(std::string ifzq_code, std::shared_ptr<bool> alive);
     void _trySpawnChartWorker(const std::string& ifzq_code);  // 已在飞则跳过; 派生失败还旗标
-    void _openChart(const std::string& title, const std::string& ifzq_code);  // 全屏走势图
+    void _openChart(const std::string& title, const std::string& ifzq_code,
+                    const std::string& watch_code = "");  // 全屏走势图
     void _openIndexChart(int i);                // 指数卡片 → 走势图 (长按)
     void _flashCardThen(lv_obj_t* card, uint32_t flash_col,
                         std::function<void()> open);  // 描边闪烁 160ms 后 open
-    void _fetchStocksAsync();
-    void _doFetch();
-    void _parseStocksJson(const std::string& body);
+    // ── 自选股 (本地列表 + 腾讯直连, 2026-11-15 去 OrangePi) ──
+    void _loadWatch();                 // NVS → _watch (缺省种入当前 14 只)
+    void _saveWatch();                 // _watch → NVS (JSON)
+    void _rebuildItemsFromWatch();     // _watch × _quotes → _items (无 LVGL, worker 可调)
+    void _fetchStocksAsync();          // 腾讯 qt 批量拉自选股行情
+    void _watchFetchWorker(const std::vector<std::string>& codes);
+    void _fetchWatchNameAsync(const std::string& code);  // ifzq 拉 UTF-8 名字 (添加后)
+    void _openAddModal();              // 添加自选股弹窗 (代码 + 屏幕键盘)
+    void _closeAddModal();             // 延迟关闭 (事件回调里不能删祖先)
+    void _finishCloseAddModal();       // lv_async_call 落地: 真正删除弹窗
+    void _submitAdd();                 // 校验 → 去重 → 落 NVS → 补名字
+    void _deleteWatchItem(const std::string& code);
     void _refreshUiFromItems();
     void _ensureCards(int n);   // 按需创建卡位到滚动容器
     // 涨绿 / 跌红 / 平灰 — UI 详情卡用, 两平台都要.

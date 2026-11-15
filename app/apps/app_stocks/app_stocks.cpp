@@ -9,6 +9,8 @@
 #include "../utils/psram_json.h"
 #include <cstdio>
 #include <cstring>
+#include <cctype>
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 
@@ -93,6 +95,68 @@ static int64_t mono_ms()
 #endif
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  自选股本地列表 (2026-11-15 去 OrangePi, oneapp 同款)
+//  列表存 NVS (设备自己维护), 行情/名字都从腾讯直连取; 比特币 gate.io 直连.
+// ════════════════════════════════════════════════════════════════════════════
+namespace {
+constexpr const char* kWatchNvsKey = "stocks_watch";   // NVS key ≤15 字符
+
+// 首次启动种子 = 迁移前 Pi 上 /api/stocks/portfolio 的 14 只,
+// 用户的列表原样保留; 之后增删都在设备上做 (NVS)。
+struct WatchSeedDef { const char* qt; const char* name; };
+constexpr WatchSeedDef kWatchSeed[] = {
+    {"sz002027", "分众传媒"}, {"sz002714", "牧原股份"}, {"sh603992", "松霖科技"},
+    {"sh600660", "福耀玻璃"}, {"sh603501", "豪威集团"}, {"sz300760", "迈瑞医疗"},
+    {"sh600900", "长江电力"}, {"sz002050", "三花智控"}, {"sh601985", "中国核电"},
+    {"sh688018", "乐鑫科技"}, {"sz002594", "比亚迪"},   {"sz300750", "宁德时代"},
+    {"sh600309", "万华化学"}, {"sz300413", "芒果超媒"},
+};
+
+std::string trim_copy(std::string s)
+{
+    const size_t b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return "";
+    const size_t e = s.find_last_not_of(" \t\r\n");
+    return s.substr(b, e - b + 1);
+}
+
+// 输入 → qt 代码 (幂等); 无效返回空. 规则与 oneapp norm_stock_code 一致:
+// sh/sz/bj + 6 位原样; 裸 6 位按首位补 (5/6/9→sh, 4/8→bj, 其余→sz).
+std::string norm_watch_code(const std::string& raw)
+{
+    std::string s = trim_copy(raw);
+    for (auto& c : s) c = (char)tolower((unsigned char)c);
+    auto is_digits = [](const std::string& d) {
+        if (d.size() != 6) return false;
+        for (char c : d)
+            if (c < '0' || c > '9') return false;
+        return true;
+    };
+    if (s.size() == 8 && (s.rfind("sh", 0) == 0 || s.rfind("sz", 0) == 0 ||
+                          s.rfind("bj", 0) == 0) && is_digits(s.substr(2)))
+        return s;
+    if (!is_digits(s)) return "";
+    const char c0 = s[0];
+    const char* pre = (c0 == '5' || c0 == '6' || c0 == '9') ? "sh"
+                    : (c0 == '4' || c0 == '8') ? "bj" : "sz";
+    return std::string(pre) + s;
+}
+
+// qt 代码 → 裸 6 位 (卡片标题/占位名用)
+std::string bare_code(const std::string& qt)
+{
+    return qt.size() > 2 ? qt.substr(2) : qt;
+}
+
+// lv_async_call 的删除自选上下文 (回调不能捕获, 只能带堆指针)
+struct WatchDelCtx {
+    AppStocks*  app;
+    std::string code;
+};
+}  // namespace
+
+
 // 7 列的水平像素布局 (1280 宽屏). 代码/名称/现价/涨跌幅/涨跌额/换手率/量比.
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -113,8 +177,11 @@ void AppStocks::onOpen()
     mclog::tagInfo(TAG, "opened");
     if (_scr) _destroyUi();  // 幂等: 清掉上次遗留的 UI (后台收尾后重开)
     _app_open.store(true);
+    _loadWatch();                       // 本地自选股 (NVS)
+    _rebuildItemsFromWatch();           // 先出名单, 行情到了再覆盖
     _buildUi();
-    _fetchStocksAsync();  // 首次拉取
+    _refreshUiFromItems();              // 无行情时卡片也显示股票名 + "--"
+    _fetchStocksAsync();                // 首次拉取 (直连腾讯)
 }
 
 void AppStocks::onRunning()
@@ -127,6 +194,12 @@ void AppStocks::onRunning()
     }
     if (_commod_ready.exchange(false)) {
         _applyCommods();
+    }
+    if (_quotes_ready.exchange(false)) {
+        _refreshUiFromItems();          // worker 已重建 _items
+    }
+    if (_name_ready.exchange(false)) {
+        _refreshUiFromItems();          // 异步补的名字到位
     }
     // 指数页在前台时 60s 刷新
     if (_page == 1 && _scr && lv_screen_active() == _scr) {
@@ -250,8 +323,11 @@ void AppStocks::_ensureCards(int n)
     LvglLockGuard lock;
     if (!_stocks_scroll) return;
     if (n > MAX_CARDS) n = MAX_CARDS;
+    const int before = (int)_cards.size();
     for (int i = (int)_cards.size(); i < n; i++) {
-        const int col = i % GRID_COLS, row = i / GRID_COLS;
+        // 卡位 0 让给「+ 添加自选股」tile (常驻首格, 滑动也永远第一屏可见)
+        const int slot = i + 1;
+        const int col = slot % GRID_COLS, row = slot / GRID_COLS;
         lv_obj_t* card = lv_obj_create(_stocks_scroll);
         lv_obj_set_size(card, CARD_W, CARD_H);
         lv_obj_set_pos(card, GRID_X0 + col * (CARD_W + GRID_GAP),
@@ -317,7 +393,9 @@ void AppStocks::_ensureCards(int n)
     const int rows = (n + GRID_COLS - 1) / GRID_COLS;
     const int content_h = 24 + rows * (CARD_H + GRID_GAP);
     lv_obj_set_size(_stocks_scroll, SCREEN_W, SCREEN_H);
-    lv_obj_scroll_to_y(_stocks_scroll, 0, LV_ANIM_OFF);   // 数量变化后回到顶部
+    // 只有卡位数量真的变过才回顶 (增删自选); 5s 行情刷新不再把用户
+    // 滚到一半的列表弹回顶部.
+    if (n != before) lv_obj_scroll_to_y(_stocks_scroll, 0, LV_ANIM_OFF);
     (void)content_h;  // LVGL 自适应子对象范围 (cards 是容器子对象, 滚动范围自动)
 }
 
@@ -362,6 +440,41 @@ void AppStocks::_buildUi()
     lv_obj_set_style_pad_all(_stocks_scroll, 0, 0);
     lv_obj_set_scroll_dir(_stocks_scroll, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(_stocks_scroll, LV_SCROLLBAR_MODE_AUTO);
+
+    // 空列表提示 (全部删光时显示; 平时隐藏)
+    _empty_label = lv_label_create(_stocks_page);
+    lv_label_set_text(_empty_label, "暂无自选股\n点左上角 + 添加");
+    lv_obj_set_style_text_font(_empty_label, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(_empty_label, lv_color_hex(C_DIM()), 0);
+    lv_obj_set_style_text_align(_empty_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(_empty_label, LV_ALIGN_TOP_MID, 0, 220);
+    lv_obj_add_flag(_empty_label, LV_OBJ_FLAG_HIDDEN);
+
+    // 「+ 添加自选股」卡位常驻首格 (oneapp 的 n 添加键 → 触摸卡位).
+    _add_tile = lv_button_create(_stocks_scroll);
+    lv_obj_set_size(_add_tile, CARD_W, CARD_H);
+    lv_obj_set_style_bg_color(_add_tile, lv_color_hex(C_HEADER()), 0);
+    lv_obj_set_style_radius(_add_tile, 18, 0);
+    lv_obj_set_style_border_width(_add_tile, 2, 0);
+    lv_obj_set_style_border_color(_add_tile, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_set_style_border_opa(_add_tile, LV_OPA_60, 0);
+    lv_obj_set_style_shadow_width(_add_tile, 0, 0);
+    lv_obj_clear_flag(_add_tile, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(_add_tile, [](lv_event_t* e) {
+        static_cast<AppStocks*>(lv_event_get_user_data(e))->_openAddModal();
+    }, LV_EVENT_CLICKED, this);
+    {
+        lv_obj_t* plus = lv_label_create(_add_tile);
+        lv_label_set_text(plus, "+");
+        lv_obj_set_style_text_font(plus, &lv_font_montserrat_42, 0);
+        lv_obj_set_style_text_color(plus, lv_color_hex(theme::cur().accent), 0);
+        lv_obj_align(plus, LV_ALIGN_CENTER, 0, -28);
+        lv_obj_t* add_txt = lv_label_create(_add_tile);
+        lv_label_set_text(add_txt, "添加自选股");
+        lv_obj_set_style_text_font(add_txt, zh_font_sm(), 0);
+        lv_obj_set_style_text_color(add_txt, lv_color_hex(C_DIM()), 0);
+        lv_obj_align(add_txt, LV_ALIGN_CENTER, 0, 44);
+    }
 
     // 卡位在 _refreshUiFromItems 里按持仓数动态创建 (_ensureCards)
 
@@ -588,7 +701,7 @@ void AppStocks::_fetchIndicesAsync()
 
 // ════════════════════════════════════════════════════════════════════════════
 //  大宗商品 · 加密货币页 (2026-11-05): 10 卡 3×4, 腾讯外盘一次拉 9 代码 +
-//  hermes market overview 拿比特币; 涨跌渐变上色与指数卡同款
+//  gate.io 直连拿比特币; 涨跌渐变上色与指数卡同款
 // ════════════════════════════════════════════════════════════════════════════
 void AppStocks::_buildCommodPage()
 {
@@ -692,7 +805,7 @@ void AppStocks::_commodFetchWorker()
         "hf_CL,hf_OIL,whUSDCNY");
     if (resp.ok) {
         for (int i = 0; i < 10; i++) {
-            if (!kCommods[i].tencent) continue;   // 比特币走 hermes
+            if (!kCommods[i].tencent) continue;   // 比特币走 gate.io 直连
             const std::string code = kCommods[i].tencent;
             const std::string key = "v_" + code + "=\"";
             const size_t p = resp.body.find(key);
@@ -738,22 +851,36 @@ void AppStocks::_commodFetchWorker()
         }
     }
 
-    // 2) 比特币 — hermes /api/market/overview (gate.io 服务端缓存 + 兜底)
+    // 2) 比特币 — 设备直连 gate.io spot tickers (2026-11-15 去 OrangePi,
+    //    oneapp 同源). 响应是数组: last / change_percentage / high_24h / low_24h
     {
-        const std::string svc = GetHAL()->getConfig("svc_host", "192.168.1.200");
-        auto mresp = GetHAL()->httpGet("http://" + svc + ":8766/api/market/overview");
-        if (mresp.ok) {
+        auto gresp = GetHAL()->httpGet(
+            "https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT");
+        if (gresp.ok) {
             try {
-                auto j = PsramJson::parse(mresp.body, nullptr, false);
-                if (!j.is_discarded() && j.contains("items")) {
-                    for (const auto& it : j["items"]) {
-                        if (it.value("name", std::string()) != "比特币") continue;
-                        q[2].value   = it.value("value", std::string());
-                        q[2].chg_pct = static_cast<float>(it.value("chg", 0.0));
-                        // gate 无日内高低 — hilo 留空
-                        q[2].ok = !q[2].value.empty();
-                        any = any || q[2].ok;
-                        break;
+                auto j = PsramJson::parse(gresp.body, nullptr, false);
+                if (!j.is_discarded() && j.is_array() && !j.empty()) {
+                    const auto& it = j[0];
+                    const std::string last = it.value("last", std::string());
+                    const float pct = std::stof(it.value("change_percentage",
+                                                         std::string("0")));
+                    if (std::stof(last) > 0) {
+                        char buf[96];
+                        std::snprintf(buf, sizeof buf, "%.*f",
+                                      kCommods[2].dec, std::stof(last));
+                        q[2].value = buf;
+                        q[2].chg_pct = pct;
+                        // 24h 高低 (gate 只给 24h 窗口, 标注清楚)
+                        const std::string hi = it.value("high_24h", std::string());
+                        const std::string lo = it.value("low_24h", std::string());
+                        if (!hi.empty() && !lo.empty()) {
+                            std::snprintf(buf, sizeof buf, "高 %.*f · 低 %.*f · 24h",
+                                          kCommods[2].dec, std::stof(hi),
+                                          kCommods[2].dec, std::stof(lo));
+                            q[2].hilo = buf;
+                        }
+                        q[2].ok = true;
+                        any = true;
                     }
                 }
             } catch (...) {}
@@ -832,6 +959,11 @@ void AppStocks::_destroyUi()
     _card_chg.clear(); _card_amt.clear();
     _n_cards = 0;
     _stocks_scroll = nullptr;
+    _add_tile = nullptr;
+    _empty_label = nullptr;
+    if (GetHAL()->lvKbGroup && _add_ta) lv_group_remove_obj(_add_ta);   // 防组内悬垂
+    _add_modal = _add_ta = _add_kb = _add_hint = nullptr;   // _scr 删除即随之销毁
+    _add_closing = false;                                  // 在飞的延迟关闭回调看到空指针跳过
     for (int i = 0; i < 9; i++)
         _index_cards[i] = _index_name[i] = _index_price[i] =
         _index_amt[i] = _index_pct[i] = nullptr;
@@ -896,7 +1028,7 @@ void AppStocks::_installSwipeGesture()
                 if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
                     // 走势图弹窗打开期间: 屏内拨动不再翻页/退出 (全屏弹窗下
                     // 误翻页在背后不可见, 上拨还会误退 app)
-                    if (ctx->app->_detail_modal) return;
+                    if (ctx->app->_detail_modal || ctx->app->_add_modal) return;
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
                     const int dx = p.x - ctx->press_x, dy = p.y - ctx->press_y;
@@ -937,7 +1069,7 @@ void AppStocks::_installSwipeGesture()
                 auto alive = ctx->alive.lock();
                 if (!alive || !*alive) return;
                 if (!ctx->app->_scr || lv_screen_active() != ctx->app->_scr) return;   // 前台守卫
-                if (ctx->app->_detail_modal) return;   // 弹窗期间手势全屏蔽
+                if (ctx->app->_detail_modal || ctx->app->_add_modal) return;   // 弹窗期间手势全屏蔽
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
                 const lv_dir_t dir = lv_indev_get_gesture_dir(dev);
                 if (dir == LV_DIR_TOP) {
@@ -1001,13 +1133,18 @@ void AppStocks::_showDetail(int row_idx)
     }
     // 标题固定部分只放名称+代码; 价格/涨跌/指标进跑马灯 (用户指定)
     char title[160];
-    std::snprintf(title, sizeof(title), "%s  %s", s.name.c_str(), s.code.c_str());
-    _openChart(title, (s.code.rfind("6", 0) == 0 ? "sh" : "sz") + s.code);
+    std::snprintf(title, sizeof(title), "%s  %s",
+                  s.name.c_str(), bare_code(s.code).c_str());
+    // code 已是 qt 代码 (sh/sz/bj+6位), 直接作 ifzq 代码; 带 watch 代码进弹窗,
+    // 弹窗里多一个「删除自选」按钮 (oneapp 的 d 删除键).
+    _openChart(title, s.code, s.code);
 }
 
 // 全屏走势图弹窗 (个股/指数共用): 顶部 64px = 标题 + 分时/日K tab + 关闭,
-// 画布铺满其余部分. ifzq_code 由调用方映射好 (个股 sh/sz+6位; 指数原样或去 r_).
-void AppStocks::_openChart(const std::string& title, const std::string& ifzq_code)
+// 画布铺满其余部分. ifzq_code 由调用方映射好 (个股 sh/sz/bj+6位; 指数原样或去 r_).
+// watch_code 非空 = 从自选股打开, 左下角多一个「删除自选」按钮.
+void AppStocks::_openChart(const std::string& title, const std::string& ifzq_code,
+                           const std::string& watch_code)
 {
     LvglLockGuard lock;
     if (!_scr) return;
@@ -1118,6 +1255,33 @@ void AppStocks::_openChart(const std::string& title, const std::string& ifzq_cod
         mk_zoom("+", 28 + 88 + 44, +40);   // 扩大窗口 = 缩小看全貌 (隔 44px)
     }
 
+    // 从自选股打开 → 左下角「删除自选」(oneapp d 键). 删除走 lv_async_call:
+    // 回调里直接删弹窗祖先会被 LVGL 事件分发踩到 (app_lottery 实锤),
+    // 延迟到本轮事件之后再整块删。
+    if (!watch_code.empty()) {
+        _chart_watch_code = watch_code;
+        lv_obj_t* del_btn = lv_button_create(_detail_modal);
+        lv_obj_set_size(del_btn, 170, 64);
+        lv_obj_set_pos(del_btn, 28 + 88 + 44 + 88 + 44, 720 - 64 - 24);
+        lv_obj_set_style_bg_color(del_btn, lv_color_hex(C_UP()), 0);
+        lv_obj_set_style_radius(del_btn, 14, 0);
+        lv_obj_add_event_cb(del_btn, [](lv_event_t* e) {
+            auto* self = static_cast<AppStocks*>(lv_event_get_user_data(e));
+            if (self->_chart_watch_code.empty()) return;
+            auto* ctx = new WatchDelCtx{self, self->_chart_watch_code};
+            lv_async_call([](void* u) {
+                auto* c = static_cast<WatchDelCtx*>(u);
+                if (c->app->_scr) c->app->_deleteWatchItem(c->code);
+                delete c;
+            }, ctx);
+        }, LV_EVENT_CLICKED, this);
+        lv_obj_t* dl = lv_label_create(del_btn);
+        lv_label_set_text(dl, "删除自选");
+        lv_obj_set_style_text_font(dl, zh_font_sm(), 0);
+        lv_obj_set_style_text_color(dl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_center(dl);
+    }
+
     // 日K 窗口内最高/最低价 (右上角, _drawChartCanvas 填内容; 须在 canvas 之后)
     _chart_hilo = lv_label_create(_detail_modal);
     lv_label_set_text(_chart_hilo, "");
@@ -1200,6 +1364,7 @@ void AppStocks::_closeDetail()
         std::lock_guard<std::mutex> lk(_chart_mu);
         _chart_code.clear();
     }
+    _chart_watch_code.clear();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1581,22 +1746,33 @@ void AppStocks::_refreshUiFromItems()
         snapshot = _items;
     }
 
-    // 卡位数 = min(持仓数, MAX_CARDS), 按需创建 (2026-10-27: 超 12 只
-    // 全部显示, 滚动容器纵向扩展)
+    // 卡位数 = min(自选数, MAX_CARDS), 按需创建 (滚动容器纵向扩展)
     const int n = std::min((int)snapshot.size(), MAX_CARDS);
-    if (n <= 0) return;
-    _ensureCards(n);
+    if (n > 0) _ensureCards(n);
     _n_cards = n;
 
-    // 按涨跌幅降序; 卡片从左到右、从上到下依次绑定
+    // 自选股为空 (全部删光) → 提示 + 添加卡位仍在
+    if (_empty_label) {
+        if (snapshot.empty()) lv_obj_clear_flag(_empty_label, LV_OBJ_FLAG_HIDDEN);
+        else                  lv_obj_add_flag(_empty_label, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // 排序: 有行情的在前按涨跌幅降序; 无行情 (未拉到/停牌) 排最后保持列表序.
+    // (oneapp 保持自选顺序, Tab5 沿用 2026-10-27 用户定稿的涨跌排序)
     std::vector<int> order(snapshot.size());
     for (int i = 0; i < (int)order.size(); i++) order[i] = i;
-    std::stable_sort(order.begin(), order.end(),
-                     [&](int a, int b) { return snapshot[a].chg > snapshot[b].chg; });
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+        const auto& A = snapshot[a];
+        const auto& B = snapshot[b];
+        if (A.has_quote != B.has_quote) return A.has_quote;
+        if (!A.has_quote) return a < b;
+        return A.chg > B.chg;
+    });
 
     // 渐变端点: 可见卡中的最大涨幅 / 最大跌幅
     float max_chg = 0, min_chg = 0;
     for (int i = 0; i < (int)order.size() && i < n; i++) {
+        if (!snapshot[order[i]].has_quote) continue;
         max_chg = snapshot[order[i]].chg > max_chg ? snapshot[order[i]].chg : max_chg;
         min_chg = snapshot[order[i]].chg < min_chg ? snapshot[order[i]].chg : min_chg;
     }
@@ -1606,6 +1782,18 @@ void AppStocks::_refreshUiFromItems()
         lv_obj_clear_flag(card, LV_OBJ_FLAG_HIDDEN);
         const auto& st = snapshot[order[i]];
         lv_obj_set_user_data(card, (void*)(intptr_t)order[i]);  // 点击 → 原始下标
+
+        // 行情未到/停牌: 名字照显示, 价格 "--" (oneapp 同款占位)
+        if (!st.has_quote) {
+            lv_obj_set_style_bg_color(card, lv_color_hex(C_HEADER()), 0);
+            lv_obj_set_style_text_color(_card_name[i],  lv_color_hex(C_TEXT()), 0);
+            lv_obj_set_style_text_color(_card_price[i], lv_color_hex(C_DIM()), 0);
+            lv_label_set_text(_card_name[i], st.name.c_str());
+            lv_label_set_text(_card_price[i], "--");
+            lv_label_set_text(_card_chg[i], "");
+            lv_label_set_text(_card_amt[i], "");
+            continue;
+        }
 
         // 中国 A 股惯例: 涨=红 跌=绿, 彩底白字.
         // 颜色随涨跌幅度渐变 (2026-10-27 用户指定, 幅度方向与首版相反):
@@ -1640,112 +1828,398 @@ void AppStocks::_refreshUiFromItems()
         snprintf(buf, sizeof(buf), "%+.2f", st.pchg);
         lv_label_set_text(_card_amt[i], buf);
     }
+    // 收缩: 删除自选后多余卡位隐藏 (卡位只增不减)
+    for (int i = n; i < (int)_cards.size(); i++)
+        lv_obj_add_flag(_cards[i], LV_OBJ_FLAG_HIDDEN);
+
+    // 「+ 添加自选股」卡位常驻首格 (不随滚动/排序移动, 第一屏永远可见)
+    if (_add_tile) {
+        lv_obj_set_pos(_add_tile, GRID_X0, 24);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  数据拉取 (hermes :8766/api/stocks/portfolio, mx-selfselect 后端)
+//  数据拉取 (2026-11-15 去 OrangePi: 本地 NVS 自选 + 腾讯直连, oneapp 同款)
+//  · 自选列表: 设备 NVS 自己维护 (首次种入迁移前 Pi 列表), 增删都在设备上做
+//  · 行情: https://qt.gtimg.cn 一次批量拉全部自选 (字段 3现价/4昨收/31涨跌额/32涨跌幅)
+//  · 名字: 添加时用 ifzq minute/query 的 UTF-8 qt 节点补一次, 存进 NVS
+//  · 比特币: https://api.gateio.ws 直连 (oneapp 同源)
 // ════════════════════════════════════════════════════════════════════════════
+void AppStocks::_loadWatch()
+{
+    const std::string raw = GetHAL()->getConfig(kWatchNvsKey, "");
+    std::vector<WatchItem> list;
+    if (!raw.empty()) {
+        try {
+            auto j = PsramJson::parse(raw, nullptr, false);
+            if (!j.is_discarded() && j.is_array()) {
+                for (const auto& it : j) {
+                    if (!it.is_object()) continue;
+                    WatchItem w;
+                    w.code = it.value("code", std::string());
+                    w.name = it.value("name", std::string());
+                    if (!w.code.empty()) list.push_back(std::move(w));
+                }
+            }
+        } catch (...) {}
+    }
+    if (raw.empty()) {   // 首次启动 (无 NVS): 种入迁移前 Pi 上的 14 只
+        for (const auto& s : kWatchSeed) list.push_back({s.qt, s.name});
+        mclog::tagInfo(TAG, "watch seeded: {} items", list.size());
+    } else {
+        mclog::tagInfo(TAG, "watch loaded: {} items", list.size());
+    }
+    {
+        std::lock_guard<std::mutex> lk(_watch_mu);
+        _watch = std::move(list);
+    }
+    if (raw.empty()) _saveWatch();
+}
+
+void AppStocks::_saveWatch()
+{
+    // 手写 JSON (代码/名字都是无引号的 ASCII+UTF-8, 不需要转义)
+    std::string raw = "[";
+    {
+        std::lock_guard<std::mutex> lk(_watch_mu);
+        for (size_t i = 0; i < _watch.size(); i++) {
+            if (i) raw += ',';
+            raw += "{\"code\":\"";
+            raw += _watch[i].code;
+            raw += "\",\"name\":\"";
+            raw += _watch[i].name;
+            raw += "\"}";
+        }
+    }
+    raw += ']';
+    GetHAL()->setConfig(kWatchNvsKey, raw);
+}
+
+void AppStocks::_rebuildItemsFromWatch()
+{
+    std::vector<WatchItem> watch;
+    {
+        std::lock_guard<std::mutex> lk(_watch_mu);
+        watch = _watch;
+    }
+    std::unordered_map<std::string, Quote> quotes;
+    {
+        std::lock_guard<std::mutex> lk(_quotes_mu);
+        quotes = _quotes;
+    }
+    std::vector<StockItem> items;
+    items.reserve(watch.size());
+    for (const auto& w : watch) {
+        StockItem s;
+        s.code = w.code;
+        s.name = w.name.empty() ? bare_code(w.code) : w.name;
+        auto it = quotes.find(w.code);
+        if (it != quotes.end() && it->second.ok) {
+            s.price = it->second.price;
+            s.chg   = it->second.chg;
+            s.pchg  = it->second.pchg;
+            s.has_quote = true;
+        }
+        items.push_back(std::move(s));
+    }
+    {
+        std::lock_guard<std::mutex> lk(_items_mu);
+        _items = std::move(items);
+    }
+}
+
 void AppStocks::_fetchStocksAsync()
 {
     bool expected = false;
     if (!_fetch_in_flight.compare_exchange_strong(expected, true)) {
-        mclog::tagInfo(TAG, "fetch already in flight");
+        // 上一轮还在飞: 记一笔, worker 收尾时补拉 (刚添加的新代码也能立刻有行情)
+        _fetch_pending.store(true);
+        return;
+    }
+    std::vector<std::string> codes;
+    {
+        std::lock_guard<std::mutex> lk(_watch_mu);
+        codes.reserve(_watch.size());
+        for (const auto& w : _watch) codes.push_back(w.code);
+    }
+    if (codes.empty()) {
+        std::lock_guard<std::mutex> lk(_items_mu);
+        _last_fetch_ms = mono_ms();   // 空列表: 记时间, 不狂刷
+        _fetch_in_flight.store(false);
+        if (_fetch_pending.exchange(false)) _fetchStocksAsync();
         return;
     }
 
     // app 实例随 mooncake 常驻 (从不 uninstall), 捕获 this 安全。
-    if (GetHAL()->tryRunDetached([this]() {
+    // 腾讯 GBK 响应体 (14 代码 ~12KB) + 字符串处理 → 32KB 栈 (PSRAM)。
+    if (!GetHAL()->tryRunDetached([this, codes]() {
             try {
-                _doFetch();
+                _watchFetchWorker(codes);
             } catch (const std::exception& e) {
-                {
-                    std::lock_guard<std::mutex> lk(_items_mu);
-                    _fetch_error = true;
-                    _fetch_error_msg = e.what();
-                    _last_fetch_ms = mono_ms();
-                }
                 mclog::tagWarn(TAG, "fetch exception: {}", e.what());
-                _refreshUiFromItems();
             } catch (...) {
-                {
-                    std::lock_guard<std::mutex> lk(_items_mu);
-                    _fetch_error = true;
-                    _fetch_error_msg = "unknown fetch exception";
-                    _last_fetch_ms = mono_ms();
-                }
                 mclog::tagWarn(TAG, "unknown fetch exception");
-                _refreshUiFromItems();
             }
             _fetch_in_flight.store(false);
-        })) {
-        mclog::tagInfo(TAG, "fetch scheduled");
-    } else {
+            if (_fetch_pending.exchange(false)) _fetchStocksAsync();
+        }, 32 * 1024)) {
         _fetch_in_flight.store(false);
         mclog::tagWarn(TAG, "fetch worker spawn failed");
     }
 }
 
-void AppStocks::_doFetch()
+void AppStocks::_watchFetchWorker(const std::vector<std::string>& codes)
 {
-    auto* hal = GetHAL();
-    std::string svc_host = hal->getConfig("svc_host", "192.168.1.200");
-    std::string url = "http://" + svc_host + ":8766/api/stocks/portfolio";
+    std::string url = "https://qt.gtimg.cn/q=";
+    for (size_t i = 0; i < codes.size(); i++) {
+        if (i) url += ',';
+        url += codes[i];
+    }
+    auto resp = GetHAL()->httpGet(url);
 
-    auto resp = hal->httpGet(url);
-    if (!resp.ok || resp.status != 200) {
-        {
-            std::lock_guard<std::mutex> lk(_items_mu);
-            _fetch_error = true;
-            _fetch_error_msg = "HTTP " + std::to_string(resp.status);
-            _last_fetch_ms = mono_ms();  // 失败也记时间, 避免每 tick 狂重试
+    std::unordered_map<std::string, Quote> out;
+    int ok_count = 0;
+    if (resp.ok) {
+        for (const auto& code : codes) {
+            const std::string key = "v_" + code + "=\"";
+            const size_t p = resp.body.find(key);
+            if (p == std::string::npos) continue;
+            const size_t v0 = p + key.size();
+            const size_t v1 = resp.body.find('"', v0);
+            if (v1 == std::string::npos) continue;
+            // 字段: [3]现价 [4]昨收 [31]涨跌额 [32]涨跌幅 (GBK 响应只取数字)
+            auto field = [&](int n) -> std::string {
+                size_t f = v0;
+                for (int k = 0; k < n; k++) {
+                    f = resp.body.find('~', f);
+                    if (f == std::string::npos || f >= v1) return "";
+                    f++;
+                }
+                size_t e = resp.body.find('~', f);
+                if (e == std::string::npos || e > v1) e = v1;
+                return resp.body.substr(f, e - f);
+            };
+            try {
+                Quote q;
+                q.price = std::stof(field(3));
+                const float prev = std::stof(field(4));
+                q.pchg = std::stof(field(31));
+                q.chg  = std::stof(field(32));
+                q.ok   = q.price > 0 && prev > 0;   // 停牌/无报价 → 卡片 "--"
+                if (q.ok) ok_count++;
+                out[code] = q;
+            } catch (...) {}
         }
-        mclog::tagWarn(TAG, "fetch failed: {}", _fetch_error_msg);
-        _refreshUiFromItems();
+        {
+            std::lock_guard<std::mutex> lk(_quotes_mu);
+            _quotes = std::move(out);
+        }
+    } else {
+        mclog::tagWarn(TAG, "quotes fetch failed: HTTP {}", resp.status);
+    }
+    {
+        std::lock_guard<std::mutex> lk(_items_mu);
+        _last_fetch_ms = mono_ms();   // 失败也记时间, 避免每 tick 狂重试
+    }
+    _rebuildItemsFromWatch();
+    _quotes_ready.store(true);
+    mclog::tagInfo(TAG, "quotes: {}/{} ok", ok_count, codes.size());
+}
+
+// 添加后异步补名字: ifzq minute/query 的 JSON 里 qt 节点名字是 UTF-8
+// (qt.gtimg.cn 是 GBK, 所以走这个), 拿到后落 NVS 再刷卡片.
+void AppStocks::_fetchWatchNameAsync(const std::string& code)
+{
+    if (code.empty()) return;
+    if (!GetHAL()->tryRunDetached([this, code]() {
+            auto resp = GetHAL()->httpGet(
+                "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=" + code);
+            if (!resp.ok) return;
+            std::string name;
+            try {
+                auto j = PsramJson::parse(resp.body, nullptr, false);
+                if (!j.is_discarded()) {
+                    const auto& node = j["data"][code.c_str()]["qt"][code.c_str()];
+                    if (node.is_array() && node.size() > 1 && node[1].is_string())
+                        name = node[1].get<std::string>();
+                }
+            } catch (...) {}
+            if (name.empty()) return;
+            {
+                std::lock_guard<std::mutex> lk(_watch_mu);
+                bool changed = false;
+                for (auto& w : _watch)
+                    if (w.code == code && w.name != name) { w.name = name; changed = true; }
+                if (!changed) return;
+            }
+            _saveWatch();
+            _rebuildItemsFromWatch();
+            _name_ready.store(true);
+            mclog::tagInfo(TAG, "name: {} = {}", code, name);
+        }, 16 * 1024)) {
+        mclog::tagWarn(TAG, "name worker spawn failed");
+    }
+}
+
+// ── 添加自选股弹窗: 代码输入 + 屏幕键盘 (oneapp 的 n 键) ─────────────────────
+void AppStocks::_openAddModal()
+{
+    LvglLockGuard lock;
+    if (!_scr || _add_modal || _add_closing) return;
+
+    _add_modal = lv_obj_create(_scr);
+    lv_obj_set_size(_add_modal, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_add_modal, 0, 0);
+    lv_obj_set_style_bg_color(_add_modal, lv_color_hex(C_BG()), 0);
+    lv_obj_set_style_border_width(_add_modal, 0, 0);
+    lv_obj_set_style_radius(_add_modal, 0, 0);
+    lv_obj_set_style_pad_all(_add_modal, 0, 0);
+    lv_obj_clear_flag(_add_modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(_add_modal, LV_OBJ_FLAG_CLICKABLE);   // 挡住底下的卡片
+
+    lv_obj_t* title = lv_label_create(_add_modal);
+    lv_label_set_text(title, "添加自选股");
+    lv_obj_set_style_text_font(title, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
+    lv_obj_set_pos(title, 32, 24);
+
+    lv_obj_t* tip = lv_label_create(_add_modal);
+    lv_label_set_text(tip, "输入 6 位代码，或 sh/sz/bj + 6 位（如 600519）");
+    lv_obj_set_style_text_font(tip, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(tip, lv_color_hex(C_DIM()), 0);
+    lv_obj_set_pos(tip, 32, 82);
+
+    _add_ta = lv_textarea_create(_add_modal);
+    lv_obj_set_size(_add_ta, 620, 96);
+    lv_obj_set_pos(_add_ta, 32, 132);
+    lv_textarea_set_one_line(_add_ta, true);
+    lv_textarea_set_max_length(_add_ta, 8);
+    lv_textarea_set_placeholder_text(_add_ta, "600519");
+    lv_obj_set_style_text_font(_add_ta, &lv_font_montserrat_38, 0);
+    lv_obj_set_style_text_font(_add_ta, &lv_font_montserrat_38,
+                               LV_PART_TEXTAREA_PLACEHOLDER);
+    lv_obj_set_style_bg_color(_add_ta, lv_color_hex(C_HEADER()), 0);
+    lv_obj_set_style_border_color(_add_ta, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_set_style_border_width(_add_ta, 2, 0);
+    lv_obj_set_style_radius(_add_ta, 12, 0);
+    lv_obj_set_style_text_color(_add_ta, lv_color_hex(C_TEXT()), 0);
+    lv_obj_set_style_pad_hor(_add_ta, 16, 0);
+    // 实体键盘输入走 lvKbGroup 的焦点对象 (与 SSH/LoRa/想法同款)
+    if (GetHAL()->lvKbGroup) {
+        lv_group_add_obj(GetHAL()->lvKbGroup, _add_ta);
+        lv_group_focus_obj(_add_ta);
+    }
+
+    _add_hint = lv_label_create(_add_modal);
+    lv_label_set_text(_add_hint, "");
+    lv_obj_set_style_text_font(_add_hint, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(_add_hint, lv_color_hex(C_UP()), 0);
+    lv_obj_set_pos(_add_hint, 32, 244);
+
+    auto mk_btn = [&](const char* txt, int x, uint32_t bg, lv_event_cb_t cb) {
+        lv_obj_t* b = lv_button_create(_add_modal);
+        lv_obj_set_size(b, 170, 96);
+        lv_obj_set_pos(b, x, 132);
+        lv_obj_set_style_bg_color(b, lv_color_hex(bg), 0);
+        lv_obj_set_style_radius(b, 12, 0);
+        lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, this);
+        lv_obj_t* l = lv_label_create(b);
+        lv_label_set_text(l, txt);
+        lv_obj_set_style_text_font(l, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_center(l);
+    };
+    mk_btn("添加", 700, theme::cur().accent, [](lv_event_t* e) {
+        static_cast<AppStocks*>(lv_event_get_user_data(e))->_submitAdd();
+    });
+    mk_btn("取消", 900, 0x33363A, [](lv_event_t* e) {
+        static_cast<AppStocks*>(lv_event_get_user_data(e))->_closeAddModal();
+    });
+
+    // 屏幕键盘 (有实体键盘就不弹, 与 LoRa Chat 同款)
+    _add_kb = lv_keyboard_create(_add_modal);
+    lv_obj_set_size(_add_kb, SCREEN_W, 340);
+    lv_obj_align(_add_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_keyboard_set_textarea(_add_kb, _add_ta);
+    lv_obj_add_event_cb(_add_kb, [](lv_event_t* e) {
+        static_cast<AppStocks*>(lv_event_get_user_data(e))->_submitAdd();
+    }, LV_EVENT_READY, this);
+    lv_obj_add_event_cb(_add_kb, [](lv_event_t* e) {
+        static_cast<AppStocks*>(lv_event_get_user_data(e))->_closeAddModal();
+    }, LV_EVENT_CANCEL, this);
+    if (GetHAL()->usbKeyboardDetect()) lv_obj_add_flag(_add_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+void AppStocks::_closeAddModal()
+{
+    if (!_add_modal || _add_closing) return;
+    _add_closing = true;
+    // 从键盘/按钮自身回调里删祖先 → 必须延迟到本轮事件之后 (app_lottery 实锤)。
+    // 只把 this 交给 lv_async_call (app 常驻), 不拿弹窗指针: 期间若 app 被收尾,
+    // _destroyUi 已把弹窗随 _scr 删除并置空, 回调看到 _add_modal==null 直接跳过,
+    // 不存在悬垂对象。
+    lv_async_call([](void* u) {
+        static_cast<AppStocks*>(u)->_finishCloseAddModal();
+    }, this);
+}
+
+void AppStocks::_finishCloseAddModal()
+{
+    _add_closing = false;
+    if (!_add_modal) return;          // 已被 _destroyUi 连带删除
+    if (GetHAL()->lvKbGroup && _add_ta) lv_group_remove_obj(_add_ta);
+    lv_obj_delete(_add_modal);
+    _add_modal = _add_ta = _add_kb = _add_hint = nullptr;
+}
+
+void AppStocks::_submitAdd()
+{
+    if (!_add_ta || !_add_hint) return;
+    const char* txt = lv_textarea_get_text(_add_ta);
+    const std::string code = norm_watch_code(txt ? txt : "");
+    if (code.empty()) {
+        lv_label_set_text(_add_hint, "代码无效：6 位数字，或 sh/sz/bj + 6 位");
+        lv_obj_set_style_text_color(_add_hint, lv_color_hex(C_UP()), 0);
         return;
     }
-    _parseStocksJson(resp.body);
-}
-
-void AppStocks::_parseStocksJson(const std::string& body)
-{
-    try {
-        auto j = PsramJson::parse(body);
-        std::vector<StockItem> parsed;
-        if (j.contains("items") && j["items"].is_array()) {
-            for (const auto& it : j["items"]) {
-                StockItem s;
-                s.code     = it.value("code", std::string());
-                s.name     = it.value("name", std::string());
-                s.price    = it.value("price", 0.0f);
-                s.chg      = it.value("chg", 0.0f);
-                s.pchg     = it.value("pchg", 0.0f);
-                s.turnover = it.value("turnover", 0.0f);
-                s.liangbi  = it.value("liangbi", 0.0f);
-                s.one_sentence = it.value("one_sentence", std::string());
-                s.analysis_summary = it.value("analysis_summary", std::string());
-                s.analysis_date = it.value("analysis_date", std::string());
-                if (!s.code.empty()) parsed.push_back(std::move(s));
-            }
-        }
-        size_t n;
-        {
-            std::lock_guard<std::mutex> lk(_items_mu);
-            _items = std::move(parsed);
-            _fetch_error = false;
-            _last_fetch_ms = mono_ms();
-            n = _items.size();
-        }
-        mclog::tagInfo(TAG, "fetched {} items", n);
-        _refreshUiFromItems();
-    } catch (const std::exception& e) {
-        {
-            std::lock_guard<std::mutex> lk(_items_mu);
-            _fetch_error = true;
-            _fetch_error_msg = e.what();
-            _last_fetch_ms = mono_ms();
-        }
-        mclog::tagWarn(TAG, "parse failed: {}", e.what());
-        _refreshUiFromItems();
+    bool dup = false;
+    {
+        std::lock_guard<std::mutex> lk(_watch_mu);
+        for (const auto& w : _watch)
+            if (w.code == code) { dup = true; break; }
+        if (!dup) _watch.push_back(WatchItem{code, bare_code(code)});
     }
+    if (dup) {
+        lv_label_set_text(_add_hint, "已在自选股");
+        lv_obj_set_style_text_color(_add_hint, lv_color_hex(C_DIM()), 0);
+        return;
+    }
+    _saveWatch();
+    _rebuildItemsFromWatch();
+    _closeAddModal();
+    _refreshUiFromItems();
+    _fetchStocksAsync();          // 立即拉一次 (新代码行情)
+    _fetchWatchNameAsync(code);   // 名字异步补
+    mclog::tagInfo(TAG, "watch added: {}", code);
 }
 
+void AppStocks::_deleteWatchItem(const std::string& code)
+{
+    bool removed = false;
+    {
+        std::lock_guard<std::mutex> lk(_watch_mu);
+        for (auto it = _watch.begin(); it != _watch.end(); ++it) {
+            if (it->code == code) { _watch.erase(it); removed = true; break; }
+        }
+    }
+    if (!removed) return;
+    _saveWatch();
+    {
+        std::lock_guard<std::mutex> lk(_quotes_mu);
+        _quotes.erase(code);
+    }
+    _rebuildItemsFromWatch();
+    _closeDetail();              // 从走势图弹窗里点的删除 → 关弹窗
+    _refreshUiFromItems();
+    mclog::tagInfo(TAG, "watch removed: {}", code);
+}
