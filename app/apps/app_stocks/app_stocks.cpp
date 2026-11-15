@@ -20,6 +20,13 @@
 #include <esp_timer.h>
 #endif
 
+// 东财妙想 API-KEY 编译期兜底 (secrets.h 本地 gitignored; NVS em_apikey 优先)
+#if __has_include("secrets.h") && !defined(PLATFORM_BUILD_DESKTOP)
+#include "secrets.h"
+#else
+inline const char* LOCAL_EM_APIKEY = "";
+#endif
+
 static const char* TAG = "stocks";
 
 // ── 全覆盖中文字体 (与 app_ha/view, app_settings 一致) ────────────────────────
@@ -103,6 +110,13 @@ static int64_t mono_ms()
 namespace {
 constexpr const char* kWatchNvsKey = "stocks_watch";   // NVS key ≤15 字符
 constexpr const char* kEmKeyNvs    = "em_apikey";      // 东财妙想 API-KEY
+constexpr const char* kEmGetUrl =
+    "https://mkapi2.dfcfs.com/finskillshub/api/claw/self-select/get";
+constexpr const char* kEmManageUrl =
+    "https://mkapi2.dfcfs.com/finskillshub/api/claw/self-select/manage";
+constexpr const char* kEmUa =
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+    " (KHTML, like Gecko) Chrome/120.0 Safari/537.36 ONEAPP/1.0";
 
 // 首次启动种子 = 迁移前 Pi 上 /api/stocks/portfolio 的 14 只,
 // 用户的列表原样保留; 之后增删都在设备上做 (NVS)。
@@ -172,6 +186,15 @@ AppStocks::AppStocks()
 void AppStocks::onCreate()
 {
     mclog::tagInfo(TAG, "created");
+    // 启动即把编译期 secrets.h 的东财 KEY 落到 NVS (用户要求"保存到设备"),
+    // 不必等第一次打开 app; NVS 已有则不动 (界面里改过的优先).
+    const std::string em_now = GetHAL()->getConfig(kEmKeyNvs, "");
+    mclog::tagInfo(TAG, "em key: nvs={}B default={}B", em_now.size(),
+                   strlen(LOCAL_EM_APIKEY));
+    if (LOCAL_EM_APIKEY[0] != '\0' && em_now.empty()) {
+        GetHAL()->setConfig(kEmKeyNvs, LOCAL_EM_APIKEY);
+        mclog::tagInfo(TAG, "em apikey seeded from secrets.h");
+    }
 }
 
 void AppStocks::onOpen()
@@ -205,6 +228,9 @@ void AppStocks::onRunning()
     }
     if (_em_ready.exchange(false)) {
         _applyEmResult();               // 东财同步结果 (toast + 刷新)
+    }
+    if (_em_add_ready.exchange(false)) {
+        _applyEmAddResult();            // 单只推送东财结果 (toast)
     }
     // 指数页在前台时 60s 刷新
     if (_page == 1 && _scr && lv_screen_active() == _scr) {
@@ -330,8 +356,8 @@ void AppStocks::_ensureCards(int n)
     if (n > MAX_CARDS) n = MAX_CARDS;
     const int before = (int)_cards.size();
     for (int i = (int)_cards.size(); i < n; i++) {
-        // 卡位 0/1 让给「+ 添加自选股」「同步东财」两个 tile (常驻第一屏)
-        const int slot = i + 2;
+        // 股票卡位从 0 起; 两个 action tile 排在所有股票之后
+        const int slot = i;
         const int col = slot % GRID_COLS, row = slot / GRID_COLS;
         lv_obj_t* card = lv_obj_create(_stocks_scroll);
         lv_obj_set_size(card, CARD_W, CARD_H);
@@ -1869,10 +1895,18 @@ void AppStocks::_refreshUiFromItems()
     for (int i = n; i < (int)_cards.size(); i++)
         lv_obj_add_flag(_cards[i], LV_OBJ_FLAG_HIDDEN);
 
-    // 「+ 添加自选股」「同步东财」两个卡位常驻前两格 (不随排序/滚动移动)
-    if (_add_tile) lv_obj_set_pos(_add_tile, GRID_X0, 24);
-    if (_em_tile)
-        lv_obj_set_pos(_em_tile, GRID_X0 + CARD_W + GRID_GAP, 24);
+    // 「+ 添加自选股」「同步东财」两个卡位排在全部股票之后 (用户指定):
+    // 槽位 n / n+1, 股票少时挤在前排, 股票多时滑到底部.
+    if (_add_tile) {
+        const int slot = n;
+        lv_obj_set_pos(_add_tile, GRID_X0 + (slot % GRID_COLS) * (CARD_W + GRID_GAP),
+                       24 + (slot / GRID_COLS) * (CARD_H + GRID_GAP));
+    }
+    if (_em_tile) {
+        const int slot = n + 1;
+        lv_obj_set_pos(_em_tile, GRID_X0 + (slot % GRID_COLS) * (CARD_W + GRID_GAP),
+                       24 + (slot / GRID_COLS) * (CARD_H + GRID_GAP));
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2264,6 +2298,11 @@ void AppStocks::_submitInput()
     _refreshUiFromItems();
     _fetchStocksAsync();          // 立即拉一次 (新代码行情)
     _fetchWatchNameAsync(code);   // 名字异步补
+    // 有东财 KEY 时同步把这只加到东财自选 (oneapp 的 add 语义, manage 接口)
+    const bool em_sync = !GetHAL()->getConfig(kEmKeyNvs, "").empty();
+    _toast("已添加 " + bare_code(code) +
+           (em_sync ? " · 正在同步东财…" : ""), theme::cur().accent);
+    if (em_sync) _pushEmAddAsync(code);
     mclog::tagInfo(TAG, "watch added: {}", code);
 }
 
@@ -2291,22 +2330,16 @@ void AppStocks::_fetchEmWatchAsync(const std::string& key)
 
 void AppStocks::_emFetchWorker(const std::string& key)
 {
-    constexpr const char* kUrl =
-        "https://mkapi2.dfcfs.com/finskillshub/api/claw/self-select/get";
-    constexpr const char* kUa =
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
-        " (KHTML, like Gecko) Chrome/120.0 Safari/537.36 ONEAPP/1.0";
-
     bool ok = false;
     int count = 0;
     std::string msg;
     std::vector<WatchItem> items;
 
     for (int attempt = 0; attempt < 3; attempt++) {
-        auto resp = GetHAL()->httpPost(kUrl, "{}", {
+        auto resp = GetHAL()->httpPost(kEmGetUrl, "{}", {
             {"apikey", key},
             {"Content-Type", "application/json"},
-            {"User-Agent", kUa},
+            {"User-Agent", kEmUa},
         });
         if (!resp.ok) {
             msg = "HTTP " + std::to_string(resp.status);
@@ -2416,6 +2449,82 @@ void AppStocks::_applyEmResult()
         _toast("同步失败：" + msg, theme::cur().danger);
     }
     mclog::tagInfo(TAG, "em result ok={} count={}", ok, count);
+}
+
+// ── 单只追加: 本地添加后同步到东财自选 (有 API-KEY 时) ─────────────────────
+// 妙想 manage 是自然语言接口: {"query":"把600519添加到我的自选股列表"}
+// (hermes _stocks.py add_portfolio_stock 同款); 代码可直接被识别.
+void AppStocks::_pushEmAddAsync(const std::string& code)
+{
+    const std::string key = GetHAL()->getConfig(kEmKeyNvs, "");
+    if (key.empty()) return;
+    // 与全量同步共用同一把「东财操作在飞」闸, 避免两个 manage/get 并发
+    if (_em_in_flight.exchange(true)) {
+        mclog::tagInfo(TAG, "em add skipped (busy)");
+        return;
+    }
+    if (!GetHAL()->tryRunDetached([this, code, key]() {
+            _emAddWorker(code);
+            _em_in_flight.store(false);
+        }, 16 * 1024)) {
+        _em_in_flight.store(false);
+        std::lock_guard<std::mutex> lk(_em_mu);
+        _em_add_ok = false;
+        _em_add_code = bare_code(code);
+        _em_add_msg = "同步任务创建失败";
+        _em_add_ready.store(true);
+    }
+}
+
+void AppStocks::_emAddWorker(const std::string& code)
+{
+    const std::string body =
+        "{\"query\":\"把" + bare_code(code) + "添加到我的自选股列表\"}";
+    auto resp = GetHAL()->httpPost(kEmManageUrl, body, {
+        {"apikey", GetHAL()->getConfig(kEmKeyNvs, "")},
+        {"Content-Type", "application/json"},
+        {"User-Agent", kEmUa},
+    });
+    bool ok = false;
+    std::string msg;
+    if (resp.ok) {
+        try {
+            auto j = PsramJson::parse(resp.body, nullptr, false);
+            if (!j.is_discarded() && j.is_object()) {
+                ok = (j.value("status", -1) == 0 || j.value("code", -1) == 0);
+                if (!ok) msg = j.value("message", std::string("未知错误"));
+            } else {
+                msg = "响应格式错误";
+            }
+        } catch (...) {
+            msg = "解析失败";
+        }
+    } else {
+        msg = "HTTP " + std::to_string(resp.status);
+    }
+    {
+        std::lock_guard<std::mutex> lk(_em_mu);
+        _em_add_ok = ok;
+        _em_add_code = bare_code(code);
+        _em_add_msg = msg;
+    }
+    _em_add_ready.store(true);
+    mclog::tagInfo(TAG, "em add {} ok={} msg={}", code, ok, msg);
+}
+
+void AppStocks::_applyEmAddResult()
+{
+    bool ok;
+    std::string code, msg;
+    {
+        std::lock_guard<std::mutex> lk(_em_mu);
+        ok = _em_add_ok;
+        code = _em_add_code;
+        msg = _em_add_msg;
+    }
+    if (ok) _toast("已同步到东财自选：" + code, theme::cur().ok);
+    else    _toast("东财同步失败：" + msg, theme::cur().danger);
+    mclog::tagInfo(TAG, "em add result {} ok={}", code, ok);
 }
 
 // 3.5s 自动消失的提示条 (同步中/同步结果)

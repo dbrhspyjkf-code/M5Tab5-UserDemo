@@ -158,11 +158,15 @@ private:
     std::atomic<bool>      _name_ready   {false};     // 异步补名字完成 → onRunning 消费
     // 东财妙想自选股同步 (oneapp fetchers.em_watchlist_fetch 移植)
     std::atomic<bool>      _em_in_flight {false};
-    std::atomic<bool>      _em_ready     {false};     // worker 完成 → onRunning 消费
+    std::atomic<bool>      _em_ready     {false};     // 全量同步完成 → onRunning
+    std::atomic<bool>      _em_add_ready {false};     // 单只追加同步完成 → onRunning
     std::mutex             _em_mu;
     bool                   _em_ok        {false};
     int                    _em_count     {0};
     std::string            _em_msg;
+    bool                   _em_add_ok    {false};
+    std::string            _em_add_code;
+    std::string            _em_add_msg;
     int64_t                _last_fetch_ms {0};
     // app 是否在前台. 退出时先置 false, 防止在途的 fetch worker 完成后碰已拆 UI.
     std::atomic<bool>      _app_open {false};
@@ -273,6 +277,9 @@ private:
     void _fetchEmWatchAsync(const std::string& key);
     void _emFetchWorker(const std::string& key);
     void _applyEmResult();             // worker 完成 → onRunning (toast + 拉行情)
+    void _pushEmAddAsync(const std::string& code);   // 添加自选后推送到东财
+    void _emAddWorker(const std::string& code);      // manage 接口 (NL query)
+    void _applyEmAddResult();          // 单只追加结果 → onRunning
     void _toast(const std::string& text, uint32_t color);   // 3.5s 自动消失
     void _refreshUiFromItems();
     void _ensureCards(int n);   // 按需创建卡位到滚动容器

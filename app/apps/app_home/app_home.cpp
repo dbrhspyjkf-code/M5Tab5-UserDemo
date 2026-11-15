@@ -19,6 +19,8 @@
 #include "../utils/news/news_feeds.h"
 #include "../utils/news/news_rss.h"
 #include "../utils/power_scheduler.h"
+#include "ipo_direct.h"          // 新股申购直连东财 (去 OrangePi)
+#include "daily_sentence.h"       // 每日一句本地 DB (去 OrangePi)
 #ifndef PLATFORM_BUILD_DESKTOP
 #include "../utils/assets/assets_partition.h"
 #endif
@@ -309,7 +311,7 @@ void AppHome::onOpen()
 
     // Thin divider + icon row along the card bottom (light ink on deep green).
     lv_obj_t* div = lv_obj_create(hero);
-    // 新股申购 (hermes /stocks/ipo; 2026-10-28 用户要求: 第一行"新股申购",
+    // 新股申购 (2026-11-15 起设备直连东财; 2026-10-28 用户要求: 首行"新股申购",
     // 之后每股一行, 最多 3 条; 无申购隐藏)
     _ipo_lbl = lv_label_create(hero);
     lv_obj_set_style_text_font(_ipo_lbl, zh_font_sm(), 0);
@@ -973,24 +975,14 @@ void AppHome::_applyCarousel()
 
 void AppHome::_sentenceNext()
 {
-    // hero 每日一句长按: offset+1, 只拉 sentence 端点写 _hero_sent_*_txt,
-    // onRunning 同步块应用 (与全量 _fetch_dashboard 相同的 worker→UI 模式)
+    // hero 每日一句长按: offset+1, 从本地 DB 取下一句 (2026-11-15 去 OrangePi).
+    // 首次调用会建行偏移表 (~212KB 扫描, 毫秒级), 之后 O(1).
     ++_sent_offset;
-    std::string base = "http://" + GetHAL()->getConfig("svc_host", "192.168.1.200") + ":8766";
-    int off = _sent_offset;
-    GetHAL()->tryRunDetached([this, base, off]() {
-        auto resp = GetHAL()->httpGet(base + "/daily/sentence?offset=" + std::to_string(off));
-        try {
-            auto j = PsramJson::parse(resp.body);
-            if (!j.value("ok", false)) return;
-            std::string en = j.value("en", std::string());
-            std::string cn = j.value("cn", std::string());
-            if (en.empty()) return;
-            std::lock_guard<std::mutex> lk(_dash_mutex);
-            _hero_sent_en_txt = en;
-            _hero_sent_cn_txt = cn;
-        } catch (...) {}
-    });
+    auto s = daily_sentence::get(_sent_offset);
+    if (s.en.empty()) return;
+    std::lock_guard<std::mutex> lk(_dash_mutex);
+    _hero_sent_en_txt = std::move(s.en);
+    _hero_sent_cn_txt = std::move(s.cn);
 }
 
 void AppHome::_carouselNext(lv_obj_t* card)
@@ -1141,27 +1133,17 @@ void AppHome::_fetch_dashboard()
         if (auto j = pick(GetHAL()->httpGet(base + "/api/deepseek/balance").body); !j.is_null()) {
             ds_txt = j.value("total_balance", std::string("?")) + " 元";
         }
-        if (auto j = pick(GetHAL()->httpGet(base + "/stocks/ipo").body); !j.is_null()) {
-            // 新股申购 (2026-10-28 用户定稿): 首行"新股申购", 之后每股一行,
-            // 最多 3 条 (hero 空间限制)
-            std::string ipo = "新股申购";
-            int shown = 0;
-            if (j.contains("items") && j["items"].is_array())
-                for (auto& it : j["items"]) {
-                    if (shown >= 3) break;
-                    ipo += "\n" + it.value("name", std::string()) + " "
-                         + it.value("date", std::string());
-                    if (it.value("today", false)) ipo += "(今)";
-                    shown++;
-                }
-            ipo_txt = shown ? ipo : "";
+        {
+            // 新股申购: 设备直连东财 datacenter (2026-11-15 去 OrangePi,
+            // oneapp/hermes 同源); false=请求失败保持上次文本 (哨兵语义)
+            std::string t;
+            if (ipo_direct::fetchText(t)) ipo_txt = t;
         }
-        if (auto j = pick(GetHAL()->httpGet(base + "/daily/sentence?offset="
-                                          + std::to_string(_sent_offset)).body); !j.is_null()) {
-            // 每日一句 (按日期轮换, 服务端缓存; 失败保持上次内容)
-            std::string en = j.value("en", std::string());
-            std::string cn = j.value("cn", std::string());
-            if (!en.empty()) { sent_en = en; sent_cn = cn; }
+        {
+            // 每日一句: 本地数据库 (2026-11-15 去 OrangePi; hermes 同款
+            // daily_sentences.csv 已拷入项目, 日期 ordinal + offset 同算法)
+            auto s = daily_sentence::get(_sent_offset);
+            if (!s.en.empty()) { sent_en = std::move(s.en); sent_cn = std::move(s.cn); }
         }
         // 新闻多源轮播 (2026-11-15 起设备直连 8 源 RSS, oneapp news_rss.py
         // 同款 — 原 hermes /news/feeds 中转退役; news_rss::fetchAllJson 内部
@@ -1266,7 +1248,7 @@ void AppHome::_fetch_dashboard()
         // 轮播 = 纯 AI 新闻 (每日一句移 hero 主卡, 2026-10-30); 越界索引归零
         _carousel = _news_items;
         if (_car_idx >= (int)_carousel.size()) _car_idx = 0;
-        _ipo_txt = ipo_txt;   // 空串=无新股, UI 隐藏
+        if (ipo_txt != "\x01") _ipo_txt = ipo_txt;   // \x01=拉取失败保持旧值; 空串=无新股隐藏
         mclog::tagInfo(_tag, "[dbg] ipo='{}'", ipo_txt.c_str());
         _dash_ds_txt  = ds_txt;
         _dash_ag1_txt = ag1.empty() ? "今日无提醒/行程" : ag1;
