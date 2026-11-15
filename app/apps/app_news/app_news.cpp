@@ -406,6 +406,8 @@ void AppNews::_fetch()
                 j = PsramJson::parse(news_rss::fetchAllJson());
             } catch (...) {
                 mclog::tagWarn(TAG, "json parse failed");
+                fetched = "--";   // 诚实信号: _ever_loaded 置位 → 页签显
+                                  // "该源暂不可用", 不再永远"加载中…"
                 break;
             }
             if (!j.value("ok", false) || !j.contains("feeds") || !j["feeds"].is_object()) {

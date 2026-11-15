@@ -114,6 +114,31 @@ inline std::string strip_tags(const std::string& s)
     return out;
 }
 
+// 非法 UTF-8 序列剔除 (坏源防御: 一个源的脏字节不能拖垮整包 JSON —
+// nlohmann 对字符串做严格 UTF-8 校验, 2026-11-15 实锤)
+inline void utf8_sanitize(std::string& s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        unsigned char c = (unsigned char)s[i];
+        size_t len = (c & 0x80) == 0   ? 1
+                     : (c & 0xE0) == 0xC0 ? 2
+                     : (c & 0xF0) == 0xE0 ? 3
+                     : (c & 0xF8) == 0xF0 ? 4
+                                          : 0;
+        if (len == 0 || i + len > s.size()) { i++; continue; }
+        bool ok = true;
+        for (size_t k = 1; k < len; k++) {
+            if (((unsigned char)s[i + k] & 0xC0) != 0x80) { ok = false; break; }
+        }
+        if (!ok) { i++; continue; }
+        out.append(s, i, len);
+        i += len;
+    }
+    s.swap(out);
+}
+
 inline std::string clean_text(const std::string& raw, size_t limit)
 {
     // oneapp 顺序: unescape → strip → 折叠空白 (实体化过的内嵌标签整段吃掉)
@@ -131,7 +156,14 @@ inline std::string clean_text(const std::string& raw, size_t limit)
         out += c;
     }
     while (!out.empty() && out.back() == ' ') out.pop_back();
-    if (out.size() > limit) out.resize(limit);
+    utf8_sanitize(out);
+    // 截断必须落在 UTF-8 字符边界 (resize 拦腰切多字节 = 非法序列,
+    // nlohmann 严格校验直接拒整包 — 2026-11-15 新闻全挂真凶)
+    if (out.size() > limit) {
+        size_t cut = limit;
+        while (cut > 0 && (((unsigned char)out[cut]) & 0xC0) == 0x80) cut--;
+        out.resize(cut);
+    }
     return out;
 }
 
@@ -410,6 +442,7 @@ inline std::vector<RssItem> parse_feed(const std::string& raw)
         static const char* const DESC_TAGS[] = {"description", "summary", "content"};
         it.d  = extract_field_any(block, DESC_TAGS, 3, 200);
         it.u  = extract_link(block);
+        utf8_sanitize(it.u);   // href 原文不经 clean_text, 单独防御
         static const char* const DATE_TAGS[] = {"pubdate", "published", "updated", "date"};
         it.ts = fmt_ts(extract_field_any(block, DATE_TAGS, 4, 300));
         out.push_back(std::move(it));
