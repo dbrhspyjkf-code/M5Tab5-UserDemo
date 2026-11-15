@@ -11,6 +11,7 @@
 #include <cstring>
 #include <cctype>
 #include <algorithm>
+#include <thread>
 #include <chrono>
 #include <ctime>
 
@@ -101,6 +102,7 @@ static int64_t mono_ms()
 // ════════════════════════════════════════════════════════════════════════════
 namespace {
 constexpr const char* kWatchNvsKey = "stocks_watch";   // NVS key ≤15 字符
+constexpr const char* kEmKeyNvs    = "em_apikey";      // 东财妙想 API-KEY
 
 // 首次启动种子 = 迁移前 Pi 上 /api/stocks/portfolio 的 14 只,
 // 用户的列表原样保留; 之后增删都在设备上做 (NVS)。
@@ -200,6 +202,9 @@ void AppStocks::onRunning()
     }
     if (_name_ready.exchange(false)) {
         _refreshUiFromItems();          // 异步补的名字到位
+    }
+    if (_em_ready.exchange(false)) {
+        _applyEmResult();               // 东财同步结果 (toast + 刷新)
     }
     // 指数页在前台时 60s 刷新
     if (_page == 1 && _scr && lv_screen_active() == _scr) {
@@ -325,8 +330,8 @@ void AppStocks::_ensureCards(int n)
     if (n > MAX_CARDS) n = MAX_CARDS;
     const int before = (int)_cards.size();
     for (int i = (int)_cards.size(); i < n; i++) {
-        // 卡位 0 让给「+ 添加自选股」tile (常驻首格, 滑动也永远第一屏可见)
-        const int slot = i + 1;
+        // 卡位 0/1 让给「+ 添加自选股」「同步东财」两个 tile (常驻第一屏)
+        const int slot = i + 2;
         const int col = slot % GRID_COLS, row = slot / GRID_COLS;
         lv_obj_t* card = lv_obj_create(_stocks_scroll);
         lv_obj_set_size(card, CARD_W, CARD_H);
@@ -443,7 +448,7 @@ void AppStocks::_buildUi()
 
     // 空列表提示 (全部删光时显示; 平时隐藏)
     _empty_label = lv_label_create(_stocks_page);
-    lv_label_set_text(_empty_label, "暂无自选股\n点左上角 + 添加");
+    lv_label_set_text(_empty_label, "暂无自选股\n左上角可添加 / 同步东财");
     lv_obj_set_style_text_font(_empty_label, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_empty_label, lv_color_hex(C_DIM()), 0);
     lv_obj_set_style_text_align(_empty_label, LV_TEXT_ALIGN_CENTER, 0);
@@ -461,7 +466,8 @@ void AppStocks::_buildUi()
     lv_obj_set_style_shadow_width(_add_tile, 0, 0);
     lv_obj_clear_flag(_add_tile, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(_add_tile, [](lv_event_t* e) {
-        static_cast<AppStocks*>(lv_event_get_user_data(e))->_openAddModal();
+        static_cast<AppStocks*>(lv_event_get_user_data(e))
+            ->_openInputModal(InputMode::AddStock);
     }, LV_EVENT_CLICKED, this);
     {
         lv_obj_t* plus = lv_label_create(_add_tile);
@@ -474,6 +480,34 @@ void AppStocks::_buildUi()
         lv_obj_set_style_text_font(add_txt, zh_font_sm(), 0);
         lv_obj_set_style_text_color(add_txt, lv_color_hex(C_DIM()), 0);
         lv_obj_align(add_txt, LV_ALIGN_CENTER, 0, 44);
+    }
+
+    // 「同步东财自选股」卡位第二格 (oneapp 的 s 键 → 触摸卡位).
+    // 首次点开输入妙想 API-KEY (存 NVS em_apikey), 之后直接同步替换本地列表.
+    _em_tile = lv_button_create(_stocks_scroll);
+    lv_obj_set_size(_em_tile, CARD_W, CARD_H);
+    lv_obj_set_style_bg_color(_em_tile, lv_color_hex(C_HEADER()), 0);
+    lv_obj_set_style_radius(_em_tile, 18, 0);
+    lv_obj_set_style_border_width(_em_tile, 2, 0);
+    lv_obj_set_style_border_color(_em_tile, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_set_style_border_opa(_em_tile, LV_OPA_60, 0);
+    lv_obj_set_style_shadow_width(_em_tile, 0, 0);
+    lv_obj_clear_flag(_em_tile, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(_em_tile, [](lv_event_t* e) {
+        static_cast<AppStocks*>(lv_event_get_user_data(e))
+            ->_openInputModal(InputMode::EmKey);
+    }, LV_EVENT_CLICKED, this);
+    {
+        lv_obj_t* sync_txt = lv_label_create(_em_tile);
+        lv_label_set_text(sync_txt, "同步");
+        lv_obj_set_style_text_font(sync_txt, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(sync_txt, lv_color_hex(theme::cur().accent), 0);
+        lv_obj_align(sync_txt, LV_ALIGN_CENTER, 0, -30);
+        lv_obj_t* em_txt = lv_label_create(_em_tile);
+        lv_label_set_text(em_txt, "东财自选");
+        lv_obj_set_style_text_font(em_txt, zh_font_sm(), 0);
+        lv_obj_set_style_text_color(em_txt, lv_color_hex(C_DIM()), 0);
+        lv_obj_align(em_txt, LV_ALIGN_CENTER, 0, 40);
     }
 
     // 卡位在 _refreshUiFromItems 里按持仓数动态创建 (_ensureCards)
@@ -960,7 +994,10 @@ void AppStocks::_destroyUi()
     _n_cards = 0;
     _stocks_scroll = nullptr;
     _add_tile = nullptr;
+    _em_tile = nullptr;
     _empty_label = nullptr;
+    if (_toast_timer) { lv_timer_delete(_toast_timer); _toast_timer = nullptr; }
+    _toast_lbl = nullptr;
     if (GetHAL()->lvKbGroup && _add_ta) lv_group_remove_obj(_add_ta);   // 防组内悬垂
     _add_modal = _add_ta = _add_kb = _add_hint = nullptr;   // _scr 删除即随之销毁
     _add_closing = false;                                  // 在飞的延迟关闭回调看到空指针跳过
@@ -1832,10 +1869,10 @@ void AppStocks::_refreshUiFromItems()
     for (int i = n; i < (int)_cards.size(); i++)
         lv_obj_add_flag(_cards[i], LV_OBJ_FLAG_HIDDEN);
 
-    // 「+ 添加自选股」卡位常驻首格 (不随滚动/排序移动, 第一屏永远可见)
-    if (_add_tile) {
-        lv_obj_set_pos(_add_tile, GRID_X0, 24);
-    }
+    // 「+ 添加自选股」「同步东财」两个卡位常驻前两格 (不随排序/滚动移动)
+    if (_add_tile) lv_obj_set_pos(_add_tile, GRID_X0, 24);
+    if (_em_tile)
+        lv_obj_set_pos(_em_tile, GRID_X0 + CARD_W + GRID_GAP, 24);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2061,11 +2098,13 @@ void AppStocks::_fetchWatchNameAsync(const std::string& code)
     }
 }
 
-// ── 添加自选股弹窗: 代码输入 + 屏幕键盘 (oneapp 的 n 键) ─────────────────────
-void AppStocks::_openAddModal()
+// ── 通用代码输入弹窗: 添加自选股 (oneapp n 键) / 东财 API-KEY (oneapp s 键) ──
+void AppStocks::_openInputModal(InputMode mode)
 {
     LvglLockGuard lock;
     if (!_scr || _add_modal || _add_closing) return;
+    _input_mode = mode;
+    const bool em = (mode == InputMode::EmKey);
 
     _add_modal = lv_obj_create(_scr);
     lv_obj_set_size(_add_modal, SCREEN_W, SCREEN_H);
@@ -2078,13 +2117,15 @@ void AppStocks::_openAddModal()
     lv_obj_add_flag(_add_modal, LV_OBJ_FLAG_CLICKABLE);   // 挡住底下的卡片
 
     lv_obj_t* title = lv_label_create(_add_modal);
-    lv_label_set_text(title, "添加自选股");
+    lv_label_set_text(title, em ? "同步东财自选股" : "添加自选股");
     lv_obj_set_style_text_font(title, zh_font_lg(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT()), 0);
     lv_obj_set_pos(title, 32, 24);
 
     lv_obj_t* tip = lv_label_create(_add_modal);
-    lv_label_set_text(tip, "输入 6 位代码，或 sh/sz/bj + 6 位（如 600519）");
+    lv_label_set_text(tip, em
+        ? "东财妙想 API-KEY：同步后用东财自选替换本地列表"
+        : "输入 6 位代码，或 sh/sz/bj + 6 位（如 600519）");
     lv_obj_set_style_text_font(tip, zh_font_sm(), 0);
     lv_obj_set_style_text_color(tip, lv_color_hex(C_DIM()), 0);
     lv_obj_set_pos(tip, 32, 82);
@@ -2093,17 +2134,22 @@ void AppStocks::_openAddModal()
     lv_obj_set_size(_add_ta, 620, 96);
     lv_obj_set_pos(_add_ta, 32, 132);
     lv_textarea_set_one_line(_add_ta, true);
-    lv_textarea_set_max_length(_add_ta, 8);
-    lv_textarea_set_placeholder_text(_add_ta, "600519");
-    lv_obj_set_style_text_font(_add_ta, &lv_font_montserrat_38, 0);
-    lv_obj_set_style_text_font(_add_ta, &lv_font_montserrat_38,
-                               LV_PART_TEXTAREA_PLACEHOLDER);
+    lv_textarea_set_max_length(_add_ta, em ? 128 : 8);
+    lv_textarea_set_placeholder_text(_add_ta, em ? "API-KEY" : "600519");
+    const lv_font_t* ta_font = em ? &lv_font_montserrat_24
+                                  : &lv_font_montserrat_38;
+    lv_obj_set_style_text_font(_add_ta, ta_font, 0);
+    lv_obj_set_style_text_font(_add_ta, ta_font, LV_PART_TEXTAREA_PLACEHOLDER);
     lv_obj_set_style_bg_color(_add_ta, lv_color_hex(C_HEADER()), 0);
     lv_obj_set_style_border_color(_add_ta, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_border_width(_add_ta, 2, 0);
     lv_obj_set_style_radius(_add_ta, 12, 0);
     lv_obj_set_style_text_color(_add_ta, lv_color_hex(C_TEXT()), 0);
     lv_obj_set_style_pad_hor(_add_ta, 16, 0);
+    if (em) {   // 回填已保存的 KEY, 便于核对/更换
+        const std::string saved = GetHAL()->getConfig(kEmKeyNvs, "");
+        if (!saved.empty()) lv_textarea_set_text(_add_ta, saved.c_str());
+    }
     // 实体键盘输入走 lvKbGroup 的焦点对象 (与 SSH/LoRa/想法同款)
     if (GetHAL()->lvKbGroup) {
         lv_group_add_obj(GetHAL()->lvKbGroup, _add_ta);
@@ -2129,8 +2175,8 @@ void AppStocks::_openAddModal()
         lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
         lv_obj_center(l);
     };
-    mk_btn("添加", 700, theme::cur().accent, [](lv_event_t* e) {
-        static_cast<AppStocks*>(lv_event_get_user_data(e))->_submitAdd();
+    mk_btn(em ? "同步" : "添加", 700, theme::cur().accent, [](lv_event_t* e) {
+        static_cast<AppStocks*>(lv_event_get_user_data(e))->_submitInput();
     });
     mk_btn("取消", 900, 0x33363A, [](lv_event_t* e) {
         static_cast<AppStocks*>(lv_event_get_user_data(e))->_closeAddModal();
@@ -2142,7 +2188,7 @@ void AppStocks::_openAddModal()
     lv_obj_align(_add_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_keyboard_set_textarea(_add_kb, _add_ta);
     lv_obj_add_event_cb(_add_kb, [](lv_event_t* e) {
-        static_cast<AppStocks*>(lv_event_get_user_data(e))->_submitAdd();
+        static_cast<AppStocks*>(lv_event_get_user_data(e))->_submitInput();
     }, LV_EVENT_READY, this);
     lv_obj_add_event_cb(_add_kb, [](lv_event_t* e) {
         static_cast<AppStocks*>(lv_event_get_user_data(e))->_closeAddModal();
@@ -2172,10 +2218,28 @@ void AppStocks::_finishCloseAddModal()
     _add_modal = _add_ta = _add_kb = _add_hint = nullptr;
 }
 
-void AppStocks::_submitAdd()
+void AppStocks::_submitInput()
 {
     if (!_add_ta || !_add_hint) return;
     const char* txt = lv_textarea_get_text(_add_ta);
+
+    // ── 东财 API-KEY: 存 NVS → 关弹窗 → 异步同步自选股 ──
+    if (_input_mode == InputMode::EmKey) {
+        const std::string key = trim_copy(txt ? txt : "");
+        if (key.empty()) {
+            lv_label_set_text(_add_hint, "API-KEY 为空");
+            lv_obj_set_style_text_color(_add_hint, lv_color_hex(C_UP()), 0);
+            return;
+        }
+        GetHAL()->setConfig(kEmKeyNvs, key);
+        _closeAddModal();
+        _toast("同步中…", theme::cur().accent);
+        _fetchEmWatchAsync(key);
+        mclog::tagInfo(TAG, "em sync start");
+        return;
+    }
+
+    // ── 添加自选股 ──
     const std::string code = norm_watch_code(txt ? txt : "");
     if (code.empty()) {
         lv_label_set_text(_add_hint, "代码无效：6 位数字，或 sh/sz/bj + 6 位");
@@ -2201,6 +2265,191 @@ void AppStocks::_submitAdd()
     _fetchStocksAsync();          // 立即拉一次 (新代码行情)
     _fetchWatchNameAsync(code);   // 名字异步补
     mclog::tagInfo(TAG, "watch added: {}", code);
+}
+
+// ── 东财妙想自选股同步 (oneapp fetchers.em_watchlist_fetch 移植) ────────────
+// POST https://mkapi2.dfcfs.com/finskillshub/api/claw/self-select/get
+// header: apikey；body {}。接口异步: 首响可能只有查询容器 (无 allResults),
+// 间隔 1.2s 重试至多 3 次。成功后整体替换本地自选 (名字用东财返回的 UTF-8)。
+void AppStocks::_fetchEmWatchAsync(const std::string& key)
+{
+    if (_em_in_flight.exchange(true)) return;
+    if (!GetHAL()->tryRunDetached([this, key]() {
+            _emFetchWorker(key);
+            _em_in_flight.store(false);
+        }, 24 * 1024)) {
+        _em_in_flight.store(false);
+        {
+            std::lock_guard<std::mutex> lk(_em_mu);
+            _em_ok = false;
+            _em_count = 0;
+            _em_msg = "同步任务创建失败";
+        }
+        _em_ready.store(true);
+    }
+}
+
+void AppStocks::_emFetchWorker(const std::string& key)
+{
+    constexpr const char* kUrl =
+        "https://mkapi2.dfcfs.com/finskillshub/api/claw/self-select/get";
+    constexpr const char* kUa =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+        " (KHTML, like Gecko) Chrome/120.0 Safari/537.36 ONEAPP/1.0";
+
+    bool ok = false;
+    int count = 0;
+    std::string msg;
+    std::vector<WatchItem> items;
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+        auto resp = GetHAL()->httpPost(kUrl, "{}", {
+            {"apikey", key},
+            {"Content-Type", "application/json"},
+            {"User-Agent", kUa},
+        });
+        if (!resp.ok) {
+            msg = "HTTP " + std::to_string(resp.status);
+            break;
+        }
+        bool retry = false;
+        try {
+            auto j = PsramJson::parse(resp.body, nullptr, false);
+            if (j.is_discarded() || !j.is_object()) {
+                msg = "响应格式错误";
+                break;
+            }
+            const auto& data = j["data"];
+            if (!data.is_object() || !data.contains("allResults") ||
+                data["allResults"].is_null()) {
+                if (attempt < 2) {
+                    retry = true;   // 东财异步: 首响可能只有 SELECT_STOCK 容器
+                } else {
+                    const std::string m = j.value("message", std::string());
+                    msg = m.empty() ? "无结果（去东财 App 确认）" : m;
+                }
+            } else {
+                auto add_block = [&](const auto& block) {
+                    if (!block.is_object()) return;
+                    const auto& res = block["result"];
+                    if (!res.is_object()) return;
+                    const auto& rows = res["dataList"];
+                    if (!rows.is_array()) return;
+                    for (const auto& row : rows) {
+                        if (!row.is_object()) continue;
+                        std::string raw = row.value("SECURITY_CODE", std::string());
+                        std::string mkt = row.value("MARKET_SHORT_NAME", std::string());
+                        const std::string name =
+                            row.value("SECURITY_SHORT_NAME", std::string());
+                        for (auto& c : raw) c = (char)tolower((unsigned char)c);
+                        for (auto& c : mkt) c = (char)tolower((unsigned char)c);
+                        const bool mkt_ok = (mkt == "sh" || mkt == "sz" || mkt == "bj");
+                        const bool raw_prefixed =
+                            raw.size() == 8 && (raw.rfind("sh", 0) == 0 ||
+                                                raw.rfind("sz", 0) == 0 ||
+                                                raw.rfind("bj", 0) == 0);
+                        const std::string qt = norm_watch_code(
+                            (mkt_ok && !raw_prefixed) ? mkt + raw : raw);
+                        if (qt.empty()) continue;   // 港美股等跳过
+                        bool dup = false;
+                        for (const auto& w : items)
+                            if (w.code == qt) { dup = true; break; }
+                        if (!dup) items.push_back({qt, name});
+                    }
+                };
+                const auto& allr = data["allResults"];
+                if (allr.is_array()) {
+                    for (const auto& b : allr) add_block(b);
+                } else {
+                    add_block(allr);   // dict 单块形态
+                }
+                if (items.empty()) {
+                    msg = "东财自选为空（去东财 App 确认）";
+                } else {
+                    ok = true;
+                    count = (int)items.size();
+                }
+            }
+        } catch (...) {
+            msg = "解析失败";
+            break;
+        }
+        if (ok || !retry) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    }
+
+    if (ok) {
+        {
+            std::lock_guard<std::mutex> lk(_watch_mu);
+            _watch = std::move(items);
+        }
+        _saveWatch();
+        _rebuildItemsFromWatch();   // 行情交给随后 _fetchStocksAsync
+    }
+    {
+        std::lock_guard<std::mutex> lk(_em_mu);
+        _em_ok = ok;
+        _em_count = count;
+        _em_msg = msg;
+    }
+    _em_ready.store(true);
+    mclog::tagInfo(TAG, "em sync done ok={} count={} msg={}", ok, count, msg);
+}
+
+void AppStocks::_applyEmResult()
+{
+    bool ok;
+    int count;
+    std::string msg;
+    {
+        std::lock_guard<std::mutex> lk(_em_mu);
+        ok = _em_ok;
+        count = _em_count;
+        msg = _em_msg;
+    }
+    if (ok) {
+        _refreshUiFromItems();
+        _toast("已同步 " + std::to_string(count) + " 只（替换本地自选）",
+               theme::cur().ok);
+        _fetchStocksAsync();
+    } else {
+        _toast("同步失败：" + msg, theme::cur().danger);
+    }
+    mclog::tagInfo(TAG, "em result ok={} count={}", ok, count);
+}
+
+// 3.5s 自动消失的提示条 (同步中/同步结果)
+void AppStocks::_toast(const std::string& text, uint32_t color)
+{
+    LvglLockGuard lock;
+    if (!_scr) return;
+    if (!_toast_lbl) {
+        _toast_lbl = lv_label_create(_scr);
+        lv_obj_set_style_bg_color(_toast_lbl, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(_toast_lbl, LV_OPA_70, 0);
+        lv_obj_set_style_radius(_toast_lbl, 12, 0);
+        lv_obj_set_style_pad_all(_toast_lbl, 16, 0);
+        lv_obj_set_style_text_font(_toast_lbl, zh_font_lg(), 0);
+        lv_obj_set_style_text_align(_toast_lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(_toast_lbl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(_toast_lbl, 1000);
+        lv_obj_align(_toast_lbl, LV_ALIGN_BOTTOM_MID, 0, -28);
+    }
+    lv_label_set_text(_toast_lbl, text.c_str());
+    lv_obj_set_style_text_color(_toast_lbl, lv_color_hex(color), 0);
+    lv_obj_clear_flag(_toast_lbl, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_toast_lbl);
+    if (_toast_timer) {
+        lv_timer_reset(_toast_timer);
+    } else {
+        _toast_timer = lv_timer_create([](lv_timer_t* t) {
+            auto* self = static_cast<AppStocks*>(lv_timer_get_user_data(t));
+            if (self->_toast_lbl)
+                lv_obj_add_flag(self->_toast_lbl, LV_OBJ_FLAG_HIDDEN);
+            self->_toast_timer = nullptr;
+            lv_timer_del(t);
+        }, 3500, this);
+    }
 }
 
 void AppStocks::_deleteWatchItem(const std::string& code)

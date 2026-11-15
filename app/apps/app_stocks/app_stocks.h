@@ -45,6 +45,8 @@ private:
         bool  ok {false};
         float price {0}, chg {0}, pchg {0};
     };
+    // 通用代码输入弹窗的两种用途 (添加自选股 / 东财 API-KEY)
+    enum class InputMode { AddStock, EmKey };
 
     // ── Layout ─────────────────────────────────────────────────────────
     static constexpr int SCREEN_W    = 1280;
@@ -154,6 +156,13 @@ private:
     std::mutex             _quotes_mu;
     std::atomic<bool>      _quotes_ready {false};     // worker 完成 → onRunning 消费
     std::atomic<bool>      _name_ready   {false};     // 异步补名字完成 → onRunning 消费
+    // 东财妙想自选股同步 (oneapp fetchers.em_watchlist_fetch 移植)
+    std::atomic<bool>      _em_in_flight {false};
+    std::atomic<bool>      _em_ready     {false};     // worker 完成 → onRunning 消费
+    std::mutex             _em_mu;
+    bool                   _em_ok        {false};
+    int                    _em_count     {0};
+    std::string            _em_msg;
     int64_t                _last_fetch_ms {0};
     // app 是否在前台. 退出时先置 false, 防止在途的 fetch worker 完成后碰已拆 UI.
     std::atomic<bool>      _app_open {false};
@@ -172,11 +181,15 @@ private:
     std::vector<lv_obj_t*> _card_amt;   // 涨跌额 (2026-10-27 用户加)
     lv_obj_t* _stocks_scroll {nullptr};  // 纵向滚动容器 (承载卡片网格)
     lv_obj_t* _add_tile      {nullptr};  // 首格「+ 添加自选股」卡位 (常驻可见)
+    lv_obj_t* _em_tile       {nullptr};  // 第二格「同步东财自选股」卡位
     lv_obj_t* _empty_label   {nullptr};  // 自选股为空时的提示
+    lv_obj_t* _toast_lbl     {nullptr};  // 同步结果/提示 toast (自动消失)
+    lv_timer_t* _toast_timer {nullptr};
     int         _n_cards     = 0;        // 当前实际卡位数
     lv_obj_t* _detail_modal{nullptr};
 
-    // 添加自选股弹窗 (代码输入 + 屏幕键盘)
+    // 通用代码输入弹窗 (添加自选股 / 东财 API-KEY 共用)
+    InputMode _input_mode {InputMode::AddStock};
     lv_obj_t* _add_modal {nullptr};
     lv_obj_t* _add_ta    {nullptr};
     lv_obj_t* _add_kb    {nullptr};
@@ -251,11 +264,16 @@ private:
     void _fetchStocksAsync();          // 腾讯 qt 批量拉自选股行情
     void _watchFetchWorker(const std::vector<std::string>& codes);
     void _fetchWatchNameAsync(const std::string& code);  // ifzq 拉 UTF-8 名字 (添加后)
-    void _openAddModal();              // 添加自选股弹窗 (代码 + 屏幕键盘)
+    void _openInputModal(InputMode mode);  // 通用代码输入弹窗 (添加自选/东财KEY)
     void _closeAddModal();             // 延迟关闭 (事件回调里不能删祖先)
     void _finishCloseAddModal();       // lv_async_call 落地: 真正删除弹窗
-    void _submitAdd();                 // 校验 → 去重 → 落 NVS → 补名字
+    void _submitInput();               // 按 _input_mode 分派: 添加自选 / 存KEY并同步
     void _deleteWatchItem(const std::string& code);
+    // 东财妙想自选股同步 (oneapp em_watchlist_fetch 移植)
+    void _fetchEmWatchAsync(const std::string& key);
+    void _emFetchWorker(const std::string& key);
+    void _applyEmResult();             // worker 完成 → onRunning (toast + 拉行情)
+    void _toast(const std::string& text, uint32_t color);   // 3.5s 自动消失
     void _refreshUiFromItems();
     void _ensureCards(int n);   // 按需创建卡位到滚动容器
     // 涨绿 / 跌红 / 平灰 — UI 详情卡用, 两平台都要.
