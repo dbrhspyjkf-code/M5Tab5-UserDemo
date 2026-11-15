@@ -325,7 +325,8 @@ void AppSettings::onRunning()
         if (!_email_page) return;   // pending_close 已把页关了
         if (mailc_accts_done.exchange(false) && _mail_lv == MailLv::Acct)
             _mailRender();
-        if (mailc_folders_done.exchange(false) && _mail_lv == MailLv::Folders) {
+        if (mailc_folders_done.exchange(false) && _mail_lv == MailLv::List) {
+            // 两列布局: 文件夹按钮在 List 层左列, 拉到即渲染 (含选中态高亮)
             bool match;
             {
                 std::lock_guard<std::mutex> lk(mailc_mutex);
@@ -418,7 +419,8 @@ void AppSettings::onRunning()
             if (ok) {
                 _mail_acct = em;
                 _mailStatus(std::string("已登录 · INBOX 未读 ") + std::to_string(un));
-                _mailSetLv(MailLv::Folders);
+                _mailEnterList("@unread", "全部未读");   // 两列版: 登录直达列表页
+                _mailSetLv(MailLv::List);                // onRunning 内同步切层安全
             } else {
                 _mailStatus("登录失败: " + err);
             }
@@ -2495,6 +2497,21 @@ void AppSettings::_openEmail()
     lv_obj_set_flex_flow(_mail_content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(_mail_content, 12, 0);
 
+    // 左列文件夹按钮 (两列布局, 仅 List 层显示 — _mailRender 按层切位置/可见性)
+    _mail_sidebar = lv_obj_create(_email_page);
+    lv_obj_set_size(_mail_sidebar, 300, 608);
+    lv_obj_set_pos(_mail_sidebar, 20, 96);
+    lv_obj_set_style_bg_color(_mail_sidebar, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_opa(_mail_sidebar, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_mail_sidebar, 0, 0);
+    lv_obj_set_style_radius(_mail_sidebar, 0, 0);
+    lv_obj_set_style_pad_all(_mail_sidebar, 0, 0);
+    lv_obj_set_scroll_dir(_mail_sidebar, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(_mail_sidebar, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_set_flex_flow(_mail_sidebar, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(_mail_sidebar, 10, 0);
+    lv_obj_add_flag(_mail_sidebar, LV_OBJ_FLAG_HIDDEN);
+
     // 内容区居中提示 (加载中/失败/空; 挂 page 防被 flex 顶走)
     _mail_hint = mail_label(_email_page, "加载中…", C_DIM, zh_font_30(), 0, 370, 1280,
                             LV_LABEL_LONG_DOT);
@@ -2534,7 +2551,7 @@ void AppSettings::_closeEmail()
     }
     _mail_kb = nullptr;           // 键盘是 page 子对象, 已随删
     _mail_title = _mail_status = _mail_actions = nullptr;
-    _mail_content = _mail_hint = nullptr;
+    _mail_content = _mail_hint = _mail_sidebar = nullptr;
     _mail_ta_email = _mail_ta_auth = _mail_ta_to = _mail_ta_subj = _mail_ta_body = nullptr;
     _mail_body_lbl = nullptr;
     // 层状态复位 (静态缓存保留供下次秒开)
@@ -2576,6 +2593,21 @@ void AppSettings::_mailKbHide()
     AppVoiceInput::dismissMicButton();
 }
 
+// 选定文件夹 (仅置状态, 不切层 — 事件回调里不同步删事件目标祖先;
+// 切层由调用方走 _mail_pending 或 onRunning 里显式 _mailSetLv)
+void AppSettings::_mailEnterList(const std::string& raw, const std::string& disp)
+{
+    _mail_folder = raw;
+    _mail_folder_disp = disp;
+    _mail_total = 0;
+    _mail_got = false;
+    {
+        std::lock_guard<std::mutex> lk(mailc_mutex);
+        mailc_msgs.clear();                           // 进新夹先清旧列表
+        mailc_total = 0;
+    }
+}
+
 void AppSettings::_mailSetLv(MailLv lv)
 {
     _mailKbHide();
@@ -2583,8 +2615,9 @@ void AppSettings::_mailSetLv(MailLv lv)
     _mailRender();
     switch (lv) {
     case MailLv::Acct:    mailcFetchAccts(); break;
-    case MailLv::Folders: mailcFetchFolders(_mail_acct); break;
     case MailLv::List:
+        // 两列布局: 左列文件夹按钮 + 右列列表 — 夹表与列表并行拉
+        mailcFetchFolders(_mail_acct);
         mailcFetchList(_mail_acct, _mail_folder);
         _mailStatus("获取中…");
         break;
@@ -2598,8 +2631,7 @@ AppSettings::MailLv AppSettings::_mailBackTarget(bool* close)
     switch (_mail_lv) {
     case MailLv::Compose:  return _mail_reply ? MailLv::Detail : MailLv::List;
     case MailLv::Detail:   return MailLv::List;
-    case MailLv::List:     return MailLv::Folders;
-    case MailLv::Folders:  return MailLv::Acct;
+    case MailLv::List:     return MailLv::Acct;   // 两列版: 列表页直接回账号层
     case MailLv::Login:    return MailLv::Acct;
     case MailLv::Acct: default: *close = true; return MailLv::Acct;
     }
@@ -2616,11 +2648,27 @@ void AppSettings::_mailRender()
     _mail_body_lbl = nullptr;
     _mail_ta_email = _mail_ta_auth = _mail_ta_to = _mail_ta_subj = _mail_ta_body = nullptr;
     lv_obj_add_flag(_mail_hint, LV_OBJ_FLAG_HIDDEN);
+    // 两列布局 (List 层): 左列文件夹按钮 300px + 右列列表 920px;
+    // 其余层独占全宽, 左列隐藏。
+    const bool two_col = (_mail_lv == MailLv::List);
+    if (two_col) {
+        lv_obj_set_pos(_mail_content, 340, 96);
+        lv_obj_set_size(_mail_content, 920, 608);
+        if (_mail_sidebar) lv_obj_clear_flag(_mail_sidebar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(_mail_hint, LV_ALIGN_TOP_MID, 160, 370);  // 提示居右列中心
+    } else {
+        lv_obj_set_pos(_mail_content, 20, 96);
+        lv_obj_set_size(_mail_content, 1240, 608);
+        if (_mail_sidebar) lv_obj_add_flag(_mail_sidebar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(_mail_hint, LV_ALIGN_TOP_MID, 0, 370);
+    }
     switch (_mail_lv) {
     case MailLv::Acct:    _mailRenderAcct();    break;
     case MailLv::Login:   _mailRenderLogin();   break;
-    case MailLv::Folders: _mailRenderFolders(); break;
-    case MailLv::List:    _mailRenderList();    break;
+    case MailLv::List:
+        if (_mail_sidebar) { lv_obj_clean(_mail_sidebar); _mailRenderSidebar(); }
+        _mailRenderList();
+        break;
     case MailLv::Detail:  _mailRenderDetail();  break;
     case MailLv::Compose: _mailRenderCompose(); break;
     }
@@ -2704,9 +2752,9 @@ void AppSettings::_mailRenderLogin()
         C_DIM, zh_font_md(), 24, 12, 1192, LV_LABEL_LONG_WRAP);
 }
 
-void AppSettings::_mailRenderFolders()
+// 左列文件夹按钮 (两列布局; 虚拟聚合夹置顶 + 真实夹; 当前选中高亮)
+void AppSettings::_mailRenderSidebar()
 {
-    lv_label_set_text(_mail_title, _mail_acct.c_str());
     std::vector<MailFolder> folders;
     std::string err;
     bool ok;
@@ -2716,30 +2764,34 @@ void AppSettings::_mailRenderFolders()
         err = mailc_err;
         ok = mailc_folders_ok.load();
     }
-    _mailStatus(folders.empty() && !ok ? "连接中…"
-              : std::to_string(folders.size()) + " 个文件夹");
     for (const auto& f : folders) {
+        const bool sel = (f.raw == _mail_folder);
         auto* ctx = new MailCtx{this, f.raw, f.name, ""};
-        lv_obj_t* row = mail_card(_mail_content, LV_PCT(100), 100,
-                                  f.virt ? C_CARD_PR : C_CARD, _mailFolderRow_cb, ctx);
-        lv_obj_add_event_cb(row, mail_ctx_del_cb, LV_EVENT_DELETE, ctx);
-        mail_label(row, f.name.c_str(), f.virt ? C_ACCENT : C_TEXT, zh_font_30(),
-                   24, 32, 800, LV_LABEL_LONG_DOT);
-        if (f.unread > 0) {
-            std::string un = "未读 " + std::to_string(f.unread);
-            mail_label(row, un.c_str(), C_ACCENT, zh_font_md(), 850, 36, 160,
-                       LV_LABEL_LONG_DOT);
-        }
-        if (f.total >= 0) {
-            std::string tt = "共 " + std::to_string(f.total);
-            lv_obj_t* tl = mail_label(row, tt.c_str(), C_DIM, zh_font_md(), 1010, 36,
-                                      206, LV_LABEL_LONG_DOT);
-            lv_obj_set_style_text_align(tl, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_t* btn = mail_card(_mail_sidebar, LV_PCT(100), f.virt ? 92 : 76,
+                                  sel ? C_ACCENT : (f.virt ? C_CARD_PR : C_CARD),
+                                  _mailFolderBtn_cb, ctx);
+        lv_obj_add_event_cb(btn, mail_ctx_del_cb, LV_EVENT_DELETE, ctx);
+        const uint32_t fg = sel ? C_BG : (f.virt ? C_ACCENT : C_TEXT);
+        lv_obj_t* nl = mail_label(btn, f.name.c_str(), fg,
+                                  f.virt ? zh_font_30() : zh_font_md(),
+                                  20, (f.virt ? 92 : 76) / 2 - (f.virt ? 21 : 17),
+                                  200, LV_LABEL_LONG_DOT);
+        (void)nl;
+        if (f.unread > 0 && !sel) {
+            std::string un = std::to_string(f.unread);
+            lv_obj_t* ub = mail_label(btn, un.c_str(), C_ACCENT, zh_font_md(),
+                                      248, (f.virt ? 92 : 76) / 2 - 15, 44,
+                                      LV_LABEL_LONG_DOT);
+            lv_obj_set_style_text_align(ub, LV_TEXT_ALIGN_RIGHT, 0);
         }
     }
     if (folders.empty()) {
-        lv_label_set_text(_mail_hint, ok ? "无文件夹" : ("拉取失败: " + err).c_str());
-        lv_obj_clear_flag(_mail_hint, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_t* l = lv_label_create(_mail_sidebar);
+        lv_label_set_text(l, ok ? "无文件夹" : ("拉取失败: " + err).c_str());
+        lv_obj_set_style_text_font(l, zh_font_md(), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(C_DIM), 0);
+        lv_obj_set_width(l, LV_PCT(100));
+        lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
     }
 }
 
@@ -2749,19 +2801,25 @@ void AppSettings::_mailRenderList()
     mail_pill(_mail_actions, 0, 190, "刷 新", C_CARD, C_TEXT, _mailRefreshBtn_cb, this);
     mail_pill(_mail_actions, 202, 190, "写邮件", C_ACCENT, C_BG, _mailComposeBtn_cb, this);
 
-    // 列表口径 = 未读或旗标 (服务端 UNSEEN∪FLAGGED 同款; 本地过滤兜乐观更新:
-    // 标已读且无旗标的行即时消失, 旗标行保留变已读 — oneapp _mail_view_msgs)
+    // 本地过滤兜乐观更新 (2026-11-15 两列版口径):
+    // @unread → 只留未读 (标已读即消失); @flagged → 只留旗标 (取旗即消失);
+    // 真实夹 = 文件夹浏览, 全量显示 (已读变暗, 不消失)。
+    const bool scope_unread  = (_mail_folder == "@unread");
+    const bool scope_flagged = (_mail_folder == "@flagged");
     std::vector<MailMsg> view;
     int total = 0;
     {
         std::lock_guard<std::mutex> lk(mailc_mutex);
-        for (const auto& m : mailc_msgs)
-            if (!m.seen || m.flagged) view.push_back(m);
+        for (const auto& m : mailc_msgs) {
+            if (scope_unread && m.seen) continue;
+            if (scope_flagged && !m.flagged) continue;
+            view.push_back(m);
+        }
         total = mailc_total;
     }
     _mailStatus(std::to_string(view.size()) + "/" + std::to_string(total) + " 封");
 
-    const bool agg = _mail_folder.rfind("@", 0) == 0;   // 聚合视图标注来源夹
+    const bool agg = scope_unread || scope_flagged;   // 聚合视图标注来源夹
     for (const auto& m : view) _mailMakeRow(m, agg);
 
     if (view.empty()) {
@@ -2774,8 +2832,11 @@ void AppSettings::_mailRenderList()
         }
         if (_mail_got && !ok && !err.empty())
             lv_label_set_text(_mail_hint, ("拉取失败: " + err).c_str());
+        else if (_mail_got)
+            lv_label_set_text(_mail_hint, scope_unread ? "没有未读邮件"
+                              : scope_flagged ? "没有红旗邮件" : "文件夹是空的");
         else
-            lv_label_set_text(_mail_hint, _mail_got ? "没有未读/旗标邮件" : "获取中…");
+            lv_label_set_text(_mail_hint, "获取中…");
         lv_obj_clear_flag(_mail_hint, LV_OBJ_FLAG_HIDDEN);
     }
 }
@@ -2880,7 +2941,7 @@ void AppSettings::_mailCollapseSwipe(bool anim)
 {
     lv_obj_t* row = _mail_swipe_open;
     _mail_swipe_open = nullptr;
-    if (row) lv_obj_scroll_to_x(row, 200, anim ? LV_ANIM_ON : LV_ANIM_OFF);
+    if (row) lv_obj_scroll_to_x(row, 160, anim ? LV_ANIM_ON : LV_ANIM_OFF);
 }
 
 lv_obj_t* AppSettings::_mailMakeRow(const MailMsg& m, bool agg)
@@ -2915,7 +2976,7 @@ lv_obj_t* AppSettings::_mailMakeRow(const MailMsg& m, bool agg)
 
     auto mk_zone = [&](int zx, const char* txt, const char* act, uint32_t fg) {
         lv_obj_t* b = lv_obj_create(row);
-        lv_obj_set_size(b, 184, 152);
+        lv_obj_set_size(b, 152, 152);
         lv_obj_set_pos(b, zx, 16);
         lv_obj_set_style_bg_color(b, lv_color_hex(C_CARD), 0);
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
@@ -2926,7 +2987,7 @@ lv_obj_t* AppSettings::_mailMakeRow(const MailMsg& m, bool agg)
         lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t* l = lv_label_create(b);
         lv_label_set_text(l, txt);
-        lv_obj_set_style_text_font(l, zh_font_30(), 0);
+        lv_obj_set_style_text_font(l, zh_font_md(), 0);
         lv_obj_set_style_text_color(l, lv_color_hex(fg), 0);
         lv_obj_center(l);
         lv_obj_add_flag(b, LV_OBJ_FLAG_EVENT_BUBBLE);  // PRESSED 冒泡给行做单开合拢
@@ -2935,13 +2996,13 @@ lv_obj_t* AppSettings::_mailMakeRow(const MailMsg& m, bool agg)
         lv_obj_add_event_cb(b, _mailAct_cb, LV_EVENT_CLICKED, ctx);
         lv_obj_add_event_cb(b, mail_ctx_del_cb, LV_EVENT_DELETE, ctx);
     };
-    mk_zone(8, l_txt, l_act, l_fg);        // 左区 (右滑露)
-    mk_zone(1456, r_txt, r_act, r_fg);     // 右区 (左滑露); 内容右缘 1640 = 满程 400
+    mk_zone(4, l_txt, l_act, l_fg);        // 左区 (右滑露)
+    mk_zone(1084, r_txt, r_act, r_fg);     // 右区 (左滑露); 内容右缘 1236 = 满程 316
 
-    // 面卡 (可点击 → 详情; 拖它滚行)
+    // 面卡 (可点击 → 详情; 拖它滚行) — 两列布局: 右列宽 920
     lv_obj_t* face = lv_obj_create(row);
-    lv_obj_set_size(face, 1240, 184);
-    lv_obj_set_pos(face, 200, 0);
+    lv_obj_set_size(face, 920, 184);
+    lv_obj_set_pos(face, 160, 0);
     lv_obj_set_style_bg_color(face, lv_color_hex(C_CARD_PR), 0);
     lv_obj_set_style_bg_opa(face, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(face, 18, 0);
@@ -2967,17 +3028,17 @@ lv_obj_t* AppSettings::_mailMakeRow(const MailMsg& m, bool agg)
         lv_label_set_long_mode(l, mode);
         return l;
     };
-    mk_label(m.from.c_str(), C_TEXT, zh_font_30(), 24, 12, 940, LV_LABEL_LONG_DOT);
+    mk_label(m.from.c_str(), C_TEXT, zh_font_30(), 24, 12, 600, LV_LABEL_LONG_DOT);
     if (!m.date.empty()) {
         lv_obj_t* d = mk_label(m.date.c_str(), C_DIM, zh_font_md(),
-                               1016, 20, 200, LV_LABEL_LONG_DOT);
+                               724, 20, 172, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_align(d, LV_TEXT_ALIGN_RIGHT, 0);
     }
     if (m.flagged) {
         // 🚩 无字形 (GB2312/FA 都没有) → 主题 danger 色圆角点
         lv_obj_t* fl = lv_obj_create(face);
         lv_obj_set_size(fl, 18, 18);
-        lv_obj_set_pos(fl, 982, 24);
+        lv_obj_set_pos(fl, 648, 24);
         lv_obj_set_style_bg_color(fl, lv_color_hex(C_DANGER), 0);
         lv_obj_set_style_bg_opa(fl, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(fl, 4, 0);
@@ -2989,12 +3050,12 @@ lv_obj_t* AppSettings::_mailMakeRow(const MailMsg& m, bool agg)
     }
     // 主题: 未读亮色 / 已读弱化
     mk_label(m.subject.c_str(), m.seen ? C_DIM : C_TEXT, zh_font_30(),
-             24, 58, 1192, LV_LABEL_LONG_DOT);
+             24, 58, 872, LV_LABEL_LONG_DOT);
     if (!m.preview.empty()) {
         std::string pv = m.preview;
         if (agg && !m.fldn.empty() && m.fld != _mail_folder)
             pv = "[" + m.fldn + "] " + pv;   // 聚合视图标注来源夹 (oneapp 同款)
-        lv_obj_t* p = mk_label(pv.c_str(), C_DIM, zh_font_md(), 24, 104, 1192,
+        lv_obj_t* p = mk_label(pv.c_str(), C_DIM, zh_font_md(), 24, 104, 872,
                                LV_LABEL_LONG_WRAP);
         lv_obj_set_height(p, 64);
         lv_obj_set_style_text_line_space(p, 2, 0);
@@ -3002,12 +3063,12 @@ lv_obj_t* AppSettings::_mailMakeRow(const MailMsg& m, bool agg)
 
     // 单开原则: 按下新行时合拢已开的旧行
     lv_obj_add_event_cb(row, _mailRowPressed_cb, LV_EVENT_PRESSED, this);
-    // 松手吸合 {0, 200, 400} + 单开登记
+    // 松手吸合 {0, 160, 316} + 单开登记
     lv_obj_add_event_cb(row, _mailRowScroll_cb, LV_EVENT_SCROLL_END, this);
 
-    // 初始 scroll_x=200 恰好只露面卡 (先强制布局, 否则 range 未算好被钳到 0)
+    // 初始 scroll_x=160 恰好只露面卡 (先强制布局, 否则 range 未算好被钳到 0)
     lv_obj_update_layout(row);
-    lv_obj_scroll_to_x(row, 200, LV_ANIM_OFF);
+    lv_obj_scroll_to_x(row, 160, LV_ANIM_OFF);
     return row;
 }
 
@@ -3353,7 +3414,9 @@ void AppSettings::_mailAcctRow_cb(lv_event_t* e)
         std::lock_guard<std::mutex> lk(mailc_mutex);
         mailc_folders.clear();                        // 进新账号先清旧夹列表
     }
-    ctx->self->_mail_pending_lv = MailLv::Folders;
+    // 两列版: 选账号直达列表页 (默认「全部未读」, 左列可切文件夹)
+    ctx->self->_mailEnterList("@unread", "全部未读");
+    ctx->self->_mail_pending_lv = MailLv::List;
     ctx->self->_mail_pending = true;
 }
 
@@ -3417,21 +3480,26 @@ void AppSettings::_mailLoginGo_cb(lv_event_t* e)
     mailcLogin(em, au);
 }
 
-void AppSettings::_mailFolderRow_cb(lv_event_t* e)
+// 左列文件夹按钮: 原地切换右列列表 (不换层; 乐观清空 + 重渲染下一帧)
+void AppSettings::_mailFolderBtn_cb(lv_event_t* e)
 {
     auto* ctx = static_cast<MailCtx*>(lv_event_get_user_data(e));
     if (!ctx || !ctx->self) return;
-    ctx->self->_mail_folder = ctx->a;
-    ctx->self->_mail_folder_disp = ctx->b;
-    ctx->self->_mail_total = 0;
-    ctx->self->_mail_got = false;
+    AppSettings* self = ctx->self;
+    if (self->_mail_folder == ctx->a) return;         // 已在当前夹
+    self->_mail_folder = ctx->a;
+    self->_mail_folder_disp = ctx->b;
+    self->_mail_total = 0;
+    self->_mail_got = false;
+    self->_mailCollapseSwipe(false);
     {
         std::lock_guard<std::mutex> lk(mailc_mutex);
-        mailc_msgs.clear();                           // 进新夹先清旧列表
+        mailc_msgs.clear();                           // 切夹先清旧列表
         mailc_total = 0;
     }
-    ctx->self->_mail_pending_lv = MailLv::List;
-    ctx->self->_mail_pending = true;
+    self->_mailStatus("获取中…");
+    mailcFetchList(self->_mail_acct, self->_mail_folder);
+    self->_mail_pending_render = true;                // 下一帧重渲染 (高亮+空列表)
 }
 
 void AppSettings::_mailMsgOpen_cb(lv_event_t* e)
@@ -3633,7 +3701,7 @@ void AppSettings::_mailRowScroll_cb(lv_event_t* e)
     lv_obj_t* row = lv_event_get_current_target_obj(e);
     if (!self || !row || !self->_email_page) return;
     const int x = (int)lv_obj_get_scroll_x(row);
-    const int target = (x < 100) ? 0 : (x < 300 ? 200 : 400);
+    const int target = (x < 80) ? 0 : (x < 238 ? 160 : 316);
     if (target != x) {
         lv_obj_scroll_to_x(row, target, LV_ANIM_ON);   // 吸合; 第二次 END 再登记
         return;

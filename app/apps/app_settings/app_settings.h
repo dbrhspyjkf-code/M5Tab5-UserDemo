@@ -117,7 +117,9 @@ public:
     void openEmailPage();
 
     // ── Email client (五层直连, 2026-11-15) 公开数据类型 (匿名空间 helper 也要用) ──
-    enum class MailLv : int { Acct, Login, Folders, List, Detail, Compose };
+    // (2026-11-15 晚: 用户定稿两列布局 — Folders 独立层取消, 文件夹按钮并入
+    //  List 层左列; @uf 聚合夹取消, 未读/旗标单独夹)
+    enum class MailLv : int { Acct, Login, List, Detail, Compose };
     struct MailAcct   { std::string email; int unread = 0; };
     struct MailFolder { std::string raw, name; int unread = -1, total = -1; bool virt = false; };
     struct MailMsg    { std::string uid, fld, fldn, from, subject, date, preview;
@@ -183,6 +185,7 @@ private:
     lv_obj_t*   _mail_status  = nullptr;    // 顶栏状态/反馈行 (LONG_DOT)
     lv_obj_t*   _mail_actions = nullptr;    // 顶栏右侧动作钮容器 (每层重建)
     lv_obj_t*   _mail_content = nullptr;    // 层内容容器 (每层 lv_obj_clean 重建)
+    lv_obj_t*   _mail_sidebar = nullptr;    // 左列文件夹按钮 (仅 List 层显示, 两列布局)
     lv_obj_t*   _mail_hint    = nullptr;    // 内容区居中提示 (加载中/失败/空)
     lv_obj_t*   _mail_kb      = nullptr;    // 软键盘 (login/compose, 惰性创建)
 
@@ -256,11 +259,12 @@ private:
     void _mailRender();          // UI 线程: 按当前层重建 (顶栏动作 + 内容)
     void _mailRenderAcct();
     void _mailRenderLogin();
-    void _mailRenderFolders();
+    void _mailRenderSidebar();   // 左列文件夹按钮 (List 层专属, 两列布局)
     void _mailRenderList();
     void _mailRenderDetail();
     void _mailRenderCompose();
     void _mailSetLv(MailLv lv);  // 切层 (收键盘) + 按需拉数
+    void _mailEnterList(const std::string& raw, const std::string& disp);  // 选夹置状态 (不切层)
     MailLv _mailBackTarget(bool* close);  // 逐层回退目标; close=true=账号层(关邮件页)
     void _mailStatus(const std::string& s);
     void _mailKbShow(lv_obj_t* ta, bool voice);
@@ -301,7 +305,7 @@ private:
     static void _mailAcctDel_cb(lv_event_t* e);      // 删除 chip (二段确认)
     static void _mailAddAcct_cb(lv_event_t* e);      // ＋添加账号 → 登录层
     static void _mailLoginGo_cb(lv_event_t* e);      // 登录钮
-    static void _mailFolderRow_cb(lv_event_t* e);    // 文件夹行 → 列表层
+    static void _mailFolderBtn_cb(lv_event_t* e);    // 左列文件夹按钮 → 切换右列列表
     static void _mailMsgOpen_cb(lv_event_t* e);      // 面卡 CLICKED → 详情层
     static void _mailMarkBtn_cb(lv_event_t* e);      // 详情: 标已读/未读 (乐观)
     static void _mailFlagBtn_cb(lv_event_t* e);      // 详情: 红旗/取旗 (乐观)
