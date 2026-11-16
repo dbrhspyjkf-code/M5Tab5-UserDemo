@@ -1456,6 +1456,7 @@ void AppIdea::_naOpen()
     _na_ta_tok = lv_textarea_create(card);
     lv_obj_set_size(_na_ta_tok, 600, 58);
     lv_obj_align(_na_ta_tok, LV_ALIGN_TOP_LEFT, 0, 94);
+    lv_obj_set_style_text_color(_na_ta_tok, lv_color_hex(C_TEXT), 0);  // 缺省黑字在暗卡上不可读 (主屏 _ta 同款)
     lv_textarea_set_one_line(_na_ta_tok, true);
     lv_textarea_set_placeholder_text(_na_ta_tok, "粘贴 TOKEN");
     lv_obj_set_style_text_font(_na_ta_tok, zh_font_md(), 0);
@@ -1497,6 +1498,7 @@ void AppIdea::_naOpen()
     _na_ta_name = lv_textarea_create(card);
     lv_obj_set_size(_na_ta_name, 600, 58);
     lv_obj_align(_na_ta_name, LV_ALIGN_TOP_LEFT, 624, 94);
+    lv_obj_set_style_text_color(_na_ta_name, lv_color_hex(C_TEXT), 0);
     lv_textarea_set_one_line(_na_ta_name, true);
     lv_textarea_set_placeholder_text(_na_ta_name, "用户名");
     lv_obj_set_style_text_font(_na_ta_name, zh_font_md(), 0);
@@ -1519,6 +1521,7 @@ void AppIdea::_naOpen()
     _na_ta_inv = lv_textarea_create(card);
     lv_obj_set_size(_na_ta_inv, 600, 58);
     lv_obj_align(_na_ta_inv, LV_ALIGN_TOP_LEFT, 624, 198);
+    lv_obj_set_style_text_color(_na_ta_inv, lv_color_hex(C_TEXT), 0);
     lv_textarea_set_one_line(_na_ta_inv, true);
     lv_textarea_set_placeholder_text(_na_ta_inv, "邀请码");
     lv_obj_set_style_text_font(_na_ta_inv, zh_font_md(), 0);
