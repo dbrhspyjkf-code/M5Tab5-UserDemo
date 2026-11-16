@@ -127,12 +127,11 @@ static long long epoch_ms()
 
 static std::string gen_id()
 {
-    static const char* AL = "abcdefghijklmnopqrstuvwxyz0123456789";
-    char buf[40], suf[7];
-    for (int i = 0; i < 6; i++) suf[i] = AL[rand() % 36];
-    suf[6] = 0;
-    snprintf(buf, sizeof buf, "%lld-%s", epoch_ms(), suf);
-    return buf;
+    // V3 云端: 12 hex (noteserver ID_RE ^[0-9a-f]{6,32}$ 同形, 幂等上传键)
+    static const char* AL = "0123456789abcdef";
+    std::string out;
+    for (int i = 0; i < 12; i++) out += AL[rand() % 16];
+    return out;
 }
 
 static void wav_header(uint8_t* h, uint32_t data_len)
@@ -238,6 +237,7 @@ void AppIdea::onOpen()
     _alive = std::make_shared<bool>(true);    // 成对铁律: 拆屏置 false 后此处必须重建
     snap_theme();
     _buildUi();
+    _naRefresh();
     lv_screen_load(_scr);                     // 必须: 不 load 则 onRunning 误判失焦
     _installSwipeGesture();
 
@@ -265,6 +265,20 @@ void AppIdea::onRunning()
     if (_op_done.exchange(false)) {
         _setStatus("", C_TEXT2);   // 删除/清空完成立即恢复
         _status_reset_ms = 0;
+    }
+    {
+        int nr = _na_result.exchange(-1);          // 想法云账户操作结果
+        if (nr >= 0 && _na_modal) {
+            _naRefresh();
+            lv_label_set_text(_na_stat,
+                nr == 1 ? "成功 · 已连接" : "失败 (TOKEN/邀请码无效或网络)");
+            if (nr == 1) {                         // 输入框清密 + 拉新账户数据
+                lv_textarea_set_text(_na_ta_tok, "");
+                lv_textarea_set_text(_na_ta_name, "");
+                lv_textarea_set_text(_na_ta_inv, "");
+                _fetch();
+            }
+        }
     }
 
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -420,6 +434,27 @@ void AppIdea::_buildUi()
     lv_obj_set_style_text_font(_count_lbl, zh_font_md(), 0);
     lv_obj_set_style_text_color(_count_lbl, lv_color_hex(C_TEXT2), 0);
     lv_obj_align(_count_lbl, LV_ALIGN_LEFT_MID, 130, 0);
+
+    _na_user_lbl = lv_label_create(header);
+    lv_label_set_text(_na_user_lbl, "");
+    lv_obj_set_style_text_font(_na_user_lbl, zh_font_md(), 0);
+    lv_obj_set_style_text_color(_na_user_lbl, lv_color_hex(C_TEXT2), 0);
+    lv_obj_align(_na_user_lbl, LV_ALIGN_RIGHT_MID, -170, 0);
+
+    _na_btn = lv_button_create(header);
+    lv_obj_set_size(_na_btn, 110, 56);
+    lv_obj_align(_na_btn, LV_ALIGN_RIGHT_MID, -156, 0);
+    lv_obj_set_style_bg_color(_na_btn, lv_color_hex(C_ON), 0);
+    lv_obj_set_style_radius(_na_btn, 14, 0);
+    lv_obj_add_event_cb(_na_btn, [](lv_event_t* e) {
+        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naOpen();
+    }, LV_EVENT_CLICKED, this);
+    {
+        auto* nl = lv_label_create(_na_btn);
+        lv_label_set_text(nl, "☁ 账户");
+        lv_obj_set_style_text_font(nl, zh_font_md(), 0);
+        lv_obj_center(nl);
+    }
 
     lv_obj_t* refresh_btn = lv_button_create(header);
     lv_obj_set_size(refresh_btn, 120, 56);
@@ -946,18 +981,45 @@ void AppIdea::_renderList()
     }
 }
 
-// ── 数据操作 ──────────────────────────────────────────────────────────────
-std::string AppIdea::_base()
+// ── 数据操作 (V3: 直连 ZERO 想法云 noteserver — notes.apisz.top, 纯 token
+//    鉴权; 登录/注册/换账户在面板右上 ☁; 与 ZERO oneapp / 车机 car-dash
+//    共用同一账号空间, 多端一致) ─────────────────────────────────────────
+static const char* NA_BASE = "https://notes.apisz.top";
+
+std::string AppIdea::_na_tok()
 {
-    return "http://" + GetHAL()->getConfig("svc_host", "192.168.1.200") + ":8766";
+    return GetHAL()->getConfig("notes_token", "");
+}
+
+std::string AppIdea::_na_user()
+{
+    return GetHAL()->getConfig("notes_user", "");
+}
+
+std::vector<std::pair<std::string, std::string>> AppIdea::_na_hdr()
+{
+    std::vector<std::pair<std::string, std::string>> h;
+    auto t = _na_tok();
+    if (!t.empty()) h.push_back({"Authorization", "Bearer " + t});
+    return h;
 }
 
 void AppIdea::_fetch()
 {
+    if (_na_tok().empty()) {                           // 未登录: 空列表 + 提示
+        {
+            std::lock_guard<std::mutex> lk(_mu);
+            _items.clear();
+        }
+        _list_ready = true;                            // UI 线程调用, 直刷空态
+        return;
+    }
     if (_fetch_in_flight.exchange(true)) return;
     auto alive = _alive;
     GetHAL()->tryRunDetached([this, alive]() {
-        auto resp = GetHAL()->httpGet(_base() + "/api/idea/all");
+        auto resp = GetHAL()->httpGet(std::string(NA_BASE) +
+                                          "/v1/notes?limit=300",
+                                      AppIdea::_na_hdr());
         if (resp.status != 200 || resp.body.empty()) {
             mclog::tagWarn(TAG, "fetch failed status={}", resp.status);
             if (*alive) _retry_ms = GetHAL()->millis() + 4000;
@@ -968,26 +1030,19 @@ void AppIdea::_fetch()
         std::vector<IdeaItem> items;
         auto j = PsramJson::parse(resp.body, nullptr, false);
         if (!j.is_discarded()) {
-            if (j.contains("texts")) {
-                for (auto& t : j["texts"]) {
+            // 单层 notes 数组 (kind 分文字/语音; ts 秒; category 分类)
+            if (j.contains("notes")) {
+                for (auto& n : j["notes"]) {
                     IdeaItem it;
-                    it.id = t.value("id", std::string());
-                    it.text = t.value("text", std::string());
-                    it.cat = t.value("categoryId", "work");
-                    it.created = (long long)t.value("createdAt", 0LL);
-                    items.push_back(std::move(it));
-                }
-            }
-            if (j.contains("voices")) {
-                for (auto& v : j["voices"]) {
-                    IdeaItem it;
-                    it.voice = true;
-                    it.id = v.value("id", std::string());
-                    it.text = v.value("text", std::string());
-                    it.cat = v.value("categoryId", "work");
-                    it.created = (long long)v.value("createdAt", 0LL);
-                    it.dur = v.value("dur", 0);
-                    it.mime = v.value("mime", "audio/webm");
+                    it.voice = (n.value("kind", "text") == "voice");
+                    it.id = n.value("id", std::string());
+                    it.text = n.value("text", std::string());
+                    it.cat = n.value("category", "idea");
+                    it.created = (long long)(n.value("ts", 0.0) * 1000);
+                    if (it.voice) {
+                        it.dur = (int)n.value("dur", 0.0);
+                        it.mime = n.value("vct", "audio/wav");
+                    }
                     items.push_back(std::move(it));
                 }
             }
@@ -1010,18 +1065,24 @@ void AppIdea::_saveText()
     const char* txt = lv_textarea_get_text(_ta);
     if (!txt || !txt[0]) { _setStatus("先写点什么", C_DANGER); return; }
     if (_save_in_flight.exchange(true)) return;
+    if (AppIdea::_na_tok().empty()) {
+        _setStatus("未登录 — 点右上 ☁ 登录", C_DANGER);
+        return;
+    }
     std::string body = nlohmann::json{
         {"id", gen_id()},
         {"text", std::string(txt)},
-        {"categoryId", CATS[_sel_cat].id},
-        {"createdAt", epoch_ms()},
+        {"category", CATS[_sel_cat].id},
+        {"ts", (double)epoch_ms() / 1000.0},
     }.dump();
     lv_textarea_set_text(_ta, "");
     _setStatus("保存中…", C_TEXT2);
     auto alive = _alive;
-    GetHAL()->tryRunDetached([this, alive, body]() {
-        auto resp = GetHAL()->httpPost(_base() + "/api/idea/text", body,
-                                       {{"Content-Type", "application/json"}});
+    auto hdr = _na_hdr();
+    hdr.push_back({"Content-Type", "application/json"});
+    GetHAL()->tryRunDetached([this, alive, body, hdr]() {
+        auto resp = GetHAL()->httpPost(std::string(NA_BASE) + "/v1/notes",
+                                       body, hdr);
         _save_in_flight = false;
         if (resp.status == 200) {
             _saved_sec = 0;
@@ -1034,12 +1095,15 @@ void AppIdea::_saveText()
 
 void AppIdea::_deleteItem(const std::string& id, bool voice)
 {
+    if (AppIdea::_na_tok().empty()) {
+        _setStatus("未登录 — 点右上 ☁ 登录", C_DANGER);
+        return;
+    }
     _setStatus("删除中…", C_TEXT2);
-    std::string url = _base() + (voice ? "/api/idea/voice-del" : "/api/idea/text-del");
-    std::string body = nlohmann::json{{"id", id}}.dump();
+    std::string url = std::string(NA_BASE) + "/v1/notes/" + id;
     auto alive = _alive;
-    GetHAL()->tryRunDetached([this, alive, url, body]() {
-        auto resp = GetHAL()->httpPost(url, body, {{"Content-Type", "application/json"}});
+    GetHAL()->tryRunDetached([this, alive, url, hdr = _na_hdr()]() {
+        auto resp = GetHAL()->httpDelete(url, hdr);
         if (resp.status == 200) {
             if (*alive) {
                 _refresh_needed = true;
@@ -1053,17 +1117,24 @@ void AppIdea::_deleteItem(const std::string& id, bool voice)
 
 void AppIdea::_clearAll()
 {
+    if (AppIdea::_na_tok().empty()) {
+        _setStatus("未登录 — 点右上 ☁ 登录", C_DANGER);
+        return;
+    }
     _setStatus("清空中…", C_TEXT2);
-    std::string body = nlohmann::json{{"texts", true}, {"voices", true}}.dump();
     auto alive = _alive;
-    GetHAL()->tryRunDetached([this, alive, body]() {
-        auto resp = GetHAL()->httpPost(_base() + "/api/idea/clear-all", body,
-                                       {{"Content-Type", "application/json"}});
-        if (resp.status == 200) {
-            if (*alive) {
-                _refresh_needed = true;
-                _op_done = true;        // 「清空中…」完成, 状态标签恢复默认
-            }
+    auto hdr = _na_hdr();
+    std::vector<std::string> ids;
+    for (auto& it : _items) ids.push_back(it.id);
+    GetHAL()->tryRunDetached([this, alive, hdr, ids]() {
+        bool ok = true;
+        for (auto& id : ids)   // 云端无 clear-all: 遍历逐条 (幂等)
+            if (GetHAL()->httpDelete(std::string(NA_BASE) + "/v1/notes/" + id,
+                                     hdr).status != 200)
+                ok = false;
+        if (ok && *alive) {
+            _refresh_needed = true;
+            _op_done = true;
         } else if (*alive) {
             _op_failed = true;
         }
@@ -1244,6 +1315,10 @@ void AppIdea::s_tap(const int16_t* data, size_t n)
 void AppIdea::_recStart()
 {
     if (s_recording.load()) return;
+    if (AppIdea::_na_tok().empty()) {
+        _setStatus("未登录 — 点右上 ☁ 登录", C_DANGER);
+        return;
+    }
     if (s_uploading.load()) { _setStatus("上一条上传中, 稍候", C_DANGER); return; }
     if (!s_pcm) {
         s_pcm = (uint8_t*)heap_caps_malloc(REC_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1291,6 +1366,260 @@ void AppIdea::_recStop(bool upload)
     s_tap_target = nullptr;
     xiaozhi_set_input_tap(nullptr);      // 恢复唤醒词
     s_rec_cv.notify_all();
+}
+
+// ── 想法云账户: 登录 / 注册 / 退出 (V3; token/user 存 NVS notes_token/notes_user) ──
+void AppIdea::_naRefresh()
+{
+    auto u = _na_user();
+    auto t = _na_tok();
+    if (_na_user_lbl)
+        lv_label_set_text(_na_user_lbl, t.empty() ? "未登录" : ("@" + u).c_str());
+}
+
+void AppIdea::_naOpen()
+{
+    if (_na_modal) { _naClose(); return; }         // 再按 = 关
+    _na_modal = lv_obj_create(_scr);
+    lv_obj_set_size(_na_modal, SCREEN_W, SCREEN_H);
+    lv_obj_set_style_bg_color(_na_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(_na_modal, LV_OPA_70, 0);
+    lv_obj_clear_flag(_na_modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(_na_modal, [](lv_event_t* e) {
+        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naClose();
+    }, LV_EVENT_CLICKED, this);
+
+    auto* card = lv_obj_create(_na_modal);
+    lv_obj_set_size(card, 720, 580);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD), 0);
+    lv_obj_set_style_radius(card, 24, 0);
+    lv_obj_set_style_border_width(card, 0, 0);
+    lv_obj_set_style_pad_all(card, 28, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);   // 吃点击, 不透传遮罩
+
+    auto* ttl = lv_label_create(card);
+    lv_label_set_text(ttl, "想法云账户");
+    lv_obj_set_style_text_font(ttl, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(ttl, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_align(ttl, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    auto* l1 = lv_label_create(card);
+    lv_label_set_text(l1, "TOKEN (ZERO 设置生成 / 登录页同值)");
+    lv_obj_set_style_text_font(l1, zh_font_md(), 0);
+    lv_obj_set_style_text_color(l1, lv_color_hex(C_TEXT2), 0);
+    lv_obj_align(l1, LV_ALIGN_TOP_LEFT, 0, 48);
+    _na_ta_tok = lv_textarea_create(card);
+    lv_obj_set_size(_na_ta_tok, 664, 58);
+    lv_obj_align(_na_ta_tok, LV_ALIGN_TOP_LEFT, 0, 78);
+    lv_textarea_set_one_line(_na_ta_tok, true);
+    lv_textarea_set_placeholder_text(_na_ta_tok, "粘贴 TOKEN");
+    lv_obj_set_style_text_font(_na_ta_tok, zh_font_md(), 0);
+    lv_obj_set_style_bg_color(_na_ta_tok, lv_color_hex(C_CARD0), 0);
+    lv_obj_set_style_border_width(_na_ta_tok, 0, 0);
+    lv_obj_set_style_radius(_na_ta_tok, 12, 0);
+    lv_obj_add_event_cb(_na_ta_tok, [](lv_event_t* e) {
+        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
+        if (!app->_na_kb || GetHAL()->usbKeyboardDetect()) return;
+        lv_keyboard_set_textarea(app->_na_kb, static_cast<lv_obj_t*>(lv_event_get_target(e)));
+        lv_obj_clear_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(app->_na_kb);
+    }, LV_EVENT_FOCUSED, this);
+
+    auto* lb = lv_button_create(card);
+    lv_obj_set_size(lb, 220, 54);
+    lv_obj_align(lb, LV_ALIGN_TOP_LEFT, 0, 146);
+    lv_obj_set_style_bg_color(lb, lv_color_hex(C_ON), 0);
+    lv_obj_set_style_radius(lb, 14, 0);
+    lv_obj_add_event_cb(lb, [](lv_event_t* e) {
+        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naLogin();
+    }, LV_EVENT_CLICKED, this);
+    auto* lbl1 = lv_label_create(lb);
+    lv_label_set_text(lbl1, "登录");
+    lv_obj_set_style_text_font(lbl1, zh_font_md(), 0);
+    lv_obj_center(lbl1);
+
+    auto* l2 = lv_label_create(card);
+    lv_label_set_text(l2, "没有账号? 邀请码在 ZERO 设置·生成注册码");
+    lv_obj_set_style_text_font(l2, zh_font_md(), 0);
+    lv_obj_set_style_text_color(l2, lv_color_hex(C_TEXT2), 0);
+    lv_obj_align(l2, LV_ALIGN_TOP_LEFT, 0, 214);
+
+    auto* l3 = lv_label_create(card);
+    lv_label_set_text(l3, "用户名 (3-16 位小写字母/数字/_)");
+    lv_obj_set_style_text_font(l3, zh_font_md(), 0);
+    lv_obj_set_style_text_color(l3, lv_color_hex(C_TEXT2), 0);
+    lv_obj_align(l3, LV_ALIGN_TOP_LEFT, 0, 248);
+    _na_ta_name = lv_textarea_create(card);
+    lv_obj_set_size(_na_ta_name, 664, 58);
+    lv_obj_align(_na_ta_name, LV_ALIGN_TOP_LEFT, 0, 276);
+    lv_textarea_set_one_line(_na_ta_name, true);
+    lv_textarea_set_placeholder_text(_na_ta_name, "用户名");
+    lv_obj_set_style_text_font(_na_ta_name, zh_font_md(), 0);
+    lv_obj_set_style_bg_color(_na_ta_name, lv_color_hex(C_CARD0), 0);
+    lv_obj_set_style_border_width(_na_ta_name, 0, 0);
+    lv_obj_set_style_radius(_na_ta_name, 12, 0);
+    lv_obj_add_event_cb(_na_ta_name, [](lv_event_t* e) {
+        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
+        if (!app->_na_kb || GetHAL()->usbKeyboardDetect()) return;
+        lv_keyboard_set_textarea(app->_na_kb, static_cast<lv_obj_t*>(lv_event_get_target(e)));
+        lv_obj_clear_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(app->_na_kb);
+    }, LV_EVENT_FOCUSED, this);
+
+    auto* l4 = lv_label_create(card);
+    lv_label_set_text(l4, "邀请码");
+    lv_obj_set_style_text_font(l4, zh_font_md(), 0);
+    lv_obj_set_style_text_color(l4, lv_color_hex(C_TEXT2), 0);
+    lv_obj_align(l4, LV_ALIGN_TOP_LEFT, 0, 340);
+    _na_ta_inv = lv_textarea_create(card);
+    lv_obj_set_size(_na_ta_inv, 664, 58);
+    lv_obj_align(_na_ta_inv, LV_ALIGN_TOP_LEFT, 0, 368);
+    lv_textarea_set_one_line(_na_ta_inv, true);
+    lv_textarea_set_placeholder_text(_na_ta_inv, "邀请码");
+    lv_obj_set_style_text_font(_na_ta_inv, zh_font_md(), 0);
+    lv_obj_set_style_bg_color(_na_ta_inv, lv_color_hex(C_CARD0), 0);
+    lv_obj_set_style_border_width(_na_ta_inv, 0, 0);
+    lv_obj_set_style_radius(_na_ta_inv, 12, 0);
+    lv_obj_add_event_cb(_na_ta_inv, [](lv_event_t* e) {
+        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
+        if (!app->_na_kb || GetHAL()->usbKeyboardDetect()) return;
+        lv_keyboard_set_textarea(app->_na_kb, static_cast<lv_obj_t*>(lv_event_get_target(e)));
+        lv_obj_clear_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(app->_na_kb);
+    }, LV_EVENT_FOCUSED, this);
+
+    auto* reg = lv_button_create(card);
+    lv_obj_set_size(reg, 220, 54);
+    lv_obj_align(reg, LV_ALIGN_TOP_LEFT, 0, 436);
+    lv_obj_set_style_bg_color(reg, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_set_style_radius(reg, 14, 0);
+    lv_obj_add_event_cb(reg, [](lv_event_t* e) {
+        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naRegister();
+    }, LV_EVENT_CLICKED, this);
+    auto* lbl2 = lv_label_create(reg);
+    lv_label_set_text(lbl2, "注册新账号");
+    lv_obj_set_style_text_font(lbl2, zh_font_md(), 0);
+    lv_obj_center(lbl2);
+
+    auto* out = lv_button_create(card);
+    lv_obj_set_size(out, 180, 54);
+    lv_obj_align(out, LV_ALIGN_TOP_LEFT, 0, 436);
+    lv_obj_set_style_bg_color(out, lv_color_hex(C_DANGER), 0);
+    lv_obj_set_style_radius(out, 14, 0);
+    lv_obj_add_event_cb(out, [](lv_event_t* e) {
+        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naLogout();
+    }, LV_EVENT_CLICKED, this);
+    auto* lbl3 = lv_label_create(out);
+    lv_label_set_text(lbl3, "退出");
+    lv_obj_set_style_text_font(lbl3, zh_font_md(), 0);
+    lv_obj_center(lbl3);
+
+    _na_stat = lv_label_create(card);
+    lv_label_set_text(_na_stat, "");
+    lv_obj_set_style_text_font(_na_stat, zh_font_md(), 0);
+    lv_obj_set_style_text_color(_na_stat, lv_color_hex(C_TEXT2), 0);
+    lv_obj_align(_na_stat, LV_ALIGN_BOTTOM_LEFT, 0, -8);
+
+    auto* close = lv_button_create(card);
+    lv_obj_set_size(close, 110, 54);
+    lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_style_radius(close, 14, 0);
+    lv_obj_add_event_cb(close, [](lv_event_t* e) {
+        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naClose();
+    }, LV_EVENT_CLICKED, this);
+    auto* lbl4 = lv_label_create(close);
+    lv_label_set_text(lbl4, "关闭");
+    lv_obj_set_style_text_font(lbl4, zh_font_md(), 0);
+    lv_obj_center(lbl4);
+
+    _na_kb = lv_keyboard_create(_na_modal);
+    lv_obj_set_size(_na_kb, 720, 260);
+    lv_obj_align(_na_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_flag(_na_kb, LV_OBJ_FLAG_HIDDEN);
+
+    _naRefresh();
+}
+
+void AppIdea::_naClose()
+{
+    if (_na_modal) { lv_obj_delete(_na_modal); _na_modal = nullptr; }
+    _naRefresh();                                  // 顶栏 @user 复位 (label 重建)
+}
+
+void AppIdea::_naLogin()
+{
+    const char* t = lv_textarea_get_text(_na_ta_tok);
+    if (!t || !t[0]) { lv_label_set_text(_na_stat, "先粘贴 TOKEN"); return; }
+    if (_na_busy.exchange(true)) return;
+    lv_label_set_text(_na_stat, "验证中…");
+    auto alive = _alive;
+    std::string tok = t;
+    GetHAL()->tryRunDetached([this, alive, tok]() {
+        auto resp = GetHAL()->httpGet(std::string(NA_BASE) + "/v1/ping",
+                                      {{"Authorization", "Bearer " + tok}});
+        bool ok = false;
+        std::string user;
+        auto j = PsramJson::parse(resp.body, nullptr, false);
+        if (!j.is_discarded()) {
+            ok = j.value("ok", false);
+            user = j.value("user", "");
+        }
+        if (ok) {
+            GetHAL()->setConfig("notes_token", tok);
+            GetHAL()->setConfig("notes_user", user);
+        }
+        if (*alive) _na_result = ok ? 1 : 0;
+        _na_busy = false;
+    }, 16 * 1024);
+}
+
+void AppIdea::_naRegister()
+{
+    const char* nm = lv_textarea_get_text(_na_ta_name);
+    const char* iv = lv_textarea_get_text(_na_ta_inv);
+    if (!nm || !nm[0] || !iv || !iv[0]) {
+        lv_label_set_text(_na_stat, "用户名和邀请码都要填");
+        return;
+    }
+    if (_na_busy.exchange(true)) return;
+    lv_label_set_text(_na_stat, "注册中…");
+    auto alive = _alive;
+    std::string name = nm, inv = iv;
+    GetHAL()->tryRunDetached([this, alive, name, inv]() {
+        std::string body = nlohmann::json{
+            {"name", name}, {"invite", inv}}.dump();
+        auto resp = GetHAL()->httpPost(std::string(NA_BASE) + "/v1/register",
+            body, {{"Content-Type", "application/json"}});
+        bool ok = false;
+        std::string tok, user;
+        auto j = PsramJson::parse(resp.body, nullptr, false);
+        if (!j.is_discarded()) {
+            ok = j.value("ok", false);
+            tok = j.value("token", std::string());
+            user = j.value("user", std::string());
+        }
+        if (ok) {                                  // 注册即登录
+            GetHAL()->setConfig("notes_token", tok);
+            GetHAL()->setConfig("notes_user", user);
+        }
+        if (*alive) _na_result = ok ? 1 : 0;
+        _na_busy = false;
+    }, 16 * 1024);
+}
+
+void AppIdea::_naLogout()
+{
+    GetHAL()->setConfig("notes_token", "");
+    GetHAL()->setConfig("notes_user", "");
+    lv_label_set_text(_na_stat, "已退出 · 想法不再同步");
+    _naRefresh();
+    {
+        std::lock_guard<std::mutex> lk(_mu);
+        _items.clear();
+    }
+    _list_ready = true;                            // 未登录 → 列表刷空
 }
 
 void AppIdea::s_recWorker()
@@ -1359,12 +1688,13 @@ void AppIdea::s_uploadRun()
             body[k - off] = (k < 44) ? (char)hdr[k] : (char)s_pcm[k - 44];
         char url[320];
         snprintf(url, sizeof url,
-                 "%s/api/idea/voice-upload?id=%s&part=%d&parts=%d&dur=%d"
-                 "&mime=audio/wav&cat=%s&ts=%lld",
-                 _base().c_str(), s_rec_id.c_str(), i, parts, dur,
+                 "%s/v1/voice-part?id=%s&part=%d&parts=%d&dur=%d"
+                 "&category=%s&ts=%lld",
+                 NA_BASE, s_rec_id.c_str(), i, parts, dur,
                  s_rec_cat.c_str(), epoch_ms());
-        auto resp = GetHAL()->httpPost(url, body,
-                                       {{"Content-Type", "application/octet-stream"}});
+        auto hdr = AppIdea::_na_hdr();
+        hdr.push_back({"Content-Type", "application/octet-stream"});
+        auto resp = GetHAL()->httpPost(url, body, hdr);
         bool pok = false;
         if (resp.status == 200) {
             auto j = PsramJson::parse(resp.body, nullptr, false);
@@ -1452,14 +1782,15 @@ void AppIdea::s_playWorker(std::string id, std::string mime)
         if (!s_play_buf) { s_playing = false; s_play_failed = true; return; }
     }
 
-    // 下载 (非 wav 条目走 hermes 按需转码, 结果缓存)
-    std::string url = _base() + "/api/idea/audio/" + id +
-                      (mime == "audio/wav" ? "" : "?fmt=wav");
+    // 下载 (服务端自动优先 16k mono PCM 副本 — 播放链只认 16k mono s16)
+    std::string url = std::string(NA_BASE) + "/v1/voice/" + id;
     mclog::tagInfo(TAG, "play fetch {}", url);
     esp_http_client_config_t cfg = {};
     cfg.url = url.c_str();
     cfg.timeout_ms = 20000;
     esp_http_client_handle_t http = esp_http_client_init(&cfg);
+    auto hdr = AppIdea::_na_hdr();
+    for (auto& [k, v] : hdr) esp_http_client_set_header(http, k.c_str(), v.c_str());
     size_t n = 0;
     if (http) {
         if (esp_http_client_open(http, 0) == ESP_OK) {

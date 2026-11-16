@@ -1,0 +1,10 @@
+// 供探针 validate 的真 wasm-EH 模块 (-fexceptions 编译)
+extern "C" int eh_test(int fail)
+{
+    try {
+        if (fail) throw 1;
+        return 2;
+    } catch (...) {
+        return 1;
+    }
+}

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>JSPI × JS模拟异常 探针</title>
+<style>
+  body { margin: 0; padding: 24px; background: #000; color: #e8e6e3;
+         font: 15px/1.6 -apple-system, "PingFang SC", sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; color: #7ec87e; }
+  .sub { color: #8a8a8a; font-size: 13px; margin-bottom: 16px; }
+  #verdict { font-size: 17px; font-weight: 600; color: #e5b84f; margin-bottom: 14px; }
+  pre { background: #101511; border: 1px solid #1f3324; border-radius: 12px;
+        padding: 14px 16px; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>JSPI × JS模拟异常 探针</h1>
+<div class="sub">验证: wasm 实例化 → C++ 异常(JS模拟) → emscripten_sleep 挂起 → EM_ASYNC_JS fetch 挂起</div>
+<div id="verdict">检测中…</div>
+<pre id="out"></pre>
+<script>
+  function appendLine(s) {
+    document.getElementById("out").textContent += s + "\n";
+  }
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

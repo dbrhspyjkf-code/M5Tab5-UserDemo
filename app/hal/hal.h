@@ -455,6 +455,11 @@ public:
     {
         return {};
     }
+    virtual HttpResponse_t httpDelete(const std::string& url,
+        const std::vector<std::pair<std::string, std::string>>& headers = {})
+    {
+        return {};
+    }
     // Same contract as httpPost, but implementations may reuse a persistent
     // connection. Intended for high-frequency callers (e.g. the mobile-base
     // 20 Hz lease frames) where per-request TCP handshakes dominate latency.

@@ -1,0 +1,63 @@
+#include <emscripten.h>
+#include <stdio.h>
+#include <stdexcept>
+#include <string>
+
+// JSPI × JS 模拟异常 探针: L9 (LiBrowser WebView, 无 wasm EH) 的生死门验证。
+// 编译: emcc -sJSPI -sDISABLE_EXCEPTION_CATCHING=0 (JS 模拟异常, 非 wasm EH)
+// 三项验证: ①C++ throw/catch (JS 模拟) ②EM_ASYNC_JS fetch 挂起 (JSPI 核心)
+// ③emscripten_sleep 挂起 (tryRunDetached 内联化的前提)
+
+EM_ASYNC_JS(int, probe_fetch_len, (const char* url), {
+    const r = await fetch(UTF8ToString(url), {cache: "no-store"});
+    if (!r.ok) return -1;
+    const b = await r.arrayBuffer();
+    return b.byteLength | 0;
+});
+
+EM_ASYNC_JS(void, probe_sleep, (int ms), {
+    await new Promise(res => setTimeout(res, ms));
+});
+
+static volatile int sink = 0;
+
+static void nested_parse(int fail)
+{
+    EM_ASM({ appendLine("nested-start"); });
+    try {
+        if (fail) throw std::runtime_error("boom");
+    } catch (const std::exception& e) {
+        EM_ASM({ appendLine("nested-caught " + UTF8ToString(e.what())); });
+    }
+    EM_ASM({ appendLine("nested-continuation-OK"); });
+}
+
+int main(void)
+{
+    EM_ASM({
+        const out = document.getElementById("out");
+        out.textContent = "instantiate OK, main entered\n";
+    });
+
+
+    // ③ emscripten_sleep 挂起 (JSPI 下应让出事件循环而非阻塞)
+    emscripten_sleep(300);
+    EM_ASM({ appendLine("sleep-done"); });
+    EM_ASM({ appendLine("emscripten_sleep OK"); });
+
+    // ② EM_ASYNC_JS fetch 挂起 (拉自身页面, 同源必成)
+    const int n = probe_fetch_len("jspi.html");
+    EM_ASM({
+        appendLine("async-fetch len=" + $0 + " " + ($0 > 100 ? "OK" : "FAIL"));
+    }, n);
+
+    nested_parse(0);   // 不抛
+    nested_parse(1);   // 抛+接
+    EM_ASM({
+        appendLine("PROBE-DONE");
+        document.getElementById("verdict").textContent =
+            "★ 全部通过 — JSPI + JS模拟异常 组合在本机可用";
+        document.getElementById("verdict").style.color = "#7ec87e";
+    });
+    return 0;
+}

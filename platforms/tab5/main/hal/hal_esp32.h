@@ -115,6 +115,9 @@ public:
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
     HttpResponse_t httpPost(const std::string& url, const std::string& body,
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
+    HttpResponse_t httpDelete(const std::string& url,
+        const std::vector<std::pair<std::string, std::string>>& headers = {});
+
     HttpResponse_t httpPut(const std::string& url, const std::string& body,
         const std::vector<std::pair<std::string, std::string>>& headers = {}) override;
     HttpResponse_t httpPostKeepAlive(const std::string& url, const std::string& body,

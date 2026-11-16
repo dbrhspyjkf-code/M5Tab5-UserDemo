@@ -228,6 +228,45 @@ hal::HalBase::HttpResponse_t HalEsp32::httpPut(
     return resp;
 }
 
+hal::HalBase::HttpResponse_t HalEsp32::httpDelete(
+    const std::string& url,
+    const std::vector<std::pair<std::string, std::string>>& headers)
+{
+    HttpResponse_t resp;
+    std::string body;
+    body.reserve(kPsramBufThreshold);
+
+    _http_ctx_t ctx{&body, &resp.resp_headers};
+
+    esp_http_client_config_t config = {};
+    config.url            = url.c_str();
+    config.method         = HTTP_METHOD_DELETE;
+    config.event_handler  = _http_event_handler;
+    config.user_data      = &ctx;
+    config.timeout_ms     = 10000;
+    config.buffer_size    = kPsramBufThreshold;
+    config.buffer_size_tx = 2048;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) { mclog::tagWarn(_tag, "init failed"); return resp; }
+
+    for (auto& [k, v] : headers)
+        esp_http_client_set_header(client, k.c_str(), v.c_str());
+
+    esp_err_t err = _net_perform(client);
+    if (err == ESP_OK) {
+        resp.status = esp_http_client_get_status_code(client);
+        resp.ok     = (resp.status >= 200 && resp.status < 300);
+        resp.body   = std::move(body);
+    } else {
+        mclog::tagWarn(_tag, "DELETE {} failed: {}", url, esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+    return resp;
+}
+
 // ── Keep-alive POST for high-frequency callers ──────────────────────────────
 // The mobile-base lease frames run at up to 20 Hz; a fresh TCP handshake per
 // request dominated the round-trip time and dropped the short lease on Wi-Fi

@@ -13,7 +13,8 @@
 
 /**
  * 想法 — 复刻 car-dash 车机页「想法」面板 (录音 memo + 文字灵感 + 灵感时间线),
- * 数据与车机网页同源 (hermes :8766 idea 接口, Pi ~/idea_data/), 跨设备一致。
+ * V3 (2026-11-16): 直连 ZERO 想法云 noteserver (notes.apisz.top, 纯 token 鉴权),
+ * 与 ZERO oneapp / 车机 car-dash 共用同一账号空间; 登录/注册/换账户在面板右上 ☁。
  *
  * 入口: 主页底部按钮行 (2026-11-05 起替代「计时器」位; 计时器改从工具页进)。
  * 设备版支持录音上传 (wav 64KB 分片, esp_hosted 大 POST 断言规避) 与回放
@@ -149,7 +150,26 @@ private:
     // ── UI / 数据 ──
     void _buildUi();
     void _teardown();
-    static std::string _base();
+    // ── 想法云账户 (noteserver: 登录/注册/换账户, token 存 NVS) ──
+    static std::string _na_tok();                 // NVS notes_token
+    static std::string _na_user();                // NVS notes_user
+    static std::vector<std::pair<std::string, std::string>> _na_hdr();
+    void _naOpen();                               // ☁ 弹层 (登录/注册/退出)
+    void _naClose();
+    void _naRefresh();                            // 状态 label 刷新
+    void _naLogin();
+    void _naRegister();
+    void _naLogout();
+    lv_obj_t* _na_btn    = nullptr;               // 顶栏 ☁ (显示 @user)
+    lv_obj_t* _na_user_lbl = nullptr;             // ☁ 旁账户名
+    lv_obj_t* _na_modal  = nullptr;               // 账户弹层 (单实例)
+    lv_obj_t* _na_ta_tok = nullptr;
+    lv_obj_t* _na_ta_name = nullptr;
+    lv_obj_t* _na_ta_inv = nullptr;
+    lv_obj_t* _na_kb     = nullptr;               // modal 内键盘 (textarea 聚焦弹)
+    lv_obj_t* _na_stat   = nullptr;
+    std::atomic<bool> _na_busy{false};
+    std::atomic<int> _na_result{-1};              // worker 结果: -1 idle / 0 fail / 1 ok
     void _fetch();
     void _renderList();
     void _renderFilter();
