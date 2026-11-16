@@ -451,7 +451,7 @@ void AppIdea::_buildUi()
     }, LV_EVENT_CLICKED, this);
     {
         auto* nl = lv_label_create(_na_btn);
-        lv_label_set_text(nl, "☁ 账户");
+        lv_label_set_text(nl, "账户");                 // zh 字体无 U+2601 (☁ 缺字形)
         lv_obj_set_style_text_font(nl, zh_font_md(), 0);
         lv_obj_center(nl);
     }
@@ -1066,7 +1066,7 @@ void AppIdea::_saveText()
     if (!txt || !txt[0]) { _setStatus("先写点什么", C_DANGER); return; }
     if (_save_in_flight.exchange(true)) return;
     if (AppIdea::_na_tok().empty()) {
-        _setStatus("未登录 — 点右上 ☁ 登录", C_DANGER);
+        _setStatus("未登录 — 点右上「账户」登录", C_DANGER);
         return;
     }
     std::string body = nlohmann::json{
@@ -1096,7 +1096,7 @@ void AppIdea::_saveText()
 void AppIdea::_deleteItem(const std::string& id, bool voice)
 {
     if (AppIdea::_na_tok().empty()) {
-        _setStatus("未登录 — 点右上 ☁ 登录", C_DANGER);
+        _setStatus("未登录 — 点右上「账户」登录", C_DANGER);
         return;
     }
     _setStatus("删除中…", C_TEXT2);
@@ -1118,7 +1118,7 @@ void AppIdea::_deleteItem(const std::string& id, bool voice)
 void AppIdea::_clearAll()
 {
     if (AppIdea::_na_tok().empty()) {
-        _setStatus("未登录 — 点右上 ☁ 登录", C_DANGER);
+        _setStatus("未登录 — 点右上「账户」登录", C_DANGER);
         return;
     }
     _setStatus("清空中…", C_TEXT2);
@@ -1316,7 +1316,7 @@ void AppIdea::_recStart()
 {
     if (s_recording.load()) return;
     if (AppIdea::_na_tok().empty()) {
-        _setStatus("未登录 — 点右上 ☁ 登录", C_DANGER);
+        _setStatus("未登录 — 点右上「账户」登录", C_DANGER);
         return;
     }
     if (s_uploading.load()) { _setStatus("上一条上传中, 稍候", C_DANGER); return; }
@@ -1398,6 +1398,10 @@ void AppIdea::_naOpen()
     lv_obj_set_style_pad_all(card, 28, 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);   // 吃点击, 不透传遮罩
+    lv_obj_add_event_cb(card, [](lv_event_t* e) {   // 点卡空白 = 收键盘 (子对象不冒泡, 互不干扰)
+        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
+        if (app->_na_kb) lv_obj_add_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
+    }, LV_EVENT_CLICKED, this);
 
     auto* ttl = lv_label_create(card);
     lv_label_set_text(ttl, "想法云账户");
@@ -1505,7 +1509,7 @@ void AppIdea::_naOpen()
 
     auto* out = lv_button_create(card);
     lv_obj_set_size(out, 180, 54);
-    lv_obj_align(out, LV_ALIGN_TOP_LEFT, 0, 436);
+    lv_obj_align(out, LV_ALIGN_TOP_LEFT, 240, 436);   // 与「注册」同 y, x 错开 240 不再重叠
     lv_obj_set_style_bg_color(out, lv_color_hex(C_DANGER), 0);
     lv_obj_set_style_radius(out, 14, 0);
     lv_obj_add_event_cb(out, [](lv_event_t* e) {
@@ -1538,6 +1542,15 @@ void AppIdea::_naOpen()
     lv_obj_set_size(_na_kb, 720, 260);
     lv_obj_align(_na_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_flag(_na_kb, LV_OBJ_FLAG_HIDDEN);
+    // ✓(READY)/✗(CANCEL) 收键盘 — 主屏键盘同款; 不挂则键盘永不隐藏盖住登录钮
+    lv_obj_add_event_cb(_na_kb, [](lv_event_t* e) {
+        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
+        if (app->_na_kb) lv_obj_add_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
+    }, LV_EVENT_READY, this);
+    lv_obj_add_event_cb(_na_kb, [](lv_event_t* e) {
+        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
+        if (app->_na_kb) lv_obj_add_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
+    }, LV_EVENT_CANCEL, this);
 
     _naRefresh();
 }
