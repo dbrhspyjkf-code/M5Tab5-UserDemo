@@ -1390,10 +1390,10 @@ void AppIdea::_naOpen()
     }, LV_EVENT_CLICKED, this);
 
     auto* card = lv_obj_create(_na_modal);
-    lv_obj_set_size(card, 720, 580);
-    lv_obj_center(card);
+    lv_obj_set_size(card, SCREEN_W, SCREEN_H);     // 全屏 (用户定稿)
+    lv_obj_set_pos(card, 0, 0);
     lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD), 0);
-    lv_obj_set_style_radius(card, 24, 0);
+    lv_obj_set_style_radius(card, 0, 0);
     lv_obj_set_style_border_width(card, 0, 0);
     lv_obj_set_style_pad_all(card, 28, 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -1415,8 +1415,8 @@ void AppIdea::_naOpen()
     lv_obj_set_style_text_color(l1, lv_color_hex(C_TEXT2), 0);
     lv_obj_align(l1, LV_ALIGN_TOP_LEFT, 0, 48);
     _na_ta_tok = lv_textarea_create(card);
-    lv_obj_set_size(_na_ta_tok, 664, 58);
-    lv_obj_align(_na_ta_tok, LV_ALIGN_TOP_LEFT, 0, 78);
+    lv_obj_set_size(_na_ta_tok, 600, 58);
+    lv_obj_align(_na_ta_tok, LV_ALIGN_TOP_LEFT, 0, 94);
     lv_textarea_set_one_line(_na_ta_tok, true);
     lv_textarea_set_placeholder_text(_na_ta_tok, "粘贴 TOKEN");
     lv_obj_set_style_text_font(_na_ta_tok, zh_font_md(), 0);
@@ -1432,8 +1432,8 @@ void AppIdea::_naOpen()
     }, LV_EVENT_FOCUSED, this);
 
     auto* lb = lv_button_create(card);
-    lv_obj_set_size(lb, 220, 54);
-    lv_obj_align(lb, LV_ALIGN_TOP_LEFT, 0, 146);
+    lv_obj_set_size(lb, 260, 56);
+    lv_obj_align(lb, LV_ALIGN_TOP_LEFT, 0, 168);
     lv_obj_set_style_bg_color(lb, lv_color_hex(C_ON), 0);
     lv_obj_set_style_radius(lb, 14, 0);
     lv_obj_add_event_cb(lb, [](lv_event_t* e) {
@@ -1448,16 +1448,16 @@ void AppIdea::_naOpen()
     lv_label_set_text(l2, "没有账号? 邀请码在 ZERO 设置·生成注册码");
     lv_obj_set_style_text_font(l2, zh_font_md(), 0);
     lv_obj_set_style_text_color(l2, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(l2, LV_ALIGN_TOP_LEFT, 0, 214);
+    lv_obj_align(l2, LV_ALIGN_TOP_LEFT, 0, 244);
 
     auto* l3 = lv_label_create(card);
     lv_label_set_text(l3, "用户名 (3-16 位小写字母/数字/_)");
     lv_obj_set_style_text_font(l3, zh_font_md(), 0);
     lv_obj_set_style_text_color(l3, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(l3, LV_ALIGN_TOP_LEFT, 0, 248);
+    lv_obj_align(l3, LV_ALIGN_TOP_LEFT, 624, 64);   // 右列 (左列 TOKEN/登录, 全屏双列布局)
     _na_ta_name = lv_textarea_create(card);
-    lv_obj_set_size(_na_ta_name, 664, 58);
-    lv_obj_align(_na_ta_name, LV_ALIGN_TOP_LEFT, 0, 276);
+    lv_obj_set_size(_na_ta_name, 600, 58);
+    lv_obj_align(_na_ta_name, LV_ALIGN_TOP_LEFT, 624, 94);
     lv_textarea_set_one_line(_na_ta_name, true);
     lv_textarea_set_placeholder_text(_na_ta_name, "用户名");
     lv_obj_set_style_text_font(_na_ta_name, zh_font_md(), 0);
@@ -1476,10 +1476,10 @@ void AppIdea::_naOpen()
     lv_label_set_text(l4, "邀请码");
     lv_obj_set_style_text_font(l4, zh_font_md(), 0);
     lv_obj_set_style_text_color(l4, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(l4, LV_ALIGN_TOP_LEFT, 0, 340);
+    lv_obj_align(l4, LV_ALIGN_TOP_LEFT, 624, 168);
     _na_ta_inv = lv_textarea_create(card);
-    lv_obj_set_size(_na_ta_inv, 664, 58);
-    lv_obj_align(_na_ta_inv, LV_ALIGN_TOP_LEFT, 0, 368);
+    lv_obj_set_size(_na_ta_inv, 600, 58);
+    lv_obj_align(_na_ta_inv, LV_ALIGN_TOP_LEFT, 624, 198);
     lv_textarea_set_one_line(_na_ta_inv, true);
     lv_textarea_set_placeholder_text(_na_ta_inv, "邀请码");
     lv_obj_set_style_text_font(_na_ta_inv, zh_font_md(), 0);
@@ -1495,8 +1495,8 @@ void AppIdea::_naOpen()
     }, LV_EVENT_FOCUSED, this);
 
     auto* reg = lv_button_create(card);
-    lv_obj_set_size(reg, 220, 54);
-    lv_obj_align(reg, LV_ALIGN_TOP_LEFT, 0, 436);
+    lv_obj_set_size(reg, 260, 56);
+    lv_obj_align(reg, LV_ALIGN_TOP_LEFT, 624, 272);
     lv_obj_set_style_bg_color(reg, lv_color_hex(theme::cur().accent), 0);
     lv_obj_set_style_radius(reg, 14, 0);
     lv_obj_add_event_cb(reg, [](lv_event_t* e) {
@@ -1508,8 +1508,8 @@ void AppIdea::_naOpen()
     lv_obj_center(lbl2);
 
     auto* out = lv_button_create(card);
-    lv_obj_set_size(out, 180, 54);
-    lv_obj_align(out, LV_ALIGN_TOP_LEFT, 240, 436);   // 与「注册」同 y, x 错开 240 不再重叠
+    lv_obj_set_size(out, 200, 56);
+    lv_obj_align(out, LV_ALIGN_TOP_LEFT, 0, 320);     // 左列提示语下方; 键盘区(y≥380)之上全程可点
     lv_obj_set_style_bg_color(out, lv_color_hex(C_DANGER), 0);
     lv_obj_set_style_radius(out, 14, 0);
     lv_obj_add_event_cb(out, [](lv_event_t* e) {
@@ -1527,7 +1527,7 @@ void AppIdea::_naOpen()
     lv_obj_align(_na_stat, LV_ALIGN_BOTTOM_LEFT, 0, -8);
 
     auto* close = lv_button_create(card);
-    lv_obj_set_size(close, 110, 54);
+    lv_obj_set_size(close, 130, 58);
     lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_set_style_radius(close, 14, 0);
     lv_obj_add_event_cb(close, [](lv_event_t* e) {
@@ -1539,7 +1539,7 @@ void AppIdea::_naOpen()
     lv_obj_center(lbl4);
 
     _na_kb = lv_keyboard_create(_na_modal);
-    lv_obj_set_size(_na_kb, 720, 260);
+    lv_obj_set_size(_na_kb, SCREEN_W, KB_H);          // 主屏键盘同款 1280×340
     lv_obj_align(_na_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_flag(_na_kb, LV_OBJ_FLAG_HIDDEN);
     // ✓(READY)/✗(CANCEL) 收键盘 — 主屏键盘同款; 不挂则键盘永不隐藏盖住登录钮
