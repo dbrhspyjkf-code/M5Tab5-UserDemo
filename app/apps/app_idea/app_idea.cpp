@@ -1746,7 +1746,7 @@ void AppIdea::s_uploadRun()
                  "%s/v1/voice-part?id=%s&part=%d&parts=%d&dur=%d"
                  "&category=%s&ts=%lld",
                  NA_BASE, s_rec_id.c_str(), i, parts, dur,
-                 s_rec_cat.c_str(), epoch_ms());
+                 s_rec_cat.c_str(), epoch_ms() / 1000);  // 服务端 ts 单位=秒, 原发毫秒被当秒存(显示成垃圾日期)
         auto hdr = AppIdea::_na_hdr();
         hdr.push_back({"Content-Type", "application/octet-stream"});
         auto resp = GetHAL()->httpPost(url, body, hdr);
