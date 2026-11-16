@@ -988,6 +988,42 @@ void AppIdea::_renderList()
 // 走 ECS 安全组已放行的空闲口 8585 (Caddy 明文反代 127.0.0.1:8794), 纯 IP 同健康链路 8648 模式
 static const char* NA_BASE = "http://8.134.111.17:8585";
 
+// ── NA JSON 防御取值: noteserver 返回 "ok":1 (数字, ZERO oneapp/车机同款形状),
+// nlohmann .value() 遇类型不符直接 throw type_error → worker 无人接 = abort 蓝屏
+// (2026-11-16 登录即重启真凶)。以下 find+类型分派实现永不抛。
+static bool na_jbool(const PsramJson& j, const char* k, bool dflt = false) {
+    if (!j.is_object()) return dflt;
+    auto it = j.find(k);
+    if (it == j.end() || it->is_null()) return dflt;
+    if (it->is_boolean()) return it->get<bool>();
+    if (it->is_number_integer()) return it->get<long long>() != 0;
+    if (it->is_string()) {
+        auto s = it->get<std::string>();
+        return s == "1" || s == "true";
+    }
+    return dflt;
+}
+static std::string na_jstr(const PsramJson& j, const char* k, const char* dflt = "") {
+    if (!j.is_object()) return dflt;
+    auto it = j.find(k);
+    if (it == j.end() || it->is_null()) return dflt;
+    if (it->is_string()) return it->get<std::string>();
+    if (it->is_number_integer()) return std::to_string(it->get<long long>());
+    if (it->is_number_float()) {
+        char b[32];
+        snprintf(b, sizeof(b), "%g", it->get<double>());
+        return b;
+    }
+    return dflt;
+}
+static double na_jnum(const PsramJson& j, const char* k, double dflt = 0) {
+    if (!j.is_object()) return dflt;
+    auto it = j.find(k);
+    if (it == j.end() || it->is_null()) return dflt;
+    if (it->is_number()) return it->get<double>();
+    return dflt;
+}
+
 std::string AppIdea::_na_tok()
 {
     return GetHAL()->getConfig("notes_token", "");
@@ -1033,17 +1069,18 @@ void AppIdea::_fetch()
         auto j = PsramJson::parse(resp.body, nullptr, false);
         if (!j.is_discarded()) {
             // 单层 notes 数组 (kind 分文字/语音; ts 秒; category 分类)
-            if (j.contains("notes")) {
+            if (j.is_object() && j.contains("notes") && j["notes"].is_array()) {
                 for (auto& n : j["notes"]) {
+                    if (!n.is_object()) continue;
                     IdeaItem it;
-                    it.voice = (n.value("kind", "text") == "voice");
-                    it.id = n.value("id", std::string());
-                    it.text = n.value("text", std::string());
-                    it.cat = n.value("category", "idea");
-                    it.created = (long long)(n.value("ts", 0.0) * 1000);
+                    it.voice = (na_jstr(n, "kind", "text") == "voice");
+                    it.id = na_jstr(n, "id");
+                    it.text = na_jstr(n, "text");
+                    it.cat = na_jstr(n, "category", "idea");
+                    it.created = (long long)(na_jnum(n, "ts") * 1000);
                     if (it.voice) {
-                        it.dur = (int)n.value("dur", 0.0);
-                        it.mime = n.value("vct", "audio/wav");
+                        it.dur = (int)na_jnum(n, "dur");
+                        it.mime = na_jstr(n, "vct", "audio/wav");
                     }
                     items.push_back(std::move(it));
                 }
@@ -1578,8 +1615,8 @@ void AppIdea::_naLogin()
         std::string user;
         auto j = PsramJson::parse(resp.body, nullptr, false);
         if (!j.is_discarded()) {
-            ok = j.value("ok", false);
-            user = j.value("user", "");
+            ok = na_jbool(j, "ok");
+            user = na_jstr(j, "user");
         }
         if (ok) {
             GetHAL()->setConfig("notes_token", tok);
@@ -1611,9 +1648,9 @@ void AppIdea::_naRegister()
         std::string tok, user;
         auto j = PsramJson::parse(resp.body, nullptr, false);
         if (!j.is_discarded()) {
-            ok = j.value("ok", false);
-            tok = j.value("token", std::string());
-            user = j.value("user", std::string());
+            ok = na_jbool(j, "ok");
+            tok = na_jstr(j, "token");
+            user = na_jstr(j, "user");
         }
         if (ok) {                                  // 注册即登录
             GetHAL()->setConfig("notes_token", tok);
@@ -1713,7 +1750,7 @@ void AppIdea::s_uploadRun()
         bool pok = false;
         if (resp.status == 200) {
             auto j = PsramJson::parse(resp.body, nullptr, false);
-            pok = !j.is_discarded() && j.value("ok", false);
+            pok = !j.is_discarded() && na_jbool(j, "ok");
         }
         if (!pok) {
             ok = false;
