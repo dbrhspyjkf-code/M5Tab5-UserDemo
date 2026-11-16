@@ -984,7 +984,9 @@ void AppIdea::_renderList()
 // ── 数据操作 (V3: 直连 ZERO 想法云 noteserver — notes.apisz.top, 纯 token
 //    鉴权; 登录/注册/换账户在面板右上 ☁; 与 ZERO oneapp / 车机 car-dash
 //    共用同一账号空间, 多端一致) ─────────────────────────────────────────
-static const char* NA_BASE = "https://notes.apisz.top";
+// 家宽对 apisz.top:443 SNI reset、80 被 ISP Beaver 透明代理 403, 唯非标口可达 ——
+// 走 ECS 安全组已放行的空闲口 8585 (Caddy 明文反代 127.0.0.1:8794), 纯 IP 同健康链路 8648 模式
+static const char* NA_BASE = "http://8.134.111.17:8585";
 
 std::string AppIdea::_na_tok()
 {
