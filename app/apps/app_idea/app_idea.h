@@ -170,6 +170,23 @@ private:
     lv_obj_t* _na_stat   = nullptr;
     std::atomic<bool> _na_busy{false};
     std::atomic<int> _na_result{-1};              // worker 结果: -1 idle / 0 fail / 1 ok
+#ifndef PLATFORM_BUILD_DESKTOP
+    // ── 扫码登录 (noteserver 设备码流程, 对齐 ZERO oneapp; token 同存 NVS) ──
+    void _qrOpen();                               // 账户弹层上的扫码覆盖层
+    void _qrClose();                              // 先删计时器再删覆盖层 (幂等)
+    void _qrStart();                              // worker: /v1/auth/device/start 出码
+    void _qrPollOnce();                           // worker: /v1/auth/device/poll
+    static void _qrTimerCb(lv_timer_t* t);        // 500ms 调度 (轮询节流 2s)
+    lv_obj_t* _qr_overlay = nullptr;              // 扫码覆盖层 (_na_modal 子对象, 单实例)
+    lv_obj_t* _qr_obj     = nullptr;              // lv_qrcode (canvas 派生)
+    lv_obj_t* _qr_stat    = nullptr;
+    lv_timer_t* _qr_timer = nullptr;
+    std::atomic<bool> _qr_busy{false};
+    std::atomic<int> _qr_evt{-1};                 // worker→UI: 1 出码就绪 /2 文案 /3 成功 /4 重出 /5 出码失败
+    std::string _qr_dc, _qr_url, _qr_msg;         // worker 写, _mu 保护
+    uint32_t _qr_poll_ms = 0;                     // 下次轮询/重出码时点 (仅 UI 线程读写)
+    uint32_t _qr_close_ms = 0;                    // 成功后自动关层时点 (仅 UI 线程读写)
+#endif
     void _fetch();
     void _renderList();
     void _renderFilter();

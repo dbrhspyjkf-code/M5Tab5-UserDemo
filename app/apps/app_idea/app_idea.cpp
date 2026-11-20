@@ -280,6 +280,51 @@ void AppIdea::onRunning()
             }
         }
     }
+#ifndef PLATFORM_BUILD_DESKTOP
+    {
+        int qe = _qr_evt.exchange(-1);             // 扫码登录 worker 结果
+        if (qe >= 0) {
+            std::string msg;
+            {
+                std::lock_guard<std::mutex> lk(_mu);
+                msg = _qr_msg;
+            }
+            if (qe == 1) {                         // 出码就绪 → 画 QR
+                std::string url;
+                {
+                    std::lock_guard<std::mutex> lk(_mu);
+                    url = _qr_url;
+                }
+                if (_qr_obj && !url.empty()) {
+                    lv_qrcode_update(_qr_obj, url.data(), (uint32_t)url.size());
+                    lv_obj_clear_flag(_qr_obj, LV_OBJ_FLAG_HIDDEN);
+                }
+                if (_qr_stat)
+                    lv_label_set_text(_qr_stat, "手机扫码, 授权页登录后自动登录");
+            } else if (qe == 2) {
+                if (_qr_stat) lv_label_set_text(_qr_stat, msg.c_str());
+            } else if (qe == 3) {                  // 授权成功 (与手填 TOKEN 成功路径同款收尾)
+                if (_qr_stat) {
+                    lv_label_set_text(_qr_stat, msg.c_str());
+                    lv_obj_set_style_text_color(_qr_stat, lv_color_hex(C_ON), 0);
+                }
+                if (_na_modal) {
+                    lv_textarea_set_text(_na_ta_tok, "");
+                    lv_textarea_set_text(_na_ta_name, "");
+                    lv_textarea_set_text(_na_ta_inv, "");
+                }
+                _fetch();                          // 拉新账户数据
+                _qr_close_ms = GetHAL()->millis() + 1400;   // 停留片刻自动回账户层
+            } else if (qe == 4) {                  // 过期/被领走 → 文案停留片刻再自动重出
+                if (_qr_stat) lv_label_set_text(_qr_stat, msg.c_str());
+                _qr_poll_ms = GetHAL()->millis() + 1600;
+            } else if (qe == 5) {
+                if (_qr_stat) lv_label_set_text(_qr_stat, msg.c_str());
+                _qr_poll_ms = GetHAL()->millis() + 3000;
+            }
+        }
+    }
+#endif
 
 #ifndef PLATFORM_BUILD_DESKTOP
     // 管线结果 → 统一 instance 提示位
@@ -378,6 +423,7 @@ void AppIdea::_teardown()
     _alive = std::make_shared<bool>(false);   // 作废手势/延迟回调
     _removeSwipeGesture();
 #ifndef PLATFORM_BUILD_DESKTOP
+    _qrClose();                                // 扫码覆盖层/计时器先拆 (modal 随 _scr 删)
     if (s_recording) _recStop(true);
     s_play_stop = true;                        // 回放 worker 自行退出复位
 #endif
@@ -1484,6 +1530,21 @@ void AppIdea::_naOpen()
     lv_obj_set_style_text_font(lbl1, zh_font_md(), 0);
     lv_obj_center(lbl1);
 
+#ifndef PLATFORM_BUILD_DESKTOP
+    auto* qrb = lv_button_create(card);            // 扫码登录 (oneapp 设备码流程同款)
+    lv_obj_set_size(qrb, 320, 56);
+    lv_obj_align(qrb, LV_ALIGN_TOP_LEFT, 284, 168);
+    lv_obj_set_style_bg_color(qrb, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_set_style_radius(qrb, 14, 0);
+    lv_obj_add_event_cb(qrb, [](lv_event_t* e) {
+        static_cast<AppIdea*>(lv_event_get_user_data(e))->_qrOpen();
+    }, LV_EVENT_CLICKED, this);
+    auto* lblq = lv_label_create(qrb);
+    lv_label_set_text(lblq, "扫码登录 (免输token)");
+    lv_obj_set_style_text_font(lblq, zh_font_md(), 0);
+    lv_obj_center(lblq);
+#endif
+
     auto* l2 = lv_label_create(card);
     lv_label_set_text(l2, "没有账号? 邀请码在 ZERO 设置·生成注册码");
     lv_obj_set_style_text_font(l2, zh_font_md(), 0);
@@ -1599,6 +1660,9 @@ void AppIdea::_naOpen()
 
 void AppIdea::_naClose()
 {
+#ifndef PLATFORM_BUILD_DESKTOP
+    _qrClose();                                // 扫码覆盖层是 modal 子对象, 计时器必须先删
+#endif
     if (_na_modal) { lv_obj_delete(_na_modal); _na_modal = nullptr; }
     _naRefresh();                                  // 顶栏 @user 复位 (label 重建)
 }
@@ -1676,6 +1740,194 @@ void AppIdea::_naLogout()
     }
     _list_ready = true;                            // 未登录 → 列表刷空
 }
+
+#ifndef PLATFORM_BUILD_DESKTOP
+// ── 扫码登录 (noteserver 设备码流程, 与 ZERO oneapp 同一套端点):
+//    出码 /v1/auth/device/start {"name":"tab5"} → 手机扫码开 /login 授权页登录
+//    approve → 本机 2s 轮询 /v1/auth/device/poll 收一次性 device token
+//    (永不过期, 落 NVS notes_token/notes_user, 与手填 TOKEN 同一存储)。
+//    码 5min 过期 (404 "none") / 被领走 ("done") 自动重出; busy 原子防重入,
+//    worker 只写原子+加锁字符串, LVGL 全在 UI 线程 (timer/onRunning)。
+void AppIdea::_qrOpen()
+{
+    if (!_na_modal) return;
+    _qrClose();                                    // 幂等重开
+    _qr_overlay = lv_obj_create(_na_modal);
+    lv_obj_set_size(_qr_overlay, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(_qr_overlay, 0, 0);
+    lv_obj_set_style_bg_color(_qr_overlay, lv_color_hex(C_CARD), 0);
+    lv_obj_set_style_radius(_qr_overlay, 0, 0);
+    lv_obj_set_style_border_width(_qr_overlay, 0, 0);
+    lv_obj_clear_flag(_qr_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(_qr_overlay, LV_OBJ_FLAG_CLICKABLE);    // 吃点击不透传
+
+    auto* ttl = lv_label_create(_qr_overlay);
+    lv_label_set_text(ttl, "扫码登录");
+    lv_obj_set_style_text_font(ttl, zh_font_lg(), 0);
+    lv_obj_set_style_text_color(ttl, lv_color_hex(theme::cur().accent), 0);
+    lv_obj_align(ttl, LV_ALIGN_TOP_MID, 0, 20);
+
+    auto* hint = lv_label_create(_qr_overlay);
+    lv_label_set_text(hint, "手机扫码 → 打开授权页登录, 确认后本机自动登录");
+    lv_obj_set_style_text_font(hint, zh_font_md(), 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(C_TEXT2), 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 78);
+
+    _qr_obj = lv_qrcode_create(_qr_overlay);
+    lv_qrcode_set_size(_qr_obj, 420);
+    lv_qrcode_set_dark_color(_qr_obj, lv_color_hex(0x000000));
+    lv_qrcode_set_light_color(_qr_obj, lv_color_hex(0xFFFFFF));
+    lv_obj_align(_qr_obj, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(_qr_obj, LV_OBJ_FLAG_HIDDEN);           // 出码成功再显示
+
+    _qr_stat = lv_label_create(_qr_overlay);
+    lv_label_set_text(_qr_stat, "出码中…");
+    lv_obj_set_style_text_font(_qr_stat, zh_font_md(), 0);
+    lv_obj_set_style_text_color(_qr_stat, lv_color_hex(C_TEXT2), 0);
+    lv_obj_align(_qr_stat, LV_ALIGN_BOTTOM_MID, 0, -40);
+
+    auto* back = lv_button_create(_qr_overlay);
+    lv_obj_set_size(back, 130, 58);
+    lv_obj_align(back, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_style_radius(back, 14, 0);
+    lv_obj_add_event_cb(back, [](lv_event_t* e) {
+        static_cast<AppIdea*>(lv_event_get_user_data(e))->_qrClose();
+    }, LV_EVENT_CLICKED, this);
+    auto* lblb = lv_label_create(back);
+    lv_label_set_text(lblb, "返回");
+    lv_obj_set_style_text_font(lblb, zh_font_md(), 0);
+    lv_obj_center(lblb);
+
+    _qr_timer = lv_timer_create(_qrTimerCb, 500, this);
+    _qr_poll_ms = 0;
+    _qr_close_ms = 0;
+    _qrStart();
+}
+
+void AppIdea::_qrClose()
+{
+    if (_qr_timer) { lv_timer_del(_qr_timer); _qr_timer = nullptr; }
+    _qr_close_ms = 0;
+    _qr_busy = false;                          // 在途 worker 收尾只写原子, 结果无人消费
+    if (_qr_overlay) { lv_obj_delete(_qr_overlay); _qr_overlay = nullptr; }
+    _qr_obj = nullptr;
+    _qr_stat = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(_mu);
+        _qr_dc.clear();
+        _qr_url.clear();
+        _qr_msg.clear();
+    }
+    _qr_evt = -1;
+}
+
+void AppIdea::_qrStart()
+{
+    if (!_qr_overlay || _qr_busy.exchange(true)) return;
+    lv_label_set_text(_qr_stat, "出码中…");
+    lv_obj_add_flag(_qr_obj, LV_OBJ_FLAG_HIDDEN);
+    auto alive = _alive;
+    GetHAL()->tryRunDetached([this, alive]() {
+        std::string body = nlohmann::json{{"name", "tab5"}}.dump();
+        auto resp = GetHAL()->httpPost(std::string(NA_BASE) + "/v1/auth/device/start",
+            body, {{"Content-Type", "application/json"}});
+        bool ok = false;
+        std::string dc;
+        auto j = PsramJson::parse(resp.body, nullptr, false);
+        if (!j.is_discarded()) {
+            ok = na_jbool(j, "ok");
+            dc = na_jstr(j, "device_code");
+        }
+        bool got = ok && dc.size() == 32;      // 服务端 device_code 固定 32 hex
+        {
+            std::lock_guard<std::mutex> lk(_mu);
+            if (got) {
+                _qr_dc = dc;
+                // 服务端给的是 https://notes.apisz.top/... (家宽 443 SNI reset 手机
+                // 打不开); 二维码改指 ECS 8585 明文口 — 同一 noteserver, H5 页
+                // 全相对路径换 origin 无副作用, 手机 WiFi/蜂窝都可达
+                _qr_url = std::string(NA_BASE) + "/login#dc=" + dc;
+            } else {
+                _qr_dc.clear();
+                _qr_url.clear();
+                _qr_msg = "出码失败, 稍后自动重试";
+            }
+        }
+        if (*alive) _qr_evt = got ? 1 : 5;
+        _qr_busy = false;
+    }, 16 * 1024);
+}
+
+void AppIdea::_qrPollOnce()
+{
+    if (!_qr_overlay || _qr_busy.exchange(true)) return;
+    std::string dc;
+    {
+        std::lock_guard<std::mutex> lk(_mu);
+        dc = _qr_dc;
+    }
+    if (dc.empty()) { _qr_busy = false; return; }
+    auto alive = _alive;
+    GetHAL()->tryRunDetached([this, alive, dc]() {
+        std::string body = nlohmann::json{{"device_code", dc}}.dump();
+        auto resp = GetHAL()->httpPost(std::string(NA_BASE) + "/v1/auth/device/poll",
+            body, {{"Content-Type", "application/json"}});
+        auto j = PsramJson::parse(resp.body, nullptr, false);
+        std::string st = j.is_discarded() ? "" : na_jstr(j, "status");
+        if (st == "approved") {
+            std::string tok = na_jstr(j, "token");     // 一次性发放, 此刻必须收下
+            std::string user = na_jstr(j, "user");
+            if (!tok.empty()) {
+                GetHAL()->setConfig("notes_token", tok);
+                GetHAL()->setConfig("notes_user", user);
+                {
+                    std::lock_guard<std::mutex> lk(_mu);
+                    _qr_msg = "登录成功 @" + (user.empty() ? "?" : user);
+                }
+                if (*alive) _qr_evt = 3;
+            }
+        } else if (st == "pending") {
+            {
+                std::lock_guard<std::mutex> lk(_mu);
+                _qr_msg = "等待手机授权确认…";
+            }
+            if (*alive) _qr_evt = 2;
+        } else if (st == "none" || st == "done") {     // 过期/被领走 → 重出码
+            {
+                std::lock_guard<std::mutex> lk(_mu);
+                _qr_dc.clear();
+                _qr_url.clear();
+                _qr_msg = (st == "done") ? "授权已被领取, 重新出码…"
+                                         : "二维码已过期, 重新出码…";
+            }
+            if (*alive) _qr_evt = 4;
+        }
+        // 其他 status / 网络失败: 静默, 下轮 timer 再试
+        _qr_busy = false;
+    }, 16 * 1024);
+}
+
+void AppIdea::_qrTimerCb(lv_timer_t* t)
+{
+    auto* self = static_cast<AppIdea*>(lv_timer_get_user_data(t));
+    if (!self->_qr_overlay) return;
+    uint32_t now = GetHAL()->millis();
+    if (self->_qr_close_ms && (int32_t)(now - self->_qr_close_ms) >= 0) {
+        self->_qrClose();                              // 成功后停留片刻自动回账户层
+        return;
+    }
+    if (self->_qr_busy.load()) return;
+    if ((int32_t)(now - self->_qr_poll_ms) < 0) return;
+    self->_qr_poll_ms = now + 2000;                    // 与 oneapp 同款 2s 节流
+    bool has_dc;
+    {
+        std::lock_guard<std::mutex> lk(self->_mu);
+        has_dc = !self->_qr_dc.empty();
+    }
+    if (has_dc) self->_qrPollOnce();
+    else self->_qrStart();                             // 无码: 出码/重试
+}
+#endif  // PLATFORM_BUILD_DESKTOP
 
 void AppIdea::s_recWorker()
 {
