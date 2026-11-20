@@ -151,13 +151,10 @@ private:
     void _buildUi();
     void _teardown();
     // ── 想法云账户 (noteserver): 登录/注册/扫码 UI 已迁主页「设置·账户」Tab
-    //    (utils/notes_account/notes_account_panel.h), 本 app 只留凭证转发与
-    //    顶栏 @user 只读显示 ──
+    //    (utils/notes_account/notes_account_panel.h), 本 app 只留凭证转发
+    //    (顶栏 @user 显示 2026-11-20 用户要求移除) ──
     static std::string _na_tok();                 // → NotesAccountPanel::token()
-    static std::string _na_user();                // → NotesAccountPanel::user()
     static std::vector<std::pair<std::string, std::string>> _na_hdr();
-    void _naRefresh();                            // 状态 label 刷新
-    lv_obj_t* _na_user_lbl = nullptr;             // 顶栏 @user 只读
     void _fetch();
     void _renderList();
     void _renderFilter();

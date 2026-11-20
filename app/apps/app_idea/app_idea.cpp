@@ -238,7 +238,6 @@ void AppIdea::onOpen()
     _alive = std::make_shared<bool>(true);    // 成对铁律: 拆屏置 false 后此处必须重建
     snap_theme();
     _buildUi();
-    _naRefresh();
     lv_screen_load(_scr);                     // 必须: 不 load 则 onRunning 误判失焦
     _installSwipeGesture();
 
@@ -421,12 +420,6 @@ void AppIdea::_buildUi()
     lv_obj_set_style_text_color(_count_lbl, lv_color_hex(C_TEXT2), 0);
     lv_obj_align(_count_lbl, LV_ALIGN_LEFT_MID, 130, 0);
 
-    _na_user_lbl = lv_label_create(header);
-    lv_label_set_text(_na_user_lbl, "");
-    lv_obj_set_style_text_font(_na_user_lbl, zh_font_md(), 0);
-    lv_obj_set_style_text_color(_na_user_lbl, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(_na_user_lbl, LV_ALIGN_RIGHT_MID, -44, 0);   // 只读状态 (登录入口迁设置·账户)
-
     lv_obj_t* refresh_btn = lv_button_create(header);
     lv_obj_set_size(refresh_btn, 120, 56);
     lv_obj_align(refresh_btn, LV_ALIGN_RIGHT_MID, -24, 0);
@@ -507,11 +500,11 @@ void AppIdea::_buildUi()
     int btn_y = 338;
 #ifndef PLATFORM_BUILD_DESKTOP
     lv_obj_t* mic = lv_button_create(card);
-    lv_obj_set_size(mic, LW - 32, 92);
-    lv_obj_align(mic, LV_ALIGN_TOP_LEFT, 0, 446);
+    lv_obj_set_size(mic, LW - 32, 64);
+    lv_obj_align(mic, LV_ALIGN_TOP_LEFT, 0, 474);   // 底边贴原 538 (2026-11-20 用户要求按钮改小)
     lv_obj_set_style_bg_color(mic, lv_color_hex(C_DANGER), 0);
     lv_obj_set_style_bg_color(mic, lv_color_mix(lv_color_hex(0), lv_color_hex(C_DANGER), 178), LV_STATE_PRESSED);
-    lv_obj_set_style_radius(mic, 46, 0);
+    lv_obj_set_style_radius(mic, 32, 0);
     lv_obj_add_event_cb(mic, [](lv_event_t* e) {
         auto* self = static_cast<AppIdea*>(lv_event_get_user_data(e));
         if (AppIdea::s_recording.load()) self->_recStop(true);
@@ -519,7 +512,7 @@ void AppIdea::_buildUi()
     }, LV_EVENT_CLICKED, this);
     _mic_lbl = lv_label_create(mic);
     lv_label_set_text(_mic_lbl, "保存语音");
-    lv_obj_set_style_text_font(_mic_lbl, zh_font_lg(), 0);
+    lv_obj_set_style_text_font(_mic_lbl, zh_font_md(), 0);
     lv_obj_set_style_text_color(_mic_lbl, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(_mic_lbl);
     btn_y = 338;   // 保存/转写行上移至 chips 下方 (对调后)
@@ -964,11 +957,6 @@ std::string AppIdea::_na_tok()
     return NotesAccountPanel::token();
 }
 
-std::string AppIdea::_na_user()
-{
-    return NotesAccountPanel::user();
-}
-
 std::vector<std::pair<std::string, std::string>> AppIdea::_na_hdr()
 {
     return NotesAccountPanel::auth_header();
@@ -1267,15 +1255,6 @@ void AppIdea::_removeSwipeGesture()
         _gesture_indev = nullptr;
         _gesture_ctx = nullptr;
     }
-}
-
-// ── 想法云账户状态刷新 (登录 UI 已迁设置·账户 Tab; 桌面/设备都要链接) ──
-void AppIdea::_naRefresh()
-{
-    auto u = _na_user();
-    auto t = _na_tok();
-    if (_na_user_lbl)
-        lv_label_set_text(_na_user_lbl, t.empty() ? "未登录" : ("@" + u).c_str());
 }
 
 // ── 设备专属: 录音 / 回放 ─────────────────────────────────────────────────
