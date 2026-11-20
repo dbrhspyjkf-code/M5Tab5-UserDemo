@@ -196,7 +196,7 @@ public:
             lv_obj_t* l = lv_label_create(b);
             lv_label_set_text(l, txt);
             lv_obj_set_style_text_font(l, na_font::md(), 0);
-            lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(theme::ink_on(bg)), 0);
             lv_obj_center(l);
             return b;
         };

@@ -71,6 +71,17 @@ inline const Palette kThemes[] = {
 
 inline int count() { return (int)(sizeof(kThemes) / sizeof(kThemes[0])); }
 
+// 按背景感知亮度选墨色: 亮底配深字, 暗底配白字。
+// 松绿/暖橙/岩紫的 accent 是亮色, 固定白字对比度不足 (2026-11-20 用户实锤
+// 「设置里很多按钮白字看不清」); 晨白/车机灰 accent 偏暗仍配白字。
+// 阈值 150: 0x34D399=157→深字, 0x4FA3FF=148→白字, danger 0xEF4444=119→白字。
+inline uint32_t ink_on(uint32_t bg)
+{
+    uint32_t r = (bg >> 16) & 0xFF, g = (bg >> 8) & 0xFF, b = bg & 0xFF;
+    uint32_t lum = (r * 299 + g * 587 + b * 114) / 1000;
+    return lum > 150 ? 0x1F2937 : 0xFFFFFF;
+}
+
 namespace detail {
 inline int g_idx = -1;   // -1 = 尚未从 NVS 读取
 }

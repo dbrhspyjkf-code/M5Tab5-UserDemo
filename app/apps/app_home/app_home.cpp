@@ -1388,11 +1388,13 @@ inline uint32_t T_DANGER() { return theme::cur().danger; }
 inline uint32_t T_WARN()   { return theme::cur().warn; }
 
 // Styled pill button. cb is a captureless lambda; `self` is passed as user_data.
-// txt_color: 按钮文字色, 默认白(配 accent/danger/warn 深底); T_BTN() 浅色底按钮
+// txt_color: 按钮文字色, 默认按底色亮度自动选墨 (亮 accent/warn 底→深字, 暗底→白;
+// 松绿/暖橙 accent 上固定白字看不清, 2026-11-20); T_BTN() 浅色底按钮
 // (取消/主题/扫描) 传 theme::cur().text_hi, 否则浅色主题下白字看不见。
 lv_obj_t* mk_btn(lv_obj_t* parent, const char* text, uint32_t color, int w, int h,
-                 lv_event_cb_t cb, void* self, uint32_t txt_color = 0xFFFFFF)
+                 lv_event_cb_t cb, void* self, uint32_t txt_color = 0)
 {
+    if (txt_color == 0) txt_color = theme::ink_on(color);   // 0=按底色亮度自动选墨
     lv_obj_t* b = lv_obj_create(parent);
     lv_obj_set_size(b, w, h);
     lv_obj_set_style_bg_color(b, lv_color_hex(color), 0);
@@ -1549,11 +1551,14 @@ void AppHome::_openQuickSettings()
         lv_obj_set_style_shadow_width(b, 0, 0);
         lv_obj_set_user_data(b, (void*)(intptr_t)i);
         lv_obj_add_event_cb(b, _qsTab_cb, LV_EVENT_VALUE_CHANGED, this);
+        // 文字色挂按钮层按状态切换 (label 不设本地色才能继承): 未选=track 底配
+        // text_soft, 选中=accent 底配 ink_on(accent) (亮 accent 上白字看不清)
+        lv_obj_set_style_text_color(b, lv_color_hex(T_LBL()), 0);
+        lv_obj_set_style_text_color(b, lv_color_hex(theme::ink_on(theme::cur().accent)),
+                                    LV_STATE_CHECKED);
         lv_obj_t* l = lv_label_create(b);
         lv_label_set_text(l, kTabs[i]);
         lv_obj_set_style_text_font(l, zh_font_lg(), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(T_LBL()), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), LV_STATE_CHECKED);
         lv_obj_center(l);
         _qs_tab_btns[i] = b;
     }
@@ -1921,11 +1926,13 @@ void AppHome::_buildNewsChips(lv_obj_t* card, int x, int y, int w)
         if (has(newsfeed::kSources[i].id)) lv_obj_add_state(chip, LV_STATE_CHECKED);
         lv_obj_set_user_data(chip, (void*)(intptr_t)i);
         lv_obj_add_event_cb(chip, _qsNews_cb, LV_EVENT_VALUE_CHANGED, this);
+        // 选中态文字色挂 chip 按钮层 (label 继承): accent 亮底配 ink_on 墨色
+        lv_obj_set_style_text_color(chip, lv_color_hex(T_LBL()), 0);
+        lv_obj_set_style_text_color(chip, lv_color_hex(theme::ink_on(T_ACCENT())),
+                                    LV_STATE_CHECKED);
         lv_obj_t* l = lv_label_create(chip);
         lv_label_set_text(l, newsfeed::kSources[i].name);
         lv_obj_set_style_text_font(l, zh_font_sm(), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(T_LBL()), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), LV_STATE_CHECKED);
         lv_obj_center(l);
     }
 }
