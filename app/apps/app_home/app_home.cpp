@@ -1748,6 +1748,8 @@ void AppHome::_openQuickSettings()
             static_cast<AppHome*>(lv_event_get_user_data(e))->_closeModal();
         }, this);
     lv_obj_align(done, LV_ALIGN_BOTTOM_RIGHT, -40, -28);
+
+    _setQsTab(_qs_tab);   // 初始落位: 隐藏非当前 Tab 容器 (漏了这步两 Tab 全部元素重叠)
 }
 
 void AppHome::_setQsTab(int i)
