@@ -1768,7 +1768,8 @@ void AppIdea::_qrOpen()
     lv_obj_align(ttl, LV_ALIGN_TOP_MID, 0, 20);
 
     auto* hint = lv_label_create(_qr_overlay);
-    lv_label_set_text(hint, "手机扫码 → 打开授权页登录, 确认后本机自动登录");
+    lv_label_set_text(hint, "手机扫码打开授权页登录, 确认后本机自动登录\n"
+                            "家里 WiFi 拦 apisz.top 域名, 扫码请关 WiFi 用蜂窝");
     lv_obj_set_style_text_font(hint, zh_font_md(), 0);
     lv_obj_set_style_text_color(hint, lv_color_hex(C_TEXT2), 0);
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 78);
@@ -1843,10 +1844,14 @@ void AppIdea::_qrStart()
             std::lock_guard<std::mutex> lk(_mu);
             if (got) {
                 _qr_dc = dc;
-                // 服务端给的是 https://notes.apisz.top/... (家宽 443 SNI reset 手机
-                // 打不开); 二维码改指 ECS 8585 明文口 — 同一 noteserver, H5 页
-                // 全相对路径换 origin 无副作用, 手机 WiFi/蜂窝都可达
-                _qr_url = std::string(NA_BASE) + "/login#dc=" + dc;
+                // 二维码用服务端原样 URL (https://notes.apisz.top/login#dc=…,
+                // 与 ZERO oneapp 逐字节一致): 微信 webview 拒开 IP 形态链接
+                // (「不能用 IP 地址」);家宽 ISP 对 apisz.top 域名全系拦截
+                // (443 SNI 断连 + 明文任意口 Host 劫持备案页, ECS hairpin 实证
+                // 阿里云不拦) — 手机蜂窝网络下域名正常, 家里扫码切蜂窝即可
+                auto u = na_jstr(j, "url");
+                _qr_url = u.find("http") == 0 ? u
+                                              : std::string(NA_BASE) + "/login#dc=" + dc;
             } else {
                 _qr_dc.clear();
                 _qr_url.clear();
