@@ -1531,18 +1531,19 @@ void AppHome::_openPowerDialog()
     lv_obj_align(b_cancel, LV_ALIGN_BOTTOM_LEFT, x0 + 2 * (BW + GAP), -32);
 }
 
-// ─── Quick-settings dialog (gear tap): 系统 Tab = 音量/亮度/屏保/定时/新闻,
-//     账户 Tab = 想法云账户 (NotesAccountPanel, 原 AppIdea ☁ 弹层迁入 2026-11-20) ──
+// ─── Quick-settings dialog (gear tap): 系统 Tab = 音量/亮度/屏保/定时,
+//     新闻 Tab = 新闻源多选, 账户 Tab = 想法云账户 (NotesAccountPanel,
+//     原 AppIdea ☁ 弹层迁入 2026-11-20; 三 Tab 2026-11-20 晚加宽 900) ──
 void AppHome::_openQuickSettings()
 {
-    lv_obj_t* card = _openModal(680, 640, "设置");
+    lv_obj_t* card = _openModal(900, 640, "设置");
 
     // ── Tab header (lottery 同款: CHECKABLE 按钮 + 容器 HIDDEN 切换) ──
-    static const char* const kTabs[] = {"系统", "账户"};
-    for (int i = 0; i < 2; i++) {
+    static const char* const kTabs[] = {"系统", "新闻", "账户"};
+    for (int i = 0; i < 3; i++) {
         lv_obj_t* b = lv_button_create(card);
-        lv_obj_set_size(b, 240, 48);
-        lv_obj_set_pos(b, 64 + i * 312, 56);
+        lv_obj_set_size(b, 260, 48);
+        lv_obj_set_pos(b, 36 + i * 284, 56);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CHECKABLE);
         lv_obj_set_style_bg_color(b, lv_color_hex(theme::cur().track), 0);
         lv_obj_set_style_bg_color(b, lv_color_hex(T_ACCENT()), LV_STATE_CHECKED);
@@ -1567,7 +1568,7 @@ void AppHome::_openQuickSettings()
     auto mk_page = [&]() {
         lv_obj_t* p = lv_obj_create(card);
         lv_obj_set_pos(p, 0, 112);
-        lv_obj_set_size(p, 680, 442);
+        lv_obj_set_size(p, 900, 442);
         lv_obj_set_style_bg_opa(p, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(p, 0, 0);
         lv_obj_set_style_pad_all(p, 0, 0);
@@ -1575,21 +1576,13 @@ void AppHome::_openQuickSettings()
         return p;
     };
     _qs_tab_sys  = mk_page();
+    _qs_tab_news = mk_page();
     _qs_tab_acct = mk_page();
 
-    // ── 系统 Tab ──
+    // ── 系统 Tab (web 版为空: 音量/亮度/屏保/定时全是 Tab5 硬件专属) ──
     lv_obj_t* sys = _qs_tab_sys;
-#ifdef PLATFORM_BUILD_WEB
-    // web 版: 音量/亮度/屏保/定时开关机全部是 Tab5 硬件专属, 只留新闻源;
-    // 主题按钮由下方公共区创建 (曾在此重复建过一枚, 2026-11-05 去重)
-    lv_obj_t* nw_l = lv_label_create(sys);
-    lv_label_set_text(nw_l, "新闻");
-    lv_obj_set_pos(nw_l, 40, 10);
-    lv_obj_set_style_text_color(nw_l, lv_color_hex(T_LBL()), 0);
-    lv_obj_set_style_text_font(nw_l, zh_font_lg(), 0);
-    _buildNewsChips(sys, 40, 52, 600);
-#else
-    const int LBL_X = 40, SLD_X = 180, SLD_W = 380, SLD_H = 44;
+#ifndef PLATFORM_BUILD_WEB
+    const int LBL_X = 40, SLD_X = 180, SLD_W = 520, SLD_H = 44;
     const int VAL_X = SLD_X + SLD_W + 18;
 
     auto mk_row = [&](const char* name, int yy, int min_v, int max_v, int cur_v,
@@ -1730,21 +1723,23 @@ void AppHome::_openQuickSettings()
         lv_obj_add_event_cb(dd, _qsPs_dd_cb, LV_EVENT_VALUE_CHANGED, this);
         return dd;
     };
-    _qs_ps_off_dd = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOff, "00:00").c_str(), "关", 240);
-    _qs_ps_on_dd  = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOn, "06:30").c_str(), "开", 444);
+    _qs_ps_off_dd = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOff, "00:00").c_str(), "关", 300);
+    _qs_ps_on_dd  = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOn, "06:30").c_str(), "开", 560);
 
-    // 新闻源多选 (2026-11-05, car-dash 设置同款): 主页新闻轮播卡轮哪些源;
-    // 新闻 app 恒显全部源页签。NVS news_feeds (JSON 数组, 默认 {"ai"})。
-    lv_obj_t* nw_l = lv_label_create(sys);
-    lv_label_set_text(nw_l, "新闻");
-    lv_obj_set_pos(nw_l, LBL_X, 350);
-    lv_obj_set_style_text_color(nw_l, lv_color_hex(T_LBL()), 0);
-    lv_obj_set_style_text_font(nw_l, zh_font_lg(), 0);
-    _buildNewsChips(sys, SLD_X - 8, 342, 680 - (SLD_X - 8) - 24);
+    // 新闻源多选已拆到「新闻」Tab (2026-11-20)。
 
 #endif  // !PLATFORM_BUILD_WEB
 
-    // ── 账户 Tab (想法云账户: TOKEN/扫码/注册/退出, 原 AppIdea ☁ 弹层迁入) ──
+    // ── 新闻 Tab (新闻源多选: 主页新闻卡轮播来源, 2026-11-20 自系统 Tab 拆出) ──
+    lv_obj_t* nw = _qs_tab_news;
+    lv_obj_t* nw_l = lv_label_create(nw);
+    lv_label_set_text(nw_l, "新闻");
+    lv_obj_set_pos(nw_l, 40, 12);
+    lv_obj_set_style_text_color(nw_l, lv_color_hex(T_LBL()), 0);
+    lv_obj_set_style_text_font(nw_l, zh_font_lg(), 0);
+    _buildNewsChips(nw, 40, 56, 900 - 80);
+
+    // ── 账户 Tab (想法云账户: 扫码/注册/退出, 原 AppIdea ☁ 弹层迁入) ──
     g_notes_acct.open(_qs_tab_acct);
 
     // 主题循环切换（松绿→暖橙→海蓝→岩紫…）：立即重建主页，其他 app 下次
@@ -1765,21 +1760,22 @@ void AppHome::_openQuickSettings()
 
 void AppHome::_setQsTab(int i)
 {
-    if (i != 0 && i != 1) i = 0;
+    if (i < 0 || i > 2) i = 0;
     _qs_tab = i;                                   // 记忆当前 Tab (theme rebuild 重开恢复)
-    for (int k = 0; k < 2; k++) {
+    for (int k = 0; k < 3; k++) {
         if (!_qs_tab_btns[k]) continue;
         if (k == i) lv_obj_add_state(_qs_tab_btns[k], LV_STATE_CHECKED);
         else lv_obj_clear_state(_qs_tab_btns[k], LV_STATE_CHECKED);
     }
-    if (_qs_tab_sys)
-        i == 0 ? lv_obj_clear_flag(_qs_tab_sys, LV_OBJ_FLAG_HIDDEN)
-               : lv_obj_add_flag(_qs_tab_sys, LV_OBJ_FLAG_HIDDEN);
-    if (_qs_tab_acct)
-        i == 1 ? lv_obj_clear_flag(_qs_tab_acct, LV_OBJ_FLAG_HIDDEN)
-               : lv_obj_add_flag(_qs_tab_acct, LV_OBJ_FLAG_HIDDEN);
-    mclog::tagInfo(_tag, "qs tab={} sys_hidden={} acct_hidden={}", i,
+    lv_obj_t* pages[3] = {_qs_tab_sys, _qs_tab_news, _qs_tab_acct};
+    for (int k = 0; k < 3; k++) {
+        if (!pages[k]) continue;
+        if (k == i) lv_obj_clear_flag(pages[k], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(pages[k], LV_OBJ_FLAG_HIDDEN);
+    }
+    mclog::tagInfo(_tag, "qs tab={} sys/news/acct hidden={}/{}/{}", i,
         _qs_tab_sys ? lv_obj_has_flag(_qs_tab_sys, LV_OBJ_FLAG_HIDDEN) : -1,
+        _qs_tab_news ? lv_obj_has_flag(_qs_tab_news, LV_OBJ_FLAG_HIDDEN) : -1,
         _qs_tab_acct ? lv_obj_has_flag(_qs_tab_acct, LV_OBJ_FLAG_HIDDEN) : -1);
     fflush(stdout);
     fflush(stderr);

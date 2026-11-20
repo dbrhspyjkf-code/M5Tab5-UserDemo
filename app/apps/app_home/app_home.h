@@ -188,8 +188,9 @@ private:
     lv_obj_t* _qs_ps_chk  = nullptr;  // quick-settings 定时开关机 checkbox (NVS psched_en)
     lv_obj_t* _qs_ps_off_dd = nullptr; // quick-settings 关机时间下拉 (NVS psched_off)
     lv_obj_t* _qs_ps_on_dd  = nullptr; // quick-settings 开机时间下拉 (NVS psched_on)
-    lv_obj_t* _qs_tab_btns[2] = {nullptr, nullptr}; // quick-settings Tab 按钮 (系统/账户)
+    lv_obj_t* _qs_tab_btns[3] = {nullptr, nullptr, nullptr}; // quick-settings Tab 按钮 (系统/新闻/账户)
     lv_obj_t* _qs_tab_sys  = nullptr; // quick-settings 系统 Tab 内容容器
+    lv_obj_t* _qs_tab_news = nullptr; // quick-settings 新闻 Tab 内容容器 (新闻源多选)
     lv_obj_t* _qs_tab_acct = nullptr; // quick-settings 账户 Tab 内容容器 (NotesAccountPanel)
     int       _qs_tab      = 0;       // 当前 Tab (theme 切换 rebuild 重开后恢复)
     lv_obj_t* _net_ssid   = nullptr;  // network dialog: SSID textarea
