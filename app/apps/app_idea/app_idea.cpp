@@ -336,7 +336,7 @@ void AppIdea::onRunning()
             lv_obj_set_width(_play_fill, PLAY_BAR_W * pct / 100);
         } else if (!s_playing.load()) {
             lv_obj_set_width(_play_fill, 0);
-            if (_play_btn_lbl) lv_label_set_text(_play_btn_lbl, "播放");
+            if (_play_btn_lbl) lv_label_set_text(_play_btn_lbl, LV_SYMBOL_PLAY);
             _play_fill = nullptr;
             _play_btn_lbl = nullptr;
             _play_id.clear();
@@ -642,12 +642,16 @@ void AppIdea::_renderFilter()
     if (!_filter_row) return;
     lv_obj_clean(_filter_row);
 
-    auto mk_chip = [&](int slot, const char* name, bool sel, bool danger) {
+    auto mk_chip = [&](int slot, const char* name, bool sel, bool danger,
+                       uint32_t sel_color = 0) {
         lv_obj_t* chip = lv_button_create(_filter_row);
         lv_obj_set_size(chip, 96, 48);
         lv_obj_align(chip, LV_ALIGN_LEFT_MID, slot * 104, 0);
         lv_obj_set_style_radius(chip, 24, 0);
-        lv_obj_set_style_bg_color(chip, lv_color_hex(sel ? theme::cur().accent : (danger ? C_DANGER : C_TRACK)), 0);
+        // 选中底色: 类型标签用该类型自己的颜色 (2026-11-20 用户要求), 其余 accent
+        lv_obj_set_style_bg_color(chip,
+            lv_color_hex(sel ? (sel_color ? sel_color : theme::cur().accent)
+                             : (danger ? C_DANGER : C_TRACK)), 0);
         lv_obj_t* l = lv_label_create(chip);
         lv_label_set_text(l, name);
         lv_obj_set_style_text_font(l, zh_font_md(), 0);
@@ -666,7 +670,8 @@ void AppIdea::_renderFilter()
         self->_renderList();
     }, LV_EVENT_CLICKED, this);
     for (int i = 0; i < N_CATS; i++) {
-        lv_obj_t* chip = mk_chip(slot++, CATS[i].name, _filter == CATS[i].id, false);
+        lv_obj_t* chip = mk_chip(slot++, CATS[i].name, _filter == CATS[i].id, false,
+                                 CATS[i].color);
         lv_obj_set_user_data(chip, (void*)(intptr_t)i);
         lv_obj_add_event_cb(chip, [](lv_event_t* e) {
             auto* self = static_cast<AppIdea*>(lv_event_get_user_data(e));
@@ -732,8 +737,7 @@ void AppIdea::_renderList()
         // 行视口 (邮件 _emailMakeRow 同款, 2026-11-12 终版): 透明横向滚动容器,
         // 卡片与删除钮各自成形, 左拨露删除钮。单开原则 + SCROLL_END 吸合。
         lv_obj_t* row = lv_obj_create(_list_panel);
-        // 文字卡 48% → 1 行 2 列; 语音卡整行 (播放条 470px 固定宽, 半列会溢出)
-        lv_obj_set_size(row, it.voice ? LV_PCT(100) : LV_PCT(48), LV_SIZE_CONTENT);
+        lv_obj_set_size(row, LV_PCT(48), LV_SIZE_CONTENT);   // 1 行 2 列 (语音卡播放条已收窄)
         lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
         lv_obj_set_style_radius(row, 0, 0);
         lv_obj_set_style_clip_corner(row, false, 0);
@@ -850,7 +854,7 @@ void AppIdea::_renderList()
             lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
             lv_obj_t* pb = lv_button_create(row);
-            lv_obj_set_size(pb, 108, 52);
+            lv_obj_set_size(pb, 90, 52);
             lv_obj_align(pb, LV_ALIGN_LEFT_MID, 0, 0);
             lv_obj_set_style_bg_color(pb, lv_color_hex(C_ON), 0);
             lv_obj_set_style_radius(pb, 26, 0);
@@ -874,14 +878,14 @@ void AppIdea::_renderList()
                 }, LV_EVENT_ALL, preq);
             }
             lv_obj_t* pbl = lv_label_create(pb);
-            lv_label_set_text(pbl, "播放");
-            lv_obj_set_style_text_font(pbl, zh_font_md(), 0);
+            lv_label_set_text(pbl, LV_SYMBOL_PLAY);          // 播放图标 (2026-11-20 用户要求)
+            lv_obj_set_style_text_font(pbl, &lv_font_montserrat_28, 0);
             lv_obj_set_style_text_color(pbl, lv_color_hex(C_TEXT), 0);
             lv_obj_center(pbl);
 
             lv_obj_t* bar = lv_obj_create(row);
             lv_obj_set_size(bar, PLAY_BAR_W, 14);
-            lv_obj_align(bar, LV_ALIGN_LEFT_MID, 124, 0);
+            lv_obj_align(bar, LV_ALIGN_LEFT_MID, 100, 0);
             lv_obj_set_style_bg_color(bar, lv_color_hex(C_TRACK), 0);
             lv_obj_set_style_radius(bar, 7, 0);
             lv_obj_set_style_border_width(bar, 0, 0);
@@ -904,7 +908,7 @@ void AppIdea::_renderList()
             lv_label_set_text(durl, db);
             lv_obj_set_style_text_font(durl, zh_font_md(), 0);
             lv_obj_set_style_text_color(durl, lv_color_hex(C_TEXT2), 0);
-            lv_obj_align(durl, LV_ALIGN_LEFT_MID, 124 + PLAY_BAR_W + 12, 0);
+            lv_obj_align(durl, LV_ALIGN_LEFT_MID, 100 + PLAY_BAR_W + 12, 0);
 #else
             // web/桌面: 设备回放管线被裁剪 (hal 无 PCM 输出), 只展示时长提示
             lv_obj_t* row = lv_obj_create(card);
@@ -1458,7 +1462,7 @@ void AppIdea::_playStart(const std::string& id, int dur, const std::string& mime
     _play_dur = dur;
     _play_fill = fill;
     _play_btn_lbl = lbl;
-    if (lbl) lv_label_set_text(lbl, "停止");
+    if (lbl) lv_label_set_text(lbl, LV_SYMBOL_STOP);   // 播放中=停止图标
     if (fill) lv_obj_set_width(fill, 0);
     _setStatus("播放中…", C_ACCENT);
     s_playing = true;

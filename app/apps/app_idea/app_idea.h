@@ -110,7 +110,7 @@ private:
     static constexpr size_t REC_CAP   = (size_t)REC_RATE * REC_MAX_SEC * 2;   // 1.92MB PSRAM
     static constexpr size_t UP_CHUNK  = 64 * 1024;                   // esp_hosted 实锤安全档 (双色球 70KB)
     static constexpr size_t PLAY_CAP  = (size_t)REC_RATE * 90 * 2 + 4096;    // 转码 wav 上限 90s
-    static constexpr int PLAY_BAR_W   = 470;
+    static constexpr int PLAY_BAR_W   = 180;   // 2026-11-20 语音卡改半列, 播放条随卡收窄
 
     static void s_tap(const int16_t* data, size_t n);   // mic tap 全局单订阅, 静态路由
     static void s_recWorker();                          // 攒 PCM (结束时顺带上传)
