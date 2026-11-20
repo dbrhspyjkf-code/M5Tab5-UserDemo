@@ -2,7 +2,8 @@
 /*
  * NotesAccountPanel — ZERO 想法云 (noteserver) 账户面板 (2026-11-20)。
  *
- * 原 AppIdea 专属的「想法云账户」弹层 (TOKEN 登录 / 扫码登录 / 注册 / 退出)
+ * 原 AppIdea 专属的「想法云账户」弹层 (扫码登录 / 注册 / 退出; TOKEN 手填
+ * 登录 2026-11-20 应用户要求移除, 只留扫码)
  * 抽成可复用面板: 现在挂在主页齿轮「设置」弹窗的「账户」Tab, AppIdea 只保留
  * 数据面调用 (token()/user()/auth_header())。
  *
@@ -13,7 +14,6 @@
  *   panel.close();                        // 宿主弹窗关闭前必须调 (拆键盘+扫码层)
  *
  * 协议 (与 ZERO oneapp 同一套 noteserver):
- *   - TOKEN 登录:  GET  /v1/ping (Bearer) 回显用户名
  *   - 扫码登录:    POST /v1/auth/device/start {"name":"tab5"} → 二维码 (服务端
  *     原样 URL, 微信 webview 拒 IP 形态链接) → 2s 轮询 /v1/auth/device/poll,
  *     approved 一次性收下 device token (永不过期)
@@ -214,29 +214,21 @@ public:
         lv_obj_set_width(qh, 280);
         lv_label_set_long_mode(qh, LV_LABEL_LONG_WRAP);
 
-        mk_lbl("TOKEN (ZERO 设置生成 / 登录页同值)", 40, 142,
+        mk_lbl("注册新账号 (邀请码在 ZERO 设置·生成注册码)", 40, 156,
                theme::cur().text_dim, na_font::sm());
-        _ta_tok = mk_ta(40, 168, 420, "粘贴 TOKEN");
-        mk_btn("登录", 480, 168, 160, 52, theme::cur().accent,
-            [](lv_event_t* e) {
-                static_cast<NotesAccountPanel*>(lv_event_get_user_data(e))->login();
-            });
-
-        mk_lbl("注册新账号 (邀请码在 ZERO 设置·生成注册码)", 40, 236,
-               theme::cur().text_dim, na_font::sm());
-        _ta_name = mk_ta(40, 262, 190, "用户名");
-        _ta_inv = mk_ta(246, 262, 190, "邀请码");
-        mk_btn("注册", 452, 262, 188, 52, theme::cur().accent,
+        _ta_name = mk_ta(40, 182, 190, "用户名");
+        _ta_inv = mk_ta(246, 182, 190, "邀请码");
+        mk_btn("注册", 452, 182, 188, 52, theme::cur().accent,
             [](lv_event_t* e) {
                 static_cast<NotesAccountPanel*>(lv_event_get_user_data(e))->reg();
             });
 
-        _btn_logout = mk_btn("退出登录", 40, 334, 160, 50, theme::cur().danger,
+        _btn_logout = mk_btn("退出登录", 40, 254, 160, 50, theme::cur().danger,
             [](lv_event_t* e) {
                 static_cast<NotesAccountPanel*>(lv_event_get_user_data(e))->logout();
             });
 
-        _stat = mk_lbl("", 40, 400, theme::cur().text_dim, na_font::md());
+        _stat = mk_lbl("", 40, 330, theme::cur().text_dim, na_font::md());
 
         // 软键盘挂 layer_top (容器在宿主卡片里, 键盘盖下方区域)
         _kb = lv_keyboard_create(lv_layer_top());
@@ -270,7 +262,7 @@ public:
         if (_kb) { lv_obj_delete(_kb); _kb = nullptr; }
         _root = nullptr;
         _stat_user = _btn_logout = _stat = nullptr;
-        _ta_tok = _ta_name = _ta_inv = nullptr;
+        _ta_name = _ta_inv = nullptr;
         _qr_close_ms = 0;
         _busy = false;
         {
@@ -296,36 +288,6 @@ private:
         if (_btn_logout)
             t.empty() ? lv_obj_add_flag(_btn_logout, LV_OBJ_FLAG_HIDDEN)
                       : lv_obj_clear_flag(_btn_logout, LV_OBJ_FLAG_HIDDEN);
-    }
-
-    // ── TOKEN 登录 (GET /v1/ping 验证) ──
-    void login()
-    {
-        if (!_root) return;
-        const char* t = lv_textarea_get_text(_ta_tok);
-        if (!t || !t[0]) { set_stat("先粘贴 TOKEN"); return; }
-        if (_busy.exchange(true)) return;
-        set_stat("验证中…");
-        auto alive = _alive;
-        std::string tok = t;
-        GetHAL()->tryRunDetached([this, alive, tok]() {
-            auto resp = GetHAL()->httpGet(std::string(BASE) + "/v1/ping",
-                                          {{"Authorization", "Bearer " + tok}});
-            bool ok = false;
-            std::string user;
-            auto j = PsramJson::parse(resp.body, nullptr, false);
-            if (!j.is_discarded()) {
-                ok = jbool(j, "ok");
-                user = jstr(j, "user");
-            }
-            if (ok) {
-                GetHAL()->setConfig("notes_token", tok);
-                GetHAL()->setConfig("notes_user", user);
-                _login_kind = 1;                       // 1=登录 (区分注册文案)
-            }
-            if (*alive) _na_result = ok ? 1 : 0;
-            _busy = false;
-        }, 16 * 1024);
     }
 
     // ── 邀请码注册 (POST /v1/register, 注册即登录) ──
@@ -355,7 +317,6 @@ private:
             if (ok) {
                 GetHAL()->setConfig("notes_token", tok);
                 GetHAL()->setConfig("notes_user", user);
-                _login_kind = 2;                       // 2=注册
             }
             if (*alive) _na_result = ok ? 1 : 0;
             _busy = false;
@@ -384,11 +345,9 @@ private:
         int nr = self->_na_result.exchange(-1);        // 登录/注册结果
         if (nr >= 0) {
             if (self->_root) {
-                self->set_stat(nr == 1
-                    ? (self->_login_kind == 2 ? "注册成功 · 已连接" : "成功 · 已连接")
-                    : "失败 (TOKEN/邀请码无效或网络)");
+                self->set_stat(nr == 1 ? "注册成功 · 已连接"
+                                       : "注册失败 (邀请码无效或网络)");
                 if (nr == 1) {                         // 输入框清密 + 刷新状态
-                    if (self->_ta_tok) lv_textarea_set_text(self->_ta_tok, "");
                     if (self->_ta_name) lv_textarea_set_text(self->_ta_name, "");
                     if (self->_ta_inv) lv_textarea_set_text(self->_ta_inv, "");
                     self->refresh();
@@ -427,7 +386,6 @@ private:
                 }
                 self->set_stat(msg.c_str());
                 self->refresh();
-                if (self->_ta_tok) lv_textarea_set_text(self->_ta_tok, "");
                 if (self->_ta_name) lv_textarea_set_text(self->_ta_name, "");
                 if (self->_ta_inv) lv_textarea_set_text(self->_ta_inv, "");
                 if (self->_on_login) self->_on_login();
@@ -638,7 +596,6 @@ private:
     // ── UI (面板本身在宿主容器内; 键盘/扫码层挂 layer_top) ──
     lv_obj_t* _root = nullptr;
     lv_obj_t* _stat_user = nullptr;
-    lv_obj_t* _ta_tok = nullptr;
     lv_obj_t* _ta_name = nullptr;
     lv_obj_t* _ta_inv = nullptr;
     lv_obj_t* _btn_logout = nullptr;
@@ -654,8 +611,7 @@ private:
 
     std::shared_ptr<bool> _alive = std::make_shared<bool>(true);
     std::atomic<bool> _busy{false};
-    std::atomic<int> _na_result{-1};       // 登录/注册: -1 idle / 0 fail / 1 ok
-    std::atomic<int> _login_kind{0};       // 结果文案区分: 1=登录 2=注册
+    std::atomic<int> _na_result{-1};       // 注册: -1 idle / 0 fail / 1 ok
     std::atomic<int> _qr_evt{-1};          // worker→UI: 1 出码就绪 /2 文案 /3 成功 /4 重出 /5 失败
     std::mutex _mu;
     std::string _qr_dc, _qr_url, _qr_msg;  // worker 写, _mu 保护
