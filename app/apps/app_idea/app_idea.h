@@ -150,43 +150,14 @@ private:
     // ── UI / 数据 ──
     void _buildUi();
     void _teardown();
-    // ── 想法云账户 (noteserver: 登录/注册/换账户, token 存 NVS) ──
-    static std::string _na_tok();                 // NVS notes_token
-    static std::string _na_user();                // NVS notes_user
+    // ── 想法云账户 (noteserver): 登录/注册/扫码 UI 已迁主页「设置·账户」Tab
+    //    (utils/notes_account/notes_account_panel.h), 本 app 只留凭证转发与
+    //    顶栏 @user 只读显示 ──
+    static std::string _na_tok();                 // → NotesAccountPanel::token()
+    static std::string _na_user();                // → NotesAccountPanel::user()
     static std::vector<std::pair<std::string, std::string>> _na_hdr();
-    void _naOpen();                               // ☁ 弹层 (登录/注册/退出)
-    void _naClose();
     void _naRefresh();                            // 状态 label 刷新
-    void _naLogin();
-    void _naRegister();
-    void _naLogout();
-    lv_obj_t* _na_btn    = nullptr;               // 顶栏 ☁ (显示 @user)
-    lv_obj_t* _na_user_lbl = nullptr;             // ☁ 旁账户名
-    lv_obj_t* _na_modal  = nullptr;               // 账户弹层 (单实例)
-    lv_obj_t* _na_ta_tok = nullptr;
-    lv_obj_t* _na_ta_name = nullptr;
-    lv_obj_t* _na_ta_inv = nullptr;
-    lv_obj_t* _na_kb     = nullptr;               // modal 内键盘 (textarea 聚焦弹)
-    lv_obj_t* _na_stat   = nullptr;
-    std::atomic<bool> _na_busy{false};
-    std::atomic<int> _na_result{-1};              // worker 结果: -1 idle / 0 fail / 1 ok
-#ifndef PLATFORM_BUILD_DESKTOP
-    // ── 扫码登录 (noteserver 设备码流程, 对齐 ZERO oneapp; token 同存 NVS) ──
-    void _qrOpen();                               // 账户弹层上的扫码覆盖层
-    void _qrClose();                              // 先删计时器再删覆盖层 (幂等)
-    void _qrStart();                              // worker: /v1/auth/device/start 出码
-    void _qrPollOnce();                           // worker: /v1/auth/device/poll
-    static void _qrTimerCb(lv_timer_t* t);        // 500ms 调度 (轮询节流 2s)
-    lv_obj_t* _qr_overlay = nullptr;              // 扫码覆盖层 (_na_modal 子对象, 单实例)
-    lv_obj_t* _qr_obj     = nullptr;              // lv_qrcode (canvas 派生)
-    lv_obj_t* _qr_stat    = nullptr;
-    lv_timer_t* _qr_timer = nullptr;
-    std::atomic<bool> _qr_busy{false};
-    std::atomic<int> _qr_evt{-1};                 // worker→UI: 1 出码就绪 /2 文案 /3 成功 /4 重出 /5 出码失败
-    std::string _qr_dc, _qr_url, _qr_msg;         // worker 写, _mu 保护
-    uint32_t _qr_poll_ms = 0;                     // 下次轮询/重出码时点 (仅 UI 线程读写)
-    uint32_t _qr_close_ms = 0;                    // 成功后自动关层时点 (仅 UI 线程读写)
-#endif
+    lv_obj_t* _na_user_lbl = nullptr;             // 顶栏 @user 只读
     void _fetch();
     void _renderList();
     void _renderFilter();

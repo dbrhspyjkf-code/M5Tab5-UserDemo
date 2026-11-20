@@ -18,6 +18,7 @@
 #include <hal/hal.h>
 #include <nlohmann/json.hpp>
 #include "../utils/psram_json.h"
+#include "../utils/notes_account/notes_account_panel.h"
 #ifndef PLATFORM_BUILD_DESKTOP
 #include <cbin_font.h>
 #endif
@@ -266,66 +267,6 @@ void AppIdea::onRunning()
         _setStatus("", C_TEXT2);   // 删除/清空完成立即恢复
         _status_reset_ms = 0;
     }
-    {
-        int nr = _na_result.exchange(-1);          // 想法云账户操作结果
-        if (nr >= 0 && _na_modal) {
-            _naRefresh();
-            lv_label_set_text(_na_stat,
-                nr == 1 ? "成功 · 已连接" : "失败 (TOKEN/邀请码无效或网络)");
-            if (nr == 1) {                         // 输入框清密 + 拉新账户数据
-                lv_textarea_set_text(_na_ta_tok, "");
-                lv_textarea_set_text(_na_ta_name, "");
-                lv_textarea_set_text(_na_ta_inv, "");
-                _fetch();
-            }
-        }
-    }
-#ifndef PLATFORM_BUILD_DESKTOP
-    {
-        int qe = _qr_evt.exchange(-1);             // 扫码登录 worker 结果
-        if (qe >= 0) {
-            std::string msg;
-            {
-                std::lock_guard<std::mutex> lk(_mu);
-                msg = _qr_msg;
-            }
-            if (qe == 1) {                         // 出码就绪 → 画 QR
-                std::string url;
-                {
-                    std::lock_guard<std::mutex> lk(_mu);
-                    url = _qr_url;
-                }
-                if (_qr_obj && !url.empty()) {
-                    lv_qrcode_update(_qr_obj, url.data(), (uint32_t)url.size());
-                    lv_obj_clear_flag(_qr_obj, LV_OBJ_FLAG_HIDDEN);
-                }
-                if (_qr_stat)
-                    lv_label_set_text(_qr_stat, "手机扫码, 授权页登录后自动登录");
-            } else if (qe == 2) {
-                if (_qr_stat) lv_label_set_text(_qr_stat, msg.c_str());
-            } else if (qe == 3) {                  // 授权成功 (与手填 TOKEN 成功路径同款收尾)
-                if (_qr_stat) {
-                    lv_label_set_text(_qr_stat, msg.c_str());
-                    lv_obj_set_style_text_color(_qr_stat, lv_color_hex(C_ON), 0);
-                }
-                if (_na_modal) {
-                    lv_textarea_set_text(_na_ta_tok, "");
-                    lv_textarea_set_text(_na_ta_name, "");
-                    lv_textarea_set_text(_na_ta_inv, "");
-                }
-                _fetch();                          // 拉新账户数据
-                _qr_close_ms = GetHAL()->millis() + 1400;   // 停留片刻自动回账户层
-            } else if (qe == 4) {                  // 过期/被领走 → 文案停留片刻再自动重出
-                if (_qr_stat) lv_label_set_text(_qr_stat, msg.c_str());
-                _qr_poll_ms = GetHAL()->millis() + 1600;
-            } else if (qe == 5) {
-                if (_qr_stat) lv_label_set_text(_qr_stat, msg.c_str());
-                _qr_poll_ms = GetHAL()->millis() + 3000;
-            }
-        }
-    }
-#endif
-
 #ifndef PLATFORM_BUILD_DESKTOP
     // 管线结果 → 统一 instance 提示位
     int s2 = s_saved_sec.exchange(-1);
@@ -423,7 +364,6 @@ void AppIdea::_teardown()
     _alive = std::make_shared<bool>(false);   // 作废手势/延迟回调
     _removeSwipeGesture();
 #ifndef PLATFORM_BUILD_DESKTOP
-    _qrClose();                                // 扫码覆盖层/计时器先拆 (modal 随 _scr 删)
     if (s_recording) _recStop(true);
     s_play_stop = true;                        // 回放 worker 自行退出复位
 #endif
@@ -485,22 +425,7 @@ void AppIdea::_buildUi()
     lv_label_set_text(_na_user_lbl, "");
     lv_obj_set_style_text_font(_na_user_lbl, zh_font_md(), 0);
     lv_obj_set_style_text_color(_na_user_lbl, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(_na_user_lbl, LV_ALIGN_RIGHT_MID, -170, 0);
-
-    _na_btn = lv_button_create(header);
-    lv_obj_set_size(_na_btn, 110, 56);
-    lv_obj_align(_na_btn, LV_ALIGN_RIGHT_MID, -156, 0);
-    lv_obj_set_style_bg_color(_na_btn, lv_color_hex(C_ON), 0);
-    lv_obj_set_style_radius(_na_btn, 14, 0);
-    lv_obj_add_event_cb(_na_btn, [](lv_event_t* e) {
-        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naOpen();
-    }, LV_EVENT_CLICKED, this);
-    {
-        auto* nl = lv_label_create(_na_btn);
-        lv_label_set_text(nl, "账户");                 // zh 字体无 U+2601 (☁ 缺字形)
-        lv_obj_set_style_text_font(nl, zh_font_md(), 0);
-        lv_obj_center(nl);
-    }
+    lv_obj_align(_na_user_lbl, LV_ALIGN_RIGHT_MID, -44, 0);   // 只读状态 (登录入口迁设置·账户)
 
     lv_obj_t* refresh_btn = lv_button_create(header);
     lv_obj_set_size(refresh_btn, 120, 56);
@@ -1032,60 +957,21 @@ void AppIdea::_renderList()
 //    共用同一账号空间, 多端一致) ─────────────────────────────────────────
 // 家宽对 apisz.top:443 SNI reset、80 被 ISP Beaver 透明代理 403, 唯非标口可达 ——
 // 走 ECS 安全组已放行的空闲口 8585 (Caddy 明文反代 127.0.0.1:8794), 纯 IP 同健康链路 8648 模式
-static const char* NA_BASE = "http://8.134.111.17:8585";
-
-// ── NA JSON 防御取值: noteserver 返回 "ok":1 (数字, ZERO oneapp/车机同款形状),
-// nlohmann .value() 遇类型不符直接 throw type_error → worker 无人接 = abort 蓝屏
-// (2026-11-16 登录即重启真凶)。以下 find+类型分派实现永不抛。
-static bool na_jbool(const PsramJson& j, const char* k, bool dflt = false) {
-    if (!j.is_object()) return dflt;
-    auto it = j.find(k);
-    if (it == j.end() || it->is_null()) return dflt;
-    if (it->is_boolean()) return it->get<bool>();
-    if (it->is_number_integer()) return it->get<long long>() != 0;
-    if (it->is_string()) {
-        auto s = it->get<std::string>();
-        return s == "1" || s == "true";
-    }
-    return dflt;
-}
-static std::string na_jstr(const PsramJson& j, const char* k, const char* dflt = "") {
-    if (!j.is_object()) return dflt;
-    auto it = j.find(k);
-    if (it == j.end() || it->is_null()) return dflt;
-    if (it->is_string()) return it->get<std::string>();
-    if (it->is_number_integer()) return std::to_string(it->get<long long>());
-    if (it->is_number_float()) {
-        char b[32];
-        snprintf(b, sizeof(b), "%g", it->get<double>());
-        return b;
-    }
-    return dflt;
-}
-static double na_jnum(const PsramJson& j, const char* k, double dflt = 0) {
-    if (!j.is_object()) return dflt;
-    auto it = j.find(k);
-    if (it == j.end() || it->is_null()) return dflt;
-    if (it->is_number()) return it->get<double>();
-    return dflt;
-}
+static const char* NA_BASE = NotesAccountPanel::BASE;   // 常量已迁 notes_account_panel.h
 
 std::string AppIdea::_na_tok()
 {
-    return GetHAL()->getConfig("notes_token", "");
+    return NotesAccountPanel::token();
 }
 
 std::string AppIdea::_na_user()
 {
-    return GetHAL()->getConfig("notes_user", "");
+    return NotesAccountPanel::user();
 }
 
 std::vector<std::pair<std::string, std::string>> AppIdea::_na_hdr()
 {
-    std::vector<std::pair<std::string, std::string>> h;
-    auto t = _na_tok();
-    if (!t.empty()) h.push_back({"Authorization", "Bearer " + t});
-    return h;
+    return NotesAccountPanel::auth_header();
 }
 
 void AppIdea::_fetch()
@@ -1119,14 +1005,14 @@ void AppIdea::_fetch()
                 for (auto& n : j["notes"]) {
                     if (!n.is_object()) continue;
                     IdeaItem it;
-                    it.voice = (na_jstr(n, "kind", "text") == "voice");
-                    it.id = na_jstr(n, "id");
-                    it.text = na_jstr(n, "text");
-                    it.cat = na_jstr(n, "category", "idea");
-                    it.created = (long long)(na_jnum(n, "ts") * 1000);
+                    it.voice = (NotesAccountPanel::jstr(n, "kind", "text") == "voice");
+                    it.id = NotesAccountPanel::jstr(n, "id");
+                    it.text = NotesAccountPanel::jstr(n, "text");
+                    it.cat = NotesAccountPanel::jstr(n, "category", "idea");
+                    it.created = (long long)(NotesAccountPanel::jnum(n, "ts") * 1000);
                     if (it.voice) {
-                        it.dur = (int)na_jnum(n, "dur");
-                        it.mime = na_jstr(n, "vct", "audio/wav");
+                        it.dur = (int)NotesAccountPanel::jnum(n, "dur");
+                        it.mime = NotesAccountPanel::jstr(n, "vct", "audio/wav");
                     }
                     items.push_back(std::move(it));
                 }
@@ -1151,7 +1037,7 @@ void AppIdea::_saveText()
     if (!txt || !txt[0]) { _setStatus("先写点什么", C_DANGER); return; }
     if (_save_in_flight.exchange(true)) return;
     if (AppIdea::_na_tok().empty()) {
-        _setStatus("未登录 — 点右上「账户」登录", C_DANGER);
+        _setStatus("未登录 — 主页设置「账户」Tab 登录", C_DANGER);
         return;
     }
     std::string body = nlohmann::json{
@@ -1181,7 +1067,7 @@ void AppIdea::_saveText()
 void AppIdea::_deleteItem(const std::string& id, bool voice)
 {
     if (AppIdea::_na_tok().empty()) {
-        _setStatus("未登录 — 点右上「账户」登录", C_DANGER);
+        _setStatus("未登录 — 主页设置「账户」Tab 登录", C_DANGER);
         return;
     }
     _setStatus("删除中…", C_TEXT2);
@@ -1203,7 +1089,7 @@ void AppIdea::_deleteItem(const std::string& id, bool voice)
 void AppIdea::_clearAll()
 {
     if (AppIdea::_na_tok().empty()) {
-        _setStatus("未登录 — 点右上「账户」登录", C_DANGER);
+        _setStatus("未登录 — 主页设置「账户」Tab 登录", C_DANGER);
         return;
     }
     _setStatus("清空中…", C_TEXT2);
@@ -1401,7 +1287,7 @@ void AppIdea::_recStart()
 {
     if (s_recording.load()) return;
     if (AppIdea::_na_tok().empty()) {
-        _setStatus("未登录 — 点右上「账户」登录", C_DANGER);
+        _setStatus("未登录 — 主页设置「账户」Tab 登录", C_DANGER);
         return;
     }
     if (s_uploading.load()) { _setStatus("上一条上传中, 稍候", C_DANGER); return; }
@@ -1461,478 +1347,6 @@ void AppIdea::_naRefresh()
     if (_na_user_lbl)
         lv_label_set_text(_na_user_lbl, t.empty() ? "未登录" : ("@" + u).c_str());
 }
-
-void AppIdea::_naOpen()
-{
-    if (_na_modal) { _naClose(); return; }         // 再按 = 关
-    _na_modal = lv_obj_create(_scr);
-    lv_obj_set_size(_na_modal, SCREEN_W, SCREEN_H);
-    lv_obj_set_style_bg_color(_na_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(_na_modal, LV_OPA_70, 0);
-    lv_obj_clear_flag(_na_modal, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(_na_modal, [](lv_event_t* e) {
-        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naClose();
-    }, LV_EVENT_CLICKED, this);
-
-    auto* card = lv_obj_create(_na_modal);
-    lv_obj_set_size(card, SCREEN_W, SCREEN_H);     // 全屏 (用户定稿)
-    lv_obj_set_pos(card, 0, 0);
-    lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD), 0);
-    lv_obj_set_style_radius(card, 0, 0);
-    lv_obj_set_style_border_width(card, 0, 0);
-    lv_obj_set_style_pad_all(card, 28, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);   // 吃点击, 不透传遮罩
-    lv_obj_add_event_cb(card, [](lv_event_t* e) {   // 点卡空白 = 收键盘 (子对象不冒泡, 互不干扰)
-        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
-        if (app->_na_kb) lv_obj_add_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
-    }, LV_EVENT_CLICKED, this);
-
-    auto* ttl = lv_label_create(card);
-    lv_label_set_text(ttl, "想法云账户");
-    lv_obj_set_style_text_font(ttl, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(ttl, lv_color_hex(theme::cur().accent), 0);
-    lv_obj_align(ttl, LV_ALIGN_TOP_LEFT, 0, 0);
-
-    auto* l1 = lv_label_create(card);
-    lv_label_set_text(l1, "TOKEN (ZERO 设置生成 / 登录页同值)");
-    lv_obj_set_style_text_font(l1, zh_font_md(), 0);
-    lv_obj_set_style_text_color(l1, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(l1, LV_ALIGN_TOP_LEFT, 0, 48);
-    _na_ta_tok = lv_textarea_create(card);
-    lv_obj_set_size(_na_ta_tok, 600, 58);
-    lv_obj_align(_na_ta_tok, LV_ALIGN_TOP_LEFT, 0, 94);
-    lv_obj_set_style_text_color(_na_ta_tok, lv_color_hex(C_TEXT), 0);  // 缺省黑字在暗卡上不可读 (主屏 _ta 同款)
-    lv_textarea_set_one_line(_na_ta_tok, true);
-    lv_textarea_set_placeholder_text(_na_ta_tok, "粘贴 TOKEN");
-    lv_obj_set_style_text_font(_na_ta_tok, zh_font_md(), 0);
-    lv_obj_set_style_bg_color(_na_ta_tok, lv_color_hex(C_CARD0), 0);
-    lv_obj_set_style_border_width(_na_ta_tok, 0, 0);
-    lv_obj_set_style_radius(_na_ta_tok, 12, 0);
-    lv_obj_add_event_cb(_na_ta_tok, [](lv_event_t* e) {
-        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
-        if (!app->_na_kb || GetHAL()->usbKeyboardDetect()) return;
-        lv_keyboard_set_textarea(app->_na_kb, static_cast<lv_obj_t*>(lv_event_get_target(e)));
-        lv_obj_clear_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(app->_na_kb);
-    }, LV_EVENT_FOCUSED, this);
-
-    auto* lb = lv_button_create(card);
-    lv_obj_set_size(lb, 260, 56);
-    lv_obj_align(lb, LV_ALIGN_TOP_LEFT, 0, 168);
-    lv_obj_set_style_bg_color(lb, lv_color_hex(C_ON), 0);
-    lv_obj_set_style_radius(lb, 14, 0);
-    lv_obj_add_event_cb(lb, [](lv_event_t* e) {
-        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naLogin();
-    }, LV_EVENT_CLICKED, this);
-    auto* lbl1 = lv_label_create(lb);
-    lv_label_set_text(lbl1, "登录");
-    lv_obj_set_style_text_font(lbl1, zh_font_md(), 0);
-    lv_obj_center(lbl1);
-
-#ifndef PLATFORM_BUILD_DESKTOP
-    auto* qrb = lv_button_create(card);            // 扫码登录 (oneapp 设备码流程同款)
-    lv_obj_set_size(qrb, 320, 56);
-    lv_obj_align(qrb, LV_ALIGN_TOP_LEFT, 284, 168);
-    lv_obj_set_style_bg_color(qrb, lv_color_hex(theme::cur().accent), 0);
-    lv_obj_set_style_radius(qrb, 14, 0);
-    lv_obj_add_event_cb(qrb, [](lv_event_t* e) {
-        static_cast<AppIdea*>(lv_event_get_user_data(e))->_qrOpen();
-    }, LV_EVENT_CLICKED, this);
-    auto* lblq = lv_label_create(qrb);
-    lv_label_set_text(lblq, "扫码登录 (免输token)");
-    lv_obj_set_style_text_font(lblq, zh_font_md(), 0);
-    lv_obj_center(lblq);
-#endif
-
-    auto* l2 = lv_label_create(card);
-    lv_label_set_text(l2, "没有账号? 邀请码在 ZERO 设置·生成注册码");
-    lv_obj_set_style_text_font(l2, zh_font_md(), 0);
-    lv_obj_set_style_text_color(l2, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(l2, LV_ALIGN_TOP_LEFT, 0, 244);
-
-    auto* l3 = lv_label_create(card);
-    lv_label_set_text(l3, "用户名 (3-16 位小写字母/数字/_)");
-    lv_obj_set_style_text_font(l3, zh_font_md(), 0);
-    lv_obj_set_style_text_color(l3, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(l3, LV_ALIGN_TOP_LEFT, 624, 64);   // 右列 (左列 TOKEN/登录, 全屏双列布局)
-    _na_ta_name = lv_textarea_create(card);
-    lv_obj_set_size(_na_ta_name, 600, 58);
-    lv_obj_align(_na_ta_name, LV_ALIGN_TOP_LEFT, 624, 94);
-    lv_obj_set_style_text_color(_na_ta_name, lv_color_hex(C_TEXT), 0);
-    lv_textarea_set_one_line(_na_ta_name, true);
-    lv_textarea_set_placeholder_text(_na_ta_name, "用户名");
-    lv_obj_set_style_text_font(_na_ta_name, zh_font_md(), 0);
-    lv_obj_set_style_bg_color(_na_ta_name, lv_color_hex(C_CARD0), 0);
-    lv_obj_set_style_border_width(_na_ta_name, 0, 0);
-    lv_obj_set_style_radius(_na_ta_name, 12, 0);
-    lv_obj_add_event_cb(_na_ta_name, [](lv_event_t* e) {
-        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
-        if (!app->_na_kb || GetHAL()->usbKeyboardDetect()) return;
-        lv_keyboard_set_textarea(app->_na_kb, static_cast<lv_obj_t*>(lv_event_get_target(e)));
-        lv_obj_clear_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(app->_na_kb);
-    }, LV_EVENT_FOCUSED, this);
-
-    auto* l4 = lv_label_create(card);
-    lv_label_set_text(l4, "邀请码");
-    lv_obj_set_style_text_font(l4, zh_font_md(), 0);
-    lv_obj_set_style_text_color(l4, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(l4, LV_ALIGN_TOP_LEFT, 624, 168);
-    _na_ta_inv = lv_textarea_create(card);
-    lv_obj_set_size(_na_ta_inv, 600, 58);
-    lv_obj_align(_na_ta_inv, LV_ALIGN_TOP_LEFT, 624, 198);
-    lv_obj_set_style_text_color(_na_ta_inv, lv_color_hex(C_TEXT), 0);
-    lv_textarea_set_one_line(_na_ta_inv, true);
-    lv_textarea_set_placeholder_text(_na_ta_inv, "邀请码");
-    lv_obj_set_style_text_font(_na_ta_inv, zh_font_md(), 0);
-    lv_obj_set_style_bg_color(_na_ta_inv, lv_color_hex(C_CARD0), 0);
-    lv_obj_set_style_border_width(_na_ta_inv, 0, 0);
-    lv_obj_set_style_radius(_na_ta_inv, 12, 0);
-    lv_obj_add_event_cb(_na_ta_inv, [](lv_event_t* e) {
-        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
-        if (!app->_na_kb || GetHAL()->usbKeyboardDetect()) return;
-        lv_keyboard_set_textarea(app->_na_kb, static_cast<lv_obj_t*>(lv_event_get_target(e)));
-        lv_obj_clear_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(app->_na_kb);
-    }, LV_EVENT_FOCUSED, this);
-
-    auto* reg = lv_button_create(card);
-    lv_obj_set_size(reg, 260, 56);
-    lv_obj_align(reg, LV_ALIGN_TOP_LEFT, 624, 272);
-    lv_obj_set_style_bg_color(reg, lv_color_hex(theme::cur().accent), 0);
-    lv_obj_set_style_radius(reg, 14, 0);
-    lv_obj_add_event_cb(reg, [](lv_event_t* e) {
-        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naRegister();
-    }, LV_EVENT_CLICKED, this);
-    auto* lbl2 = lv_label_create(reg);
-    lv_label_set_text(lbl2, "注册新账号");
-    lv_obj_set_style_text_font(lbl2, zh_font_md(), 0);
-    lv_obj_center(lbl2);
-
-    auto* out = lv_button_create(card);
-    lv_obj_set_size(out, 200, 56);
-    lv_obj_align(out, LV_ALIGN_TOP_LEFT, 0, 320);     // 左列提示语下方; 键盘区(y≥380)之上全程可点
-    lv_obj_set_style_bg_color(out, lv_color_hex(C_DANGER), 0);
-    lv_obj_set_style_radius(out, 14, 0);
-    lv_obj_add_event_cb(out, [](lv_event_t* e) {
-        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naLogout();
-    }, LV_EVENT_CLICKED, this);
-    auto* lbl3 = lv_label_create(out);
-    lv_label_set_text(lbl3, "退出");
-    lv_obj_set_style_text_font(lbl3, zh_font_md(), 0);
-    lv_obj_center(lbl3);
-
-    _na_stat = lv_label_create(card);
-    lv_label_set_text(_na_stat, "");
-    lv_obj_set_style_text_font(_na_stat, zh_font_md(), 0);
-    lv_obj_set_style_text_color(_na_stat, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(_na_stat, LV_ALIGN_BOTTOM_LEFT, 0, -8);
-
-    auto* close = lv_button_create(card);
-    lv_obj_set_size(close, 130, 58);
-    lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_set_style_radius(close, 14, 0);
-    lv_obj_add_event_cb(close, [](lv_event_t* e) {
-        static_cast<AppIdea*>(lv_event_get_user_data(e))->_naClose();
-    }, LV_EVENT_CLICKED, this);
-    auto* lbl4 = lv_label_create(close);
-    lv_label_set_text(lbl4, "关闭");
-    lv_obj_set_style_text_font(lbl4, zh_font_md(), 0);
-    lv_obj_center(lbl4);
-
-    _na_kb = lv_keyboard_create(_na_modal);
-    lv_obj_set_size(_na_kb, SCREEN_W, KB_H);          // 主屏键盘同款 1280×340
-    lv_obj_align(_na_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_flag(_na_kb, LV_OBJ_FLAG_HIDDEN);
-    // ✓(READY)/✗(CANCEL) 收键盘 — 主屏键盘同款; 不挂则键盘永不隐藏盖住登录钮
-    lv_obj_add_event_cb(_na_kb, [](lv_event_t* e) {
-        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
-        if (app->_na_kb) lv_obj_add_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
-    }, LV_EVENT_READY, this);
-    lv_obj_add_event_cb(_na_kb, [](lv_event_t* e) {
-        auto* app = static_cast<AppIdea*>(lv_event_get_user_data(e));
-        if (app->_na_kb) lv_obj_add_flag(app->_na_kb, LV_OBJ_FLAG_HIDDEN);
-    }, LV_EVENT_CANCEL, this);
-
-    _naRefresh();
-}
-
-void AppIdea::_naClose()
-{
-#ifndef PLATFORM_BUILD_DESKTOP
-    _qrClose();                                // 扫码覆盖层是 modal 子对象, 计时器必须先删
-#endif
-    if (_na_modal) { lv_obj_delete(_na_modal); _na_modal = nullptr; }
-    _naRefresh();                                  // 顶栏 @user 复位 (label 重建)
-}
-
-void AppIdea::_naLogin()
-{
-    const char* t = lv_textarea_get_text(_na_ta_tok);
-    if (!t || !t[0]) { lv_label_set_text(_na_stat, "先粘贴 TOKEN"); return; }
-    if (_na_busy.exchange(true)) return;
-    lv_label_set_text(_na_stat, "验证中…");
-    auto alive = _alive;
-    std::string tok = t;
-    GetHAL()->tryRunDetached([this, alive, tok]() {
-        auto resp = GetHAL()->httpGet(std::string(NA_BASE) + "/v1/ping",
-                                      {{"Authorization", "Bearer " + tok}});
-        bool ok = false;
-        std::string user;
-        auto j = PsramJson::parse(resp.body, nullptr, false);
-        if (!j.is_discarded()) {
-            ok = na_jbool(j, "ok");
-            user = na_jstr(j, "user");
-        }
-        if (ok) {
-            GetHAL()->setConfig("notes_token", tok);
-            GetHAL()->setConfig("notes_user", user);
-        }
-        if (*alive) _na_result = ok ? 1 : 0;
-        _na_busy = false;
-    }, 16 * 1024);
-}
-
-void AppIdea::_naRegister()
-{
-    const char* nm = lv_textarea_get_text(_na_ta_name);
-    const char* iv = lv_textarea_get_text(_na_ta_inv);
-    if (!nm || !nm[0] || !iv || !iv[0]) {
-        lv_label_set_text(_na_stat, "用户名和邀请码都要填");
-        return;
-    }
-    if (_na_busy.exchange(true)) return;
-    lv_label_set_text(_na_stat, "注册中…");
-    auto alive = _alive;
-    std::string name = nm, inv = iv;
-    GetHAL()->tryRunDetached([this, alive, name, inv]() {
-        std::string body = nlohmann::json{
-            {"name", name}, {"invite", inv}}.dump();
-        auto resp = GetHAL()->httpPost(std::string(NA_BASE) + "/v1/register",
-            body, {{"Content-Type", "application/json"}});
-        bool ok = false;
-        std::string tok, user;
-        auto j = PsramJson::parse(resp.body, nullptr, false);
-        if (!j.is_discarded()) {
-            ok = na_jbool(j, "ok");
-            tok = na_jstr(j, "token");
-            user = na_jstr(j, "user");
-        }
-        if (ok) {                                  // 注册即登录
-            GetHAL()->setConfig("notes_token", tok);
-            GetHAL()->setConfig("notes_user", user);
-        }
-        if (*alive) _na_result = ok ? 1 : 0;
-        _na_busy = false;
-    }, 16 * 1024);
-}
-
-void AppIdea::_naLogout()
-{
-    GetHAL()->setConfig("notes_token", "");
-    GetHAL()->setConfig("notes_user", "");
-    lv_label_set_text(_na_stat, "已退出 · 想法不再同步");
-    _naRefresh();
-    {
-        std::lock_guard<std::mutex> lk(_mu);
-        _items.clear();
-    }
-    _list_ready = true;                            // 未登录 → 列表刷空
-}
-
-#ifndef PLATFORM_BUILD_DESKTOP
-// ── 扫码登录 (noteserver 设备码流程, 与 ZERO oneapp 同一套端点):
-//    出码 /v1/auth/device/start {"name":"tab5"} → 手机扫码开 /login 授权页登录
-//    approve → 本机 2s 轮询 /v1/auth/device/poll 收一次性 device token
-//    (永不过期, 落 NVS notes_token/notes_user, 与手填 TOKEN 同一存储)。
-//    码 5min 过期 (404 "none") / 被领走 ("done") 自动重出; busy 原子防重入,
-//    worker 只写原子+加锁字符串, LVGL 全在 UI 线程 (timer/onRunning)。
-void AppIdea::_qrOpen()
-{
-    if (!_na_modal) return;
-    _qrClose();                                    // 幂等重开
-    _qr_overlay = lv_obj_create(_na_modal);
-    lv_obj_set_size(_qr_overlay, SCREEN_W, SCREEN_H);
-    lv_obj_set_pos(_qr_overlay, 0, 0);
-    lv_obj_set_style_bg_color(_qr_overlay, lv_color_hex(C_CARD), 0);
-    lv_obj_set_style_radius(_qr_overlay, 0, 0);
-    lv_obj_set_style_border_width(_qr_overlay, 0, 0);
-    lv_obj_clear_flag(_qr_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(_qr_overlay, LV_OBJ_FLAG_CLICKABLE);    // 吃点击不透传
-
-    auto* ttl = lv_label_create(_qr_overlay);
-    lv_label_set_text(ttl, "扫码登录");
-    lv_obj_set_style_text_font(ttl, zh_font_lg(), 0);
-    lv_obj_set_style_text_color(ttl, lv_color_hex(theme::cur().accent), 0);
-    lv_obj_align(ttl, LV_ALIGN_TOP_MID, 0, 20);
-
-    auto* hint = lv_label_create(_qr_overlay);
-    lv_label_set_text(hint, "手机扫码打开授权页登录, 确认后本机自动登录\n"
-                            "家里 WiFi 拦 apisz.top 域名, 扫码请关 WiFi 用蜂窝");
-    lv_obj_set_style_text_font(hint, zh_font_md(), 0);
-    lv_obj_set_style_text_color(hint, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 78);
-
-    _qr_obj = lv_qrcode_create(_qr_overlay);
-    lv_qrcode_set_size(_qr_obj, 420);
-    lv_qrcode_set_dark_color(_qr_obj, lv_color_hex(0x000000));
-    lv_qrcode_set_light_color(_qr_obj, lv_color_hex(0xFFFFFF));
-    lv_obj_align(_qr_obj, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(_qr_obj, LV_OBJ_FLAG_HIDDEN);           // 出码成功再显示
-
-    _qr_stat = lv_label_create(_qr_overlay);
-    lv_label_set_text(_qr_stat, "出码中…");
-    lv_obj_set_style_text_font(_qr_stat, zh_font_md(), 0);
-    lv_obj_set_style_text_color(_qr_stat, lv_color_hex(C_TEXT2), 0);
-    lv_obj_align(_qr_stat, LV_ALIGN_BOTTOM_MID, 0, -40);
-
-    auto* back = lv_button_create(_qr_overlay);
-    lv_obj_set_size(back, 130, 58);
-    lv_obj_align(back, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_set_style_radius(back, 14, 0);
-    lv_obj_add_event_cb(back, [](lv_event_t* e) {
-        static_cast<AppIdea*>(lv_event_get_user_data(e))->_qrClose();
-    }, LV_EVENT_CLICKED, this);
-    auto* lblb = lv_label_create(back);
-    lv_label_set_text(lblb, "返回");
-    lv_obj_set_style_text_font(lblb, zh_font_md(), 0);
-    lv_obj_center(lblb);
-
-    _qr_timer = lv_timer_create(_qrTimerCb, 500, this);
-    _qr_poll_ms = 0;
-    _qr_close_ms = 0;
-    _qrStart();
-}
-
-void AppIdea::_qrClose()
-{
-    if (_qr_timer) { lv_timer_del(_qr_timer); _qr_timer = nullptr; }
-    _qr_close_ms = 0;
-    _qr_busy = false;                          // 在途 worker 收尾只写原子, 结果无人消费
-    if (_qr_overlay) { lv_obj_delete(_qr_overlay); _qr_overlay = nullptr; }
-    _qr_obj = nullptr;
-    _qr_stat = nullptr;
-    {
-        std::lock_guard<std::mutex> lk(_mu);
-        _qr_dc.clear();
-        _qr_url.clear();
-        _qr_msg.clear();
-    }
-    _qr_evt = -1;
-}
-
-void AppIdea::_qrStart()
-{
-    if (!_qr_overlay || _qr_busy.exchange(true)) return;
-    lv_label_set_text(_qr_stat, "出码中…");
-    lv_obj_add_flag(_qr_obj, LV_OBJ_FLAG_HIDDEN);
-    auto alive = _alive;
-    GetHAL()->tryRunDetached([this, alive]() {
-        std::string body = nlohmann::json{{"name", "tab5"}}.dump();
-        auto resp = GetHAL()->httpPost(std::string(NA_BASE) + "/v1/auth/device/start",
-            body, {{"Content-Type", "application/json"}});
-        bool ok = false;
-        std::string dc;
-        auto j = PsramJson::parse(resp.body, nullptr, false);
-        if (!j.is_discarded()) {
-            ok = na_jbool(j, "ok");
-            dc = na_jstr(j, "device_code");
-        }
-        bool got = ok && dc.size() == 32;      // 服务端 device_code 固定 32 hex
-        {
-            std::lock_guard<std::mutex> lk(_mu);
-            if (got) {
-                _qr_dc = dc;
-                // 二维码用服务端原样 URL (https://notes.apisz.top/login#dc=…,
-                // 与 ZERO oneapp 逐字节一致): 微信 webview 拒开 IP 形态链接
-                // (「不能用 IP 地址」);家宽 ISP 对 apisz.top 域名全系拦截
-                // (443 SNI 断连 + 明文任意口 Host 劫持备案页, ECS hairpin 实证
-                // 阿里云不拦) — 手机蜂窝网络下域名正常, 家里扫码切蜂窝即可
-                auto u = na_jstr(j, "url");
-                _qr_url = u.find("http") == 0 ? u
-                                              : std::string(NA_BASE) + "/login#dc=" + dc;
-            } else {
-                _qr_dc.clear();
-                _qr_url.clear();
-                _qr_msg = "出码失败, 稍后自动重试";
-            }
-        }
-        if (*alive) _qr_evt = got ? 1 : 5;
-        _qr_busy = false;
-    }, 16 * 1024);
-}
-
-void AppIdea::_qrPollOnce()
-{
-    if (!_qr_overlay || _qr_busy.exchange(true)) return;
-    std::string dc;
-    {
-        std::lock_guard<std::mutex> lk(_mu);
-        dc = _qr_dc;
-    }
-    if (dc.empty()) { _qr_busy = false; return; }
-    auto alive = _alive;
-    GetHAL()->tryRunDetached([this, alive, dc]() {
-        std::string body = nlohmann::json{{"device_code", dc}}.dump();
-        auto resp = GetHAL()->httpPost(std::string(NA_BASE) + "/v1/auth/device/poll",
-            body, {{"Content-Type", "application/json"}});
-        auto j = PsramJson::parse(resp.body, nullptr, false);
-        std::string st = j.is_discarded() ? "" : na_jstr(j, "status");
-        if (st == "approved") {
-            std::string tok = na_jstr(j, "token");     // 一次性发放, 此刻必须收下
-            std::string user = na_jstr(j, "user");
-            if (!tok.empty()) {
-                GetHAL()->setConfig("notes_token", tok);
-                GetHAL()->setConfig("notes_user", user);
-                {
-                    std::lock_guard<std::mutex> lk(_mu);
-                    _qr_msg = "登录成功 @" + (user.empty() ? "?" : user);
-                }
-                if (*alive) _qr_evt = 3;
-            }
-        } else if (st == "pending") {
-            {
-                std::lock_guard<std::mutex> lk(_mu);
-                _qr_msg = "等待手机授权确认…";
-            }
-            if (*alive) _qr_evt = 2;
-        } else if (st == "none" || st == "done") {     // 过期/被领走 → 重出码
-            {
-                std::lock_guard<std::mutex> lk(_mu);
-                _qr_dc.clear();
-                _qr_url.clear();
-                _qr_msg = (st == "done") ? "授权已被领取, 重新出码…"
-                                         : "二维码已过期, 重新出码…";
-            }
-            if (*alive) _qr_evt = 4;
-        }
-        // 其他 status / 网络失败: 静默, 下轮 timer 再试
-        _qr_busy = false;
-    }, 16 * 1024);
-}
-
-void AppIdea::_qrTimerCb(lv_timer_t* t)
-{
-    auto* self = static_cast<AppIdea*>(lv_timer_get_user_data(t));
-    if (!self->_qr_overlay) return;
-    uint32_t now = GetHAL()->millis();
-    if (self->_qr_close_ms && (int32_t)(now - self->_qr_close_ms) >= 0) {
-        self->_qrClose();                              // 成功后停留片刻自动回账户层
-        return;
-    }
-    if (self->_qr_busy.load()) return;
-    if ((int32_t)(now - self->_qr_poll_ms) < 0) return;
-    self->_qr_poll_ms = now + 2000;                    // 与 oneapp 同款 2s 节流
-    bool has_dc;
-    {
-        std::lock_guard<std::mutex> lk(self->_mu);
-        has_dc = !self->_qr_dc.empty();
-    }
-    if (has_dc) self->_qrPollOnce();
-    else self->_qrStart();                             // 无码: 出码/重试
-}
-#endif  // PLATFORM_BUILD_DESKTOP
 
 void AppIdea::s_recWorker()
 {
@@ -2010,7 +1424,7 @@ void AppIdea::s_uploadRun()
         bool pok = false;
         if (resp.status == 200) {
             auto j = PsramJson::parse(resp.body, nullptr, false);
-            pok = !j.is_discarded() && na_jbool(j, "ok");
+            pok = !j.is_discarded() && NotesAccountPanel::jbool(j, "ok");
         }
         if (!pok) {
             ok = false;

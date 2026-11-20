@@ -188,6 +188,10 @@ private:
     lv_obj_t* _qs_ps_chk  = nullptr;  // quick-settings 定时开关机 checkbox (NVS psched_en)
     lv_obj_t* _qs_ps_off_dd = nullptr; // quick-settings 关机时间下拉 (NVS psched_off)
     lv_obj_t* _qs_ps_on_dd  = nullptr; // quick-settings 开机时间下拉 (NVS psched_on)
+    lv_obj_t* _qs_tab_btns[2] = {nullptr, nullptr}; // quick-settings Tab 按钮 (系统/账户)
+    lv_obj_t* _qs_tab_sys  = nullptr; // quick-settings 系统 Tab 内容容器
+    lv_obj_t* _qs_tab_acct = nullptr; // quick-settings 账户 Tab 内容容器 (NotesAccountPanel)
+    int       _qs_tab      = 0;       // 当前 Tab (theme 切换 rebuild 重开后恢复)
     lv_obj_t* _net_ssid   = nullptr;  // network dialog: SSID textarea
     lv_obj_t* _net_pass   = nullptr;  // network dialog: password textarea
     lv_obj_t* _net_host   = nullptr;  // network dialog: server host textarea (writes both ha_host + svc_host)
@@ -200,6 +204,7 @@ private:
     lv_obj_t* _openModal(int card_w, int card_h, const char* title);
     void _openPowerDialog();
     void _openQuickSettings();
+    void _setQsTab(int i);                                      // 系统/账户 Tab 切换
     void _buildNewsChips(lv_obj_t* card, int x, int y, int w);  // 新闻源多选 (NVS news_feeds)
     void _openNetworkDialog();
     void _doNetworkScan();
@@ -209,6 +214,7 @@ private:
     static void _modalBg_cb(lv_event_t* e);
     static void _qsVol_cb(lv_event_t* e);
     static void _qsBrt_cb(lv_event_t* e);
+    static void _qsTab_cb(lv_event_t* e);     // 系统/账户 Tab 按钮
     static void _qsTheme_cb(lv_event_t* e);   // theme::cycle() + rebuild
     static void _qsSs_chk_cb(lv_event_t* e);  // 屏保开关 → NVS screensaver_en
     static void _qsSs_dd_cb(lv_event_t* e);   // 闲置超时下拉 → NVS screensaver_min

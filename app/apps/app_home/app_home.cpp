@@ -19,6 +19,7 @@
 #include "../utils/news/news_feeds.h"
 #include "../utils/news/news_rss.h"
 #include "../utils/power_scheduler.h"
+#include "../utils/notes_account/notes_account_panel.h"
 #include "ipo_direct.h"          // 新股申购直连东财 (去 OrangePi)
 #include "daily_sentence.h"       // 每日一句本地 DB (去 OrangePi)
 #ifndef PLATFORM_BUILD_DESKTOP
@@ -26,6 +27,9 @@
 #endif
 
 static const std::string _tag = "app-home";
+// 设置弹窗「账户」Tab 的想法云账户面板 (file-static: 面板自带 worker/键盘/扫码层,
+// 生命周期随弹窗 open/close, 实例常驻避免重建)
+static NotesAccountPanel g_notes_acct;
 
 // 中文字体: 设备从 res 分区 mmap 20px cbin (与 calendar/stocks/rfid/ha/
 // radio/reachy 同一模式)。此前直接链接 C 数组版 font_puhui_20_4, 与 res 的
@@ -112,6 +116,14 @@ void AppHome::onOpen()
     if (_scr) {
         lv_screen_load(_scr);
         return;
+    }
+
+    // 亮度持久化 (设置·系统 Tab 滑条写 NVS backlight): 开机/rebuild 恢复。
+    // 异常值回 100; 屏保降亮/恢复逻辑 (AppIdleScreen) 语义不变。
+    {
+        int b = atoi(GetHAL()->getConfig("backlight", "100").c_str());
+        if (b < 1 || b > 100) b = 100;
+        GetHAL()->setDisplayBrightness((uint8_t)b);
     }
 
     // Create a dedicated screen so other apps can own their own screens
@@ -1395,6 +1407,7 @@ lv_obj_t* mk_btn(lv_obj_t* parent, const char* text, uint32_t color, int w, int 
 void AppHome::_closeModal()
 {
     if (!_modal) return;
+    g_notes_acct.close();         // 账户面板的键盘/扫码层挂 layer_top, 必须先拆 (幂等)
     lv_obj_delete_async(_modal);  // safe to call from within the modal's own event
     _modal      = nullptr;
     _qs_vol_lbl = _qs_brt_lbl = nullptr;
@@ -1510,34 +1523,73 @@ void AppHome::_openPowerDialog()
     lv_obj_align(b_cancel, LV_ALIGN_BOTTOM_LEFT, x0 + 2 * (BW + GAP), -32);
 }
 
-// ─── Quick-settings dialog (gear tap): volume + brightness + screensaver + theme ──
+// ─── Quick-settings dialog (gear tap): 系统 Tab = 音量/亮度/屏保/定时/新闻,
+//     账户 Tab = 想法云账户 (NotesAccountPanel, 原 AppIdea ☁ 弹层迁入 2026-11-20) ──
 void AppHome::_openQuickSettings()
 {
     lv_obj_t* card = _openModal(680, 640, "设置");
 
+    // ── Tab header (lottery 同款: CHECKABLE 按钮 + 容器 HIDDEN 切换) ──
+    static const char* const kTabs[] = {"系统", "账户"};
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t* b = lv_button_create(card);
+        lv_obj_set_size(b, 240, 48);
+        lv_obj_set_pos(b, 64 + i * 312, 56);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CHECKABLE);
+        lv_obj_set_style_bg_color(b, lv_color_hex(theme::cur().track), 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(T_ACCENT()), LV_STATE_CHECKED);
+        lv_obj_set_style_bg_color(b, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
+        lv_obj_set_style_radius(b, 24, 0);
+        lv_obj_set_style_shadow_width(b, 0, 0);
+        lv_obj_set_user_data(b, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(b, _qsTab_cb, LV_EVENT_VALUE_CHANGED, this);
+        lv_obj_t* l = lv_label_create(b);
+        lv_label_set_text(l, kTabs[i]);
+        lv_obj_set_style_text_font(l, zh_font_lg(), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(T_LBL()), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), LV_STATE_CHECKED);
+        lv_obj_center(l);
+        _qs_tab_btns[i] = b;
+    }
+
+    // ── 内容容器 (y=112..554, 底部主题/完成公共区之上; 全宽透明) ──
+    auto mk_page = [&]() {
+        lv_obj_t* p = lv_obj_create(card);
+        lv_obj_set_pos(p, 0, 112);
+        lv_obj_set_size(p, 680, 442);
+        lv_obj_set_style_bg_opa(p, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(p, 0, 0);
+        lv_obj_set_style_pad_all(p, 0, 0);
+        lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+        return p;
+    };
+    _qs_tab_sys  = mk_page();
+    _qs_tab_acct = mk_page();
+
+    // ── 系统 Tab ──
+    lv_obj_t* sys = _qs_tab_sys;
 #ifdef PLATFORM_BUILD_WEB
     // web 版: 音量/亮度/屏保/定时开关机全部是 Tab5 硬件专属, 只留新闻源;
     // 主题按钮由下方公共区创建 (曾在此重复建过一枚, 2026-11-05 去重)
-    // 新闻源多选 (2026-11-05): 主页新闻轮播卡轮哪些源 (与设备同款)
-    lv_obj_t* nw_l = lv_label_create(card);
+    lv_obj_t* nw_l = lv_label_create(sys);
     lv_label_set_text(nw_l, "新闻");
-    lv_obj_set_pos(nw_l, 40, 150);
+    lv_obj_set_pos(nw_l, 40, 10);
     lv_obj_set_style_text_color(nw_l, lv_color_hex(T_LBL()), 0);
     lv_obj_set_style_text_font(nw_l, zh_font_lg(), 0);
-    _buildNewsChips(card, 40, 192, 680 - 80);
+    _buildNewsChips(sys, 40, 52, 600);
 #else
     const int LBL_X = 40, SLD_X = 180, SLD_W = 380, SLD_H = 44;
     const int VAL_X = SLD_X + SLD_W + 18;
 
     auto mk_row = [&](const char* name, int yy, int min_v, int max_v, int cur_v,
                       lv_event_cb_t cb, lv_obj_t** out_val) -> lv_obj_t* {
-        lv_obj_t* l = lv_label_create(card);
+        lv_obj_t* l = lv_label_create(sys);
         lv_label_set_text(l, name);
         lv_obj_set_pos(l, LBL_X, yy + 6);
         lv_obj_set_style_text_color(l, lv_color_hex(T_LBL()), 0);
         lv_obj_set_style_text_font(l, zh_font_lg(), 0);
 
-        lv_obj_t* sl = lv_slider_create(card);
+        lv_obj_t* sl = lv_slider_create(sys);
         lv_obj_set_pos(sl, SLD_X, yy + 6);
         lv_obj_set_size(sl, SLD_W, SLD_H);
         lv_slider_set_range(sl, min_v, max_v);
@@ -1551,7 +1603,7 @@ void AppHome::_openQuickSettings()
         lv_obj_set_style_pad_all(sl, 4, LV_PART_KNOB);
         lv_obj_add_event_cb(sl, cb, LV_EVENT_VALUE_CHANGED, this);
 
-        lv_obj_t* v = lv_label_create(card);
+        lv_obj_t* v = lv_label_create(sys);
         char buf[8]; snprintf(buf, sizeof(buf), "%d%%", cur_v);
         lv_label_set_text(v, buf);
         lv_obj_set_pos(v, VAL_X, yy + 8);
@@ -1563,21 +1615,21 @@ void AppHome::_openQuickSettings()
 
     int vol = xiaozhi_get_speaker_volume();
     int brt = GetHAL()->getDisplayBrightness();
-    mk_row("音量", 86,  0, 100, vol, _qsVol_cb, &_qs_vol_lbl);
-    mk_row("亮度", 158, 10, 100, brt, _qsBrt_cb, &_qs_brt_lbl);
+    mk_row("音量", 10, 0, 100, vol, _qsVol_cb, &_qs_vol_lbl);
+    mk_row("亮度", 82, 10, 100, brt, _qsBrt_cb, &_qs_brt_lbl);
 
     // 屏保行 (2026-10-28 用户需求): 勾选=闲置后进屏保; 不勾=不弹屏保、改为把
     // 亮度降到 5%。下拉选闲置时间 (2/5/10 分钟), 两种模式共用。NVS 持久化,
     // AppIdleScreen 每 3s 刷新配置, 改完即生效。
-    lv_obj_t* ss_l = lv_label_create(card);
+    lv_obj_t* ss_l = lv_label_create(sys);
     lv_label_set_text(ss_l, "屏保");
-    lv_obj_set_pos(ss_l, LBL_X, 240);
+    lv_obj_set_pos(ss_l, LBL_X, 166);
     lv_obj_set_style_text_color(ss_l, lv_color_hex(T_LBL()), 0);
     lv_obj_set_style_text_font(ss_l, zh_font_lg(), 0);
 
-    _qs_ss_chk = lv_checkbox_create(card);
+    _qs_ss_chk = lv_checkbox_create(sys);
     lv_checkbox_set_text(_qs_ss_chk, "");
-    lv_obj_set_pos(_qs_ss_chk, SLD_X, 236);
+    lv_obj_set_pos(_qs_ss_chk, SLD_X, 162);
     lv_obj_set_style_text_font(_qs_ss_chk, zh_font_lg(), 0);
     lv_obj_set_style_bg_color(_qs_ss_chk, lv_color_hex(theme::cur().track), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(_qs_ss_chk, lv_color_hex(T_ACCENT()),
@@ -1586,11 +1638,11 @@ void AppHome::_openQuickSettings()
         lv_obj_add_state(_qs_ss_chk, LV_STATE_CHECKED);
     lv_obj_add_event_cb(_qs_ss_chk, _qsSs_chk_cb, LV_EVENT_VALUE_CHANGED, this);
 
-    _qs_ss_dd = lv_dropdown_create(card);
+    _qs_ss_dd = lv_dropdown_create(sys);
     lv_dropdown_set_options(_qs_ss_dd, "2 分钟\n5 分钟\n10 分钟");  // set_options 内部复制, 勿用 _static
     int mins = atoi(GetHAL()->getConfig("screensaver_min", "5").c_str());
     lv_dropdown_set_selected(_qs_ss_dd, mins <= 2 ? 0 : (mins <= 5 ? 1 : 2));
-    lv_obj_set_pos(_qs_ss_dd, SLD_X + 72, 232);
+    lv_obj_set_pos(_qs_ss_dd, SLD_X + 72, 158);
     lv_obj_set_size(_qs_ss_dd, 220, 44);
     lv_obj_set_style_text_font(_qs_ss_dd, zh_font_lg(), 0);
     lv_obj_set_style_text_color(_qs_ss_dd, lv_color_hex(T_LBL()), 0);
@@ -1606,24 +1658,24 @@ void AppHome::_openQuickSettings()
     }
     lv_obj_add_event_cb(_qs_ss_dd, _qsSs_dd_cb, LV_EVENT_VALUE_CHANGED, this);
 
-    lv_obj_t* hint = lv_label_create(card);
+    lv_obj_t* hint = lv_label_create(sys);
     lv_label_set_text(hint, "勾选：闲置后显示屏保；不勾：闲置后熄屏");
-    lv_obj_set_pos(hint, LBL_X, 300);
+    lv_obj_set_pos(hint, LBL_X, 228);
     lv_obj_set_style_text_color(hint, lv_color_hex(theme::cur().text_dim), 0);
     lv_obj_set_style_text_font(hint, zh_font_sm(), 0);
 
     // 定时开关机行 (2026-11-01 用户需求): 勾选后每天到「关」时刻断电,
     // 断电前武装 RX8130 每日闹钟, 「开」时刻自动开机(冷启动)。半小时
     // 粒度可选, 默认关 00:00 / 开 06:30。NVS psched_en/psched_off/psched_on。
-    lv_obj_t* ps_l = lv_label_create(card);
+    lv_obj_t* ps_l = lv_label_create(sys);
     lv_label_set_text(ps_l, "定时开关机");
-    lv_obj_set_pos(ps_l, LBL_X, 358);
+    lv_obj_set_pos(ps_l, LBL_X, 284);
     lv_obj_set_style_text_color(ps_l, lv_color_hex(T_LBL()), 0);
     lv_obj_set_style_text_font(ps_l, zh_font_lg(), 0);
 
-    _qs_ps_chk = lv_checkbox_create(card);
+    _qs_ps_chk = lv_checkbox_create(sys);
     lv_checkbox_set_text(_qs_ps_chk, "");
-    lv_obj_set_pos(_qs_ps_chk, SLD_X, 348);
+    lv_obj_set_pos(_qs_ps_chk, SLD_X, 280);
     lv_obj_set_style_text_font(_qs_ps_chk, zh_font_lg(), 0);
     lv_obj_set_style_bg_color(_qs_ps_chk, lv_color_hex(theme::cur().track), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(_qs_ps_chk, lv_color_hex(T_ACCENT()),
@@ -1647,10 +1699,10 @@ void AppHome::_openQuickSettings()
         }
         // 配置不是半小时粒度时, 就近向下取整落到选项上
         if (ok && (ch * 60 + cm) % 30 != 0) sel = (ch * 60 + cm) / 30;
-        lv_obj_t* dd = lv_dropdown_create(card);
+        lv_obj_t* dd = lv_dropdown_create(sys);
         lv_dropdown_set_options(dd, opts.c_str());  // set_options 内部复制
         lv_dropdown_set_selected(dd, sel);
-        lv_obj_set_pos(dd, x, 352);
+        lv_obj_set_pos(dd, x, 276);
         lv_obj_set_size(dd, 190, 44);
         lv_obj_set_style_text_font(dd, zh_font_lg(), 0);
         lv_obj_set_style_text_color(dd, lv_color_hex(T_LBL()), 0);
@@ -1672,14 +1724,17 @@ void AppHome::_openQuickSettings()
 
     // 新闻源多选 (2026-11-05, car-dash 设置同款): 主页新闻轮播卡轮哪些源;
     // 新闻 app 恒显全部源页签。NVS news_feeds (JSON 数组, 默认 {"ai"})。
-    lv_obj_t* nw_l = lv_label_create(card);
+    lv_obj_t* nw_l = lv_label_create(sys);
     lv_label_set_text(nw_l, "新闻");
-    lv_obj_set_pos(nw_l, LBL_X, 434);
+    lv_obj_set_pos(nw_l, LBL_X, 350);
     lv_obj_set_style_text_color(nw_l, lv_color_hex(T_LBL()), 0);
     lv_obj_set_style_text_font(nw_l, zh_font_lg(), 0);
-    _buildNewsChips(card, SLD_X - 8, 426, 680 - (SLD_X - 8) - 24);
+    _buildNewsChips(sys, SLD_X - 8, 342, 680 - (SLD_X - 8) - 24);
 
 #endif  // !PLATFORM_BUILD_WEB
+
+    // ── 账户 Tab (想法云账户: TOKEN/扫码/注册/退出, 原 AppIdea ☁ 弹层迁入) ──
+    g_notes_acct.open(_qs_tab_acct);
 
     // 主题循环切换（松绿→暖橙→海蓝→岩紫…）：立即重建主页，其他 app 下次
     // 打开生效。按钮文字显示当前主题名。
@@ -1693,6 +1748,30 @@ void AppHome::_openQuickSettings()
             static_cast<AppHome*>(lv_event_get_user_data(e))->_closeModal();
         }, this);
     lv_obj_align(done, LV_ALIGN_BOTTOM_RIGHT, -40, -28);
+}
+
+void AppHome::_setQsTab(int i)
+{
+    if (i != 0 && i != 1) i = 0;
+    _qs_tab = i;                                   // 记忆当前 Tab (theme rebuild 重开恢复)
+    for (int k = 0; k < 2; k++) {
+        if (!_qs_tab_btns[k]) continue;
+        if (k == i) lv_obj_add_state(_qs_tab_btns[k], LV_STATE_CHECKED);
+        else lv_obj_clear_state(_qs_tab_btns[k], LV_STATE_CHECKED);
+    }
+    if (_qs_tab_sys)
+        i == 0 ? lv_obj_clear_flag(_qs_tab_sys, LV_OBJ_FLAG_HIDDEN)
+               : lv_obj_add_flag(_qs_tab_sys, LV_OBJ_FLAG_HIDDEN);
+    if (_qs_tab_acct)
+        i == 1 ? lv_obj_clear_flag(_qs_tab_acct, LV_OBJ_FLAG_HIDDEN)
+               : lv_obj_add_flag(_qs_tab_acct, LV_OBJ_FLAG_HIDDEN);
+}
+
+void AppHome::_qsTab_cb(lv_event_t* e)
+{
+    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    auto* btn = lv_event_get_current_target_obj(e);
+    self->_setQsTab((int)(intptr_t)lv_obj_get_user_data(btn));
 }
 
 void AppHome::_refreshThemeBtn()
@@ -1745,6 +1824,7 @@ void AppHome::_qsBrt_cb(lv_event_t* e)
     auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
     int v = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e));
     GetHAL()->setDisplayBrightness((uint8_t)v);
+    GetHAL()->setConfig("backlight", std::to_string(v));   // 亮度持久化, 开机 onOpen 恢复
     char buf[8]; snprintf(buf, sizeof(buf), "%d%%", v);
     if (self->_qs_brt_lbl) lv_label_set_text(self->_qs_brt_lbl, buf);
 }
