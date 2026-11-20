@@ -591,9 +591,10 @@ void AppIdea::_buildUi()
     lv_obj_set_style_border_width(_list_panel, 0, 0);
     lv_obj_set_style_pad_all(_list_panel, 0, 0);
     lv_obj_set_style_pad_row(_list_panel, 12, 0);
+    lv_obj_set_style_pad_column(_list_panel, 12, 0);
     lv_obj_clear_flag(_list_panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_layout(_list_panel, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(_list_panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_flow(_list_panel, LV_FLEX_FLOW_ROW_WRAP);   // 文字卡 1 行 2 列 (2026-11-20 用户要求)
     lv_obj_set_flex_align(_list_panel, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
@@ -676,10 +677,7 @@ void AppIdea::_renderFilter()
         }, LV_EVENT_CLICKED, this);
     }
     lv_obj_t* clr = mk_chip(slot, "清空", false, true);
-    lv_obj_add_event_cb(clr, [](lv_event_t* e) {
-        static_cast<AppIdea*>(lv_event_get_user_data(e))->_showConfirm(
-            "清空全部想法? (含车机端记录)", "", false, true);
-    }, LV_EVENT_CLICKED, this);
+    lv_obj_add_flag(clr, LV_OBJ_FLAG_HIDDEN);   // 2026-11-20 用户要求去掉「清空」入口 (保留隐藏对象占位, _clearAll/_showConfirm 留作备用)
 }
 
 void AppIdea::_renderList()
@@ -726,6 +724,7 @@ void AppIdea::_renderList()
             lv_obj_t* hd = lv_label_create(_list_panel);
             std::string txt = "— " + day + " —";
             lv_label_set_text(hd, txt.c_str());
+            lv_obj_set_width(hd, LV_PCT(100));     // 分组条独占整行 (flex ROW_WRAP 下不与卡片并排)
             lv_obj_set_style_text_font(hd, zh_font_md(), 0);
             lv_obj_set_style_text_color(hd, lv_color_hex(C_TEXT2), 0);
         }
@@ -733,7 +732,8 @@ void AppIdea::_renderList()
         // 行视口 (邮件 _emailMakeRow 同款, 2026-11-12 终版): 透明横向滚动容器,
         // 卡片与删除钮各自成形, 左拨露删除钮。单开原则 + SCROLL_END 吸合。
         lv_obj_t* row = lv_obj_create(_list_panel);
-        lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+        // 文字卡 48% → 1 行 2 列; 语音卡整行 (播放条 470px 固定宽, 半列会溢出)
+        lv_obj_set_size(row, it.voice ? LV_PCT(100) : LV_PCT(48), LV_SIZE_CONTENT);
         lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
         lv_obj_set_style_radius(row, 0, 0);
         lv_obj_set_style_clip_corner(row, false, 0);
