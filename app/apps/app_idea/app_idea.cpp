@@ -1269,6 +1269,15 @@ void AppIdea::_removeSwipeGesture()
     }
 }
 
+// ── 想法云账户状态刷新 (登录 UI 已迁设置·账户 Tab; 桌面/设备都要链接) ──
+void AppIdea::_naRefresh()
+{
+    auto u = _na_user();
+    auto t = _na_tok();
+    if (_na_user_lbl)
+        lv_label_set_text(_na_user_lbl, t.empty() ? "未登录" : ("@" + u).c_str());
+}
+
 // ── 设备专属: 录音 / 回放 ─────────────────────────────────────────────────
 #ifndef PLATFORM_BUILD_DESKTOP
 
@@ -1337,15 +1346,6 @@ void AppIdea::_recStop(bool upload)
     s_tap_target = nullptr;
     xiaozhi_set_input_tap(nullptr);      // 恢复唤醒词
     s_rec_cv.notify_all();
-}
-
-// ── 想法云账户: 登录 / 注册 / 退出 (V3; token/user 存 NVS notes_token/notes_user) ──
-void AppIdea::_naRefresh()
-{
-    auto u = _na_user();
-    auto t = _na_tok();
-    if (_na_user_lbl)
-        lv_label_set_text(_na_user_lbl, t.empty() ? "未登录" : ("@" + u).c_str());
 }
 
 void AppIdea::s_recWorker()

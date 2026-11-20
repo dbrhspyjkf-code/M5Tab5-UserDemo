@@ -631,6 +631,12 @@ void AppHome::onOpen()
     _last_status_ms = 0;
 
     lv_screen_load(_scr);
+
+    // 调试钩子: TAB5_QS=1 启动直开设置弹窗, TAB5_QS_TAB 选起始 Tab (桌面 UI 冒烟)
+    if (atoi(getenv("TAB5_QS") ? getenv("TAB5_QS") : "0") == 1) {
+        _qs_tab = atoi(getenv("TAB5_QS_TAB") ? getenv("TAB5_QS_TAB") : "0");
+        _openQuickSettings();
+    }
 }
 
 void AppHome::onRunning()
@@ -1767,6 +1773,11 @@ void AppHome::_setQsTab(int i)
     if (_qs_tab_acct)
         i == 1 ? lv_obj_clear_flag(_qs_tab_acct, LV_OBJ_FLAG_HIDDEN)
                : lv_obj_add_flag(_qs_tab_acct, LV_OBJ_FLAG_HIDDEN);
+    mclog::tagInfo(_tag, "qs tab={} sys_hidden={} acct_hidden={}", i,
+        _qs_tab_sys ? lv_obj_has_flag(_qs_tab_sys, LV_OBJ_FLAG_HIDDEN) : -1,
+        _qs_tab_acct ? lv_obj_has_flag(_qs_tab_acct, LV_OBJ_FLAG_HIDDEN) : -1);
+    fflush(stdout);
+    fflush(stderr);
 }
 
 void AppHome::_qsTab_cb(lv_event_t* e)

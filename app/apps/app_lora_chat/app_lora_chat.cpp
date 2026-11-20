@@ -56,8 +56,10 @@ void AppLoraChat::onOpen()
         _removeSwipeGesture();
         _uartDeinit();
         AppEmailLed::setPortAOwnedByApp(false);
+#ifndef PLATFORM_BUILD_DESKTOP
         AppVoiceInput::cancelVoiceText();   // 防悬挂回调写已删 textarea
         AppVoiceInput::dismissMicButton();
+#endif
         lv_obj_delete(_scr);
         _scr = nullptr;
         _status_lbl = _chat_scroll = _chat_panel = _input = _send_btn = nullptr;
@@ -139,8 +141,10 @@ void AppLoraChat::onClose()
 
     // 把 PORT A 交还给后台邮件通知器.
     AppEmailLed::setPortAOwnedByApp(false);
+#ifndef PLATFORM_BUILD_DESKTOP
     AppVoiceInput::cancelVoiceText();
     AppVoiceInput::dismissMicButton();
+#endif
 
     if (_scr) {
         lv_obj_delete(_scr);
@@ -534,8 +538,10 @@ void AppLoraChat::_gesture_cb(lv_event_t* e)
         // (否则 setPortAOwnedByApp(true) 永不复位, worker 永久让位).
         self->_uartDeinit();
         AppEmailLed::setPortAOwnedByApp(false);
+#ifndef PLATFORM_BUILD_DESKTOP
         AppVoiceInput::cancelVoiceText();
         AppVoiceInput::dismissMicButton();
+#endif
         if (self->_close_cb) self->_close_cb();
     }
 }

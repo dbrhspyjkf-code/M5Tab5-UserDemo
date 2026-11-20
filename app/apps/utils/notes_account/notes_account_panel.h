@@ -264,7 +264,9 @@ public:
         if (!_root && !_qr_overlay && !_kb) return;
         _alive = std::make_shared<bool>(false);        // 作废在途 worker 回调
         if (_ui_timer) { lv_timer_del(_ui_timer); _ui_timer = nullptr; }
-        qr_teardown();
+#ifndef PLATFORM_BUILD_DESKTOP
+        qr_teardown();                                 // 扫码层/计时器挂 layer_top, 必须先拆
+#endif
         if (_kb) { lv_obj_delete(_kb); _kb = nullptr; }
         _root = nullptr;
         _stat_user = _btn_logout = _stat = nullptr;
