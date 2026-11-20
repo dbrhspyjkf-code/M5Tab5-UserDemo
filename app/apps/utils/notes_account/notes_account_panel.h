@@ -208,27 +208,28 @@ public:
                 static_cast<NotesAccountPanel*>(lv_event_get_user_data(e))->qr_open();
             });
 #endif
-        lv_obj_t* qh = mk_lbl("手机扫码打开授权页登录, 确认后自动登录\n"
-                              "家里 WiFi 拦 apisz.top 域名, 扫码请关 WiFi 用蜂窝",
-                              364, 66, theme::cur().text_dim, na_font::sm());
-        lv_obj_set_width(qh, 280);
+        lv_obj_t* qh = mk_lbl("手机扫码打开授权页, 登录确认后自动登录\n"
+                              "家里 WiFi 拦域名, 扫码请关 WiFi 用蜂窝",
+                              380, 64, theme::cur().text_dim, na_font::md());
+        lv_obj_set_width(qh, 480);                 // 右侧大片空白, 一行多放字 (用户反馈)
         lv_label_set_long_mode(qh, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_line_space(qh, 10, 0);
 
-        mk_lbl("注册新账号 (邀请码在 ZERO 设置·生成注册码)", 40, 156,
+        mk_lbl("注册新账号 (邀请码在 ZERO 设置·生成注册码)", 40, 176,
                theme::cur().text_dim, na_font::sm());
-        _ta_name = mk_ta(40, 182, 190, "用户名");
-        _ta_inv = mk_ta(246, 182, 190, "邀请码");
-        mk_btn("注册", 452, 182, 188, 52, theme::cur().accent,
+        _ta_name = mk_ta(40, 202, 190, "用户名");
+        _ta_inv = mk_ta(246, 202, 190, "邀请码");
+        mk_btn("注册", 452, 202, 188, 52, theme::cur().accent,
             [](lv_event_t* e) {
                 static_cast<NotesAccountPanel*>(lv_event_get_user_data(e))->reg();
             });
 
-        _btn_logout = mk_btn("退出登录", 40, 254, 160, 50, theme::cur().danger,
+        _btn_logout = mk_btn("退出登录", 40, 274, 160, 50, theme::cur().danger,
             [](lv_event_t* e) {
                 static_cast<NotesAccountPanel*>(lv_event_get_user_data(e))->logout();
             });
 
-        _stat = mk_lbl("", 40, 330, theme::cur().text_dim, na_font::md());
+        _stat = mk_lbl("", 40, 350, theme::cur().text_dim, na_font::md());
 
         // 软键盘挂 layer_top (容器在宿主卡片里, 键盘盖下方区域)
         _kb = lv_keyboard_create(lv_layer_top());

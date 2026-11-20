@@ -1543,7 +1543,7 @@ void AppHome::_openQuickSettings()
     for (int i = 0; i < 3; i++) {
         lv_obj_t* b = lv_button_create(card);
         lv_obj_set_size(b, 260, 48);
-        lv_obj_set_pos(b, 36 + i * 284, 56);
+        lv_obj_set_pos(b, 36 + i * 284, 78);   // y78: 避开 1.25x 放大的「设置」标题 (原 56 重叠)
         lv_obj_add_flag(b, LV_OBJ_FLAG_CHECKABLE);
         lv_obj_set_style_bg_color(b, lv_color_hex(theme::cur().track), 0);
         lv_obj_set_style_bg_color(b, lv_color_hex(T_ACCENT()), LV_STATE_CHECKED);
@@ -1567,8 +1567,8 @@ void AppHome::_openQuickSettings()
     // ── 内容容器 (y=112..554, 底部主题/完成公共区之上; 全宽透明) ──
     auto mk_page = [&]() {
         lv_obj_t* p = lv_obj_create(card);
-        lv_obj_set_pos(p, 0, 112);
-        lv_obj_set_size(p, 900, 442);
+        lv_obj_set_pos(p, 0, 132);
+        lv_obj_set_size(p, 900, 422);
         lv_obj_set_style_bg_opa(p, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(p, 0, 0);
         lv_obj_set_style_pad_all(p, 0, 0);
@@ -1679,7 +1679,7 @@ void AppHome::_openQuickSettings()
 
     _qs_ps_chk = lv_checkbox_create(sys);
     lv_checkbox_set_text(_qs_ps_chk, "");
-    lv_obj_set_pos(_qs_ps_chk, SLD_X, 280);
+    lv_obj_set_pos(_qs_ps_chk, 230, 280);   // x230: 「定时开关机」五字 30px 到 x190, 别压勾选框
     lv_obj_set_style_text_font(_qs_ps_chk, zh_font_lg(), 0);
     lv_obj_set_style_bg_color(_qs_ps_chk, lv_color_hex(theme::cur().track), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(_qs_ps_chk, lv_color_hex(T_ACCENT()),
@@ -1723,8 +1723,8 @@ void AppHome::_openQuickSettings()
         lv_obj_add_event_cb(dd, _qsPs_dd_cb, LV_EVENT_VALUE_CHANGED, this);
         return dd;
     };
-    _qs_ps_off_dd = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOff, "00:00").c_str(), "关", 300);
-    _qs_ps_on_dd  = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOn, "06:30").c_str(), "开", 560);
+    _qs_ps_off_dd = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOff, "00:00").c_str(), "关", 310);
+    _qs_ps_on_dd  = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOn, "06:30").c_str(), "开", 570);
 
     // 新闻源多选已拆到「新闻」Tab (2026-11-20)。
 
@@ -1896,11 +1896,11 @@ void AppHome::_buildNewsChips(lv_obj_t* card, int x, int y, int w)
     // 容器: flex ROW + wrap, chip 宽随内容自适应 (名称长短不一, 两行排开)
     lv_obj_t* box = lv_obj_create(card);
     lv_obj_set_pos(box, x, y);
-    lv_obj_set_size(box, w, 112);
+    lv_obj_set_size(box, w, 124);
     lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(box, 0, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
-    lv_obj_set_style_pad_row(box, 8, 0);
+    lv_obj_set_style_pad_row(box, 10, 0);
     lv_obj_set_style_pad_column(box, 8, 0);
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
@@ -1909,9 +1909,9 @@ void AppHome::_buildNewsChips(lv_obj_t* card, int x, int y, int w)
 
     for (int i = 0; i < newsfeed::kSourceCount; i++) {
         lv_obj_t* chip = lv_button_create(box);
-        lv_obj_set_size(chip, LV_SIZE_CONTENT, 44);
-        lv_obj_set_style_pad_left(chip, 18, 0);
-        lv_obj_set_style_pad_right(chip, 18, 0);
+        lv_obj_set_size(chip, LV_SIZE_CONTENT, 52);
+        lv_obj_set_style_pad_left(chip, 20, 0);
+        lv_obj_set_style_pad_right(chip, 20, 0);
         lv_obj_set_style_bg_color(chip, lv_color_hex(theme::cur().track), 0);
         lv_obj_set_style_bg_color(chip, lv_color_hex(T_ACCENT()), LV_STATE_CHECKED);
         lv_obj_set_style_bg_color(chip, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
@@ -1928,7 +1928,7 @@ void AppHome::_buildNewsChips(lv_obj_t* card, int x, int y, int w)
                                     LV_STATE_CHECKED);
         lv_obj_t* l = lv_label_create(chip);
         lv_label_set_text(l, newsfeed::kSources[i].name);
-        lv_obj_set_style_text_font(l, zh_font_sm(), 0);
+        lv_obj_set_style_text_font(l, zh_font_lg(), 0);   // 与「音量」标签同档 (2026-11-20 用户要求)
         lv_obj_center(l);
     }
 }
