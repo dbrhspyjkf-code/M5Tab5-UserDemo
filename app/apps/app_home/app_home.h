@@ -206,7 +206,7 @@ private:
     void _openPowerDialog();
     void _openQuickSettings();
     void _setQsTab(int i);                                      // 系统/账户 Tab 切换
-    void _buildNewsChips(lv_obj_t* card, int x, int y, int w);  // 新闻源多选 (NVS news_feeds)
+    void _buildNewsChips(lv_obj_t* card, int x, int y, int w);  // 新闻源显隐 chips (NVS news_feeds 源表)
     void _openNetworkDialog();
     void _doNetworkScan();
     void _doNetworkSave();

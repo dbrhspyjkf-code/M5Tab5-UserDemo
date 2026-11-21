@@ -1163,12 +1163,11 @@ void AppHome::_fetch_dashboard()
             auto s = daily_sentence::get(_sent_offset);
             if (!s.en.empty()) { sent_en = std::move(s.en); sent_cn = std::move(s.cn); }
         }
-        // 新闻多源轮播 (2026-11-15 起设备直连 8 源 RSS, oneapp news_rss.py
-        // 同款 — 原 hermes /news/feeds 中转退役; news_rss::fetchAllJson 内部
-        // 每源 10min TTL 缓存, 与新闻 app 共用):
-        // 设置弹窗按 NVS news_feeds 选源, 这里按选择轮转交错合并 (默认 {"ai"},
-        // 与旧版 /news/ai 纯 AI 新闻行为一致)。30 分钟节流; _news_dirty=
-        // 设置弹窗改源后置位, 下一次 60s 仪表轮询立即重拉。
+        // 新闻多源轮播 (2026-11-15 起设备直连 RSS; 2026-11-21 对齐 oneapp:
+        // 源表 NVS news_feeds [{id,name,url,on}] 单一可见性 — 页签/轮播/抓取
+        // 同表, 隐藏源不抓; 与 Zero oneapp 经想法云 kv 双向同步):
+        // 按可见源轮转交错合并。30 分钟节流; _news_dirty=设置弹窗改源后置位,
+        // 下一次 60s 仪表轮询立即重拉。
         // 节流只在拿到非空数据时生效 (2026-10-30 修): 请求前先标记会把
         // 一次瞬时失败放大成 30 分钟无新闻
         static std::atomic<uint32_t> s_news_ms{0};
@@ -1177,9 +1176,12 @@ void AppHome::_fetch_dashboard()
         uint32_t wnow = GetHAL()->millis();
         if (s_news_ms.load() == 0 || wnow - s_news_ms.load() >= 30u * 60 * 1000u
             || _news_dirty.exchange(false)) {
+            newsfeed::ensureActive();
+            newsfeed::kvPullMaybe();   // 云对齐 (60s 节流; 表被云端换则下轮生效)
+            auto vis_srcs = newsfeed::visible();
             if (auto j = pick(news_rss::fetchAllJson()); !j.is_null()
                 && j.contains("feeds") && j["feeds"].is_object()) {
-                for (auto& it : newsfeed::interleave(j["feeds"], newsfeed::loadSel(), 48))
+                for (auto& it : newsfeed::interleave(j["feeds"], vis_srcs, 48))
                     news.push_back({it.cat, it.title, it.desc});
                 news_date = j.value("fetched", std::string());
                 if (!news.empty()) s_news_ms.store(wnow);
@@ -1882,21 +1884,25 @@ void AppHome::_qsPs_dd_cb(lv_event_t* e)
     }
 }
 
-// ─── 新闻源多选 chips (设置弹窗; NVS news_feeds, car-dash 同款) ───────────────
-// 主页新闻轮播卡轮哪些源; 新闻 app 恒显全部源页签。至少保留一个来源。
+// ─── 新闻源 chips (设置弹窗; 2026-11-21 对齐 oneapp: 完整源表 NVS
+// news_feeds [{id,name,url,on}], chip 显隐开关与新闻 app 页签/抓取同一张表,
+// 自定义源也在此显隐; 增删改在 新闻 app·源设置) ───────────────────────────
+namespace {
+struct ChipIdCtx {
+    AppHome* app;
+    std::string id;
+};
+}
+
 void AppHome::_buildNewsChips(lv_obj_t* card, int x, int y, int w)
 {
-    auto sel = newsfeed::loadSel();
-    auto has = [&sel](const char* id) {
-        for (auto& s : sel)
-            if (s == id) return true;
-        return false;
-    };
+    auto table = newsfeed::loadTable();
 
-    // 容器: flex ROW + wrap, chip 宽随内容自适应 (名称长短不一, 两行排开)
+    // 容器: flex ROW + wrap, chip 宽随内容自适应; 11+ 源三行排开 → 高度
+    // 放宽到 280 + 竖向滚动兜底 (旧版 124 装 8 源两行)
     lv_obj_t* box = lv_obj_create(card);
     lv_obj_set_pos(box, x, y);
-    lv_obj_set_size(box, w, 124);
+    lv_obj_set_size(box, w, 280);
     lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(box, 0, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
@@ -1904,10 +1910,10 @@ void AppHome::_buildNewsChips(lv_obj_t* card, int x, int y, int w)
     lv_obj_set_style_pad_column(box, 8, 0);
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+    lv_obj_set_scroll_dir(box, LV_DIR_VER);           // 源多到装不下时竖向可拖
     lv_obj_set_scrollbar_mode(box, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
-    for (int i = 0; i < newsfeed::kSourceCount; i++) {
+    for (auto& e : table) {
         lv_obj_t* chip = lv_button_create(box);
         lv_obj_set_size(chip, LV_SIZE_CONTENT, 52);
         lv_obj_set_style_pad_left(chip, 20, 0);
@@ -1919,42 +1925,46 @@ void AppHome::_buildNewsChips(lv_obj_t* card, int x, int y, int w)
         lv_obj_set_style_shadow_width(chip, 0, 0);
         lv_obj_add_flag(chip, LV_OBJ_FLAG_CHECKABLE);
         lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
-        if (has(newsfeed::kSources[i].id)) lv_obj_add_state(chip, LV_STATE_CHECKED);
-        lv_obj_set_user_data(chip, (void*)(intptr_t)i);
-        lv_obj_add_event_cb(chip, _qsNews_cb, LV_EVENT_VALUE_CHANGED, this);
+        if (e.on) lv_obj_add_state(chip, LV_STATE_CHECKED);
+        auto* ctx = new ChipIdCtx{this, e.id};
+        lv_obj_add_event_cb(chip, _qsNews_cb, LV_EVENT_VALUE_CHANGED, ctx);
+        lv_obj_add_event_cb(chip, [](lv_event_t* ev) {
+            delete static_cast<ChipIdCtx*>(lv_event_get_user_data(ev));
+        }, LV_EVENT_DELETE, ctx);
         // 选中态文字色挂 chip 按钮层 (label 继承): accent 亮底配 ink_on 墨色
         lv_obj_set_style_text_color(chip, lv_color_hex(T_LBL()), 0);
         lv_obj_set_style_text_color(chip, lv_color_hex(theme::ink_on(T_ACCENT())),
                                     LV_STATE_CHECKED);
         lv_obj_t* l = lv_label_create(chip);
-        lv_label_set_text(l, newsfeed::kSources[i].name);
+        lv_label_set_text(l, e.name.c_str());
         lv_obj_set_style_text_font(l, zh_font_lg(), 0);   // 与「音量」标签同档 (2026-11-20 用户要求)
         lv_obj_center(l);
     }
+
+    // 引导: 增删改入口在新闻 app (oneapp S 键视图同款职责拆分)
+    lv_obj_t* hint = lv_label_create(card);
+    lv_label_set_text(hint, "增删自定义源 → 新闻 app 右上「源设置」");
+    lv_obj_set_pos(hint, x, y + 292);
+    lv_obj_set_style_text_font(hint, zh_font_sm(), 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(theme::cur().text_dim), 0);
 }
 
 void AppHome::_qsNews_cb(lv_event_t* e)
 {
-    auto* self = static_cast<AppHome*>(lv_event_get_user_data(e));
+    auto* ctx = static_cast<ChipIdCtx*>(lv_event_get_user_data(e));
     lv_obj_t* chip = lv_event_get_current_target_obj(e);
-    lv_obj_t* box  = lv_obj_get_parent(chip);
 
-    // 从 UI 状态重建选择 (单一事实源 = chips 的 CHECKED 态; 切换已完成)
-    std::vector<std::string> sel;
-    uint32_t n = lv_obj_get_child_count(box);
-    for (uint32_t i = 0; i < n; i++) {
-        lv_obj_t* c = lv_obj_get_child(box, i);
-        if (lv_obj_has_state(c, LV_STATE_CHECKED))
-            sel.push_back(newsfeed::kSources[(intptr_t)lv_obj_get_user_data(c)].id);
+    // chip CHECKABLE 已自翻状态 → 按 chip 态落表 (全部隐藏合法, oneapp 同款)
+    bool on = lv_obj_has_state(chip, LV_STATE_CHECKED);
+    auto t = newsfeed::loadTable();
+    for (auto& x : t) {
+        if (x.id != ctx->id) continue;
+        x.on = on;
+        newsfeed::saveTable(t);   // 落盘 + 换生效表 + 后台推云
+        break;
     }
-    if (sel.empty()) {
-        // 至少保留一个来源 (car-dash 同款): 回拨这次切换
-        lv_obj_add_state(chip, LV_STATE_CHECKED);
-        sel.push_back(newsfeed::kSources[(intptr_t)lv_obj_get_user_data(chip)].id);
-    }
-    newsfeed::saveSel(sel);
-    self->_news_dirty = true;
-    self->_last_dash_ms = 0;   // 下一个 onRunning tick (≤1s) 立即重拉仪表盘(含新闻)
+    ctx->app->_news_dirty = true;
+    ctx->app->_last_dash_ms = 0;   // 下一个 onRunning tick (≤1s) 立即重拉仪表盘(含新闻)
 }
 
 // ─── Network dialog (WiFi tap): WiFi + HA server ────────────────────────────

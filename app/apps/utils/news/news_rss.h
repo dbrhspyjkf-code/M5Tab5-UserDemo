@@ -1,23 +1,29 @@
 #pragma once
 /*
- * news_rss — 新闻数据层: 设备直连 8 个中文 RSS/Atom 源 (oneapp news_rss.py
- * 固件直译, 2026-11-15; 原 Tab5 链路 = hermes :8766/news/feeds 中转)。
+ * news_rss — 新闻数据层: 设备直连中文 RSS/Atom 源 (oneapp news_rss.py
+ * 固件直译, 2026-11-15; 原 Tab5 链路 = hermes :8766/news/feeds 中转;
+ * 2026-11-21 对齐 oneapp: 内置源 8→11 + 动态生效源表 setFeeds)。
  *
- * - 源清单 = oneapp 7 源 (大陆直连实测 7/7 全通, 2026-11-14 zero-news 同款
- *   UA 无封锁) + 阮一峰周刊 (atom, 2026-11-15 Zero 实测 200/70KB/1.9s)。
+ * - 内置源 = oneapp 全部 10 源 (大陆直连实测全通: 7 源 2026-11-14,
+ *   中新网 2026-11-20, 新华国际/军事 2026-11-21) + 阮一峰周刊 (Tab5
+ *   附加内置, atom, 2026-11-15 Zero 实测 200/70KB/1.9s)。
+ * - 生效源表 = setFeeds([{id,name,url}]) 动态换 (news_feeds 源表模块
+ *   持有持久态); 未初始化时回落全部内置 (桌面/单测兜底)。隐藏源不抓。
  * - RSS2.0 / Atom 双格式, 命名空间无关 (按 local 名匹配), CDATA 支持,
  *   剥 HTML 标签 + 实体反转义; 单源失败不影响整体 (ok:false, 不记成功时间
  *   戳 → 下轮重试, oneapp 同款)。
  * - 输出形状与 hermes /news/feeds 完全一致 (下游 app_news 页签解析、
  *   app_home 轮播 newsfeed::interleave 零改动):
  *     {"ok":true,"fetched":"MM-dd HH:MM","feeds":{<id>:{ok,name,items:[{t,d,u,ts}]}}}
- * - 每源 10min TTL 缓存 (调用方任意 worker; mutex 串行, 暖缓存命中即回)。
+ * - 每源 10min TTL 缓存 (调用方任意 worker; mutex 串行, 暖缓存命中即回;
+ *   片段按源 id 键控 — 源表重排/换址后旧缓存不串位)。
  * - 时间戳统一折算北京时间显示 (gmtime+8h, 不依赖设备 TZ 设置);
  *   解析失败为 "" (oneapp 同款)。
  * - 缓存/聚合文本走 PsramString (聚合 ~100KB, 常驻落 PSRAM 防内部堆搅拌 —
  *   2026-11-07 邮件 158KB 内部堆 churn 教训同源)。
  */
 #include <hal/hal.h>
+#include <map>
 #include <string>
 #include <vector>
 #include <cstring>
@@ -39,16 +45,61 @@ inline constexpr struct Feed {
     const char* name;
     const char* url;
 } FEEDS[] = {
-    {"ai",       "AI 新闻",    "https://www.qbitai.com/feed"},   // 量子位
-    {"ithome",   "IT之家",     "https://www.ithome.com/rss/"},
-    {"sspai",    "少数派",     "https://sspai.com/feed"},
-    {"solidot",  "Solidot",    "https://www.solidot.org/index.rss"},
-    {"ifanr",    "爱范儿",     "https://www.ifanr.com/feed"},
-    {"ruan",     "阮一峰周刊", "https://www.ruanyifeng.com/blog/atom.xml"},
-    {"leiphone", "雷峰网",     "https://www.leiphone.com/feed"},
-    {"wscn",     "华尔街见闻", "https://dedicated.wallstreetcn.com/rss.xml"},
+    {"ai",        "AI 新闻",    "https://www.qbitai.com/feed"},   // 量子位
+    {"ithome",    "IT之家",     "https://www.ithome.com/rss/"},
+    {"sspai",     "少数派",     "https://sspai.com/feed"},
+    {"solidot",   "Solidot",    "https://www.solidot.org/index.rss"},
+    {"ifanr",     "爱范儿",     "https://www.ifanr.com/feed"},
+    {"leiphone",  "雷峰网",     "https://www.leiphone.com/feed"},
+    {"wscn",      "华尔街见闻", "https://dedicated.wallstreetcn.com/rss.xml"},
+    {"chinanews", "中新网",     "https://www.chinanews.com.cn/rss/scroll-news.xml"},
+    {"xh_world",  "新华国际",   "http://www.xinhuanet.com/world/news_world.xml"},
+    {"xh_mil",    "新华军事",   "http://www.xinhuanet.com/mil/news_mil.xml"},
+    {"ruan",      "阮一峰周刊", "https://www.ruanyifeng.com/blog/atom.xml"},  // Tab5 附加
 };
 inline constexpr int FEED_COUNT = (int)(sizeof(FEEDS) / sizeof(FEEDS[0]));
+
+// 生效源表条目 (动态表: news_feeds 源表模块按显隐给; 值语义方便跨线程快照)
+struct FeedCfg {
+    std::string id, name, url;
+};
+
+inline std::vector<FeedCfg> builtinFeeds()
+{
+    std::vector<FeedCfg> out;
+    out.reserve(FEED_COUNT);
+    for (int i = 0; i < FEED_COUNT; i++)
+        out.push_back({FEEDS[i].id, FEEDS[i].name, FEEDS[i].url});
+    return out;
+}
+
+// ── 生效源表 (oneapp news_rss.set_feeds 同款: 显隐驱动, 隐藏源不抓) ─────────
+// setFeeds 由 news_feeds 源表模块在启动/每次变更后调; fetchAllJson 首次调用
+// 前若没人 set 过 → 回落全部内置 (桌面/单测/异常路径兜底)。换表走独立短
+// 临界区 — UI 线程换表绝不等慢抓取 (取数 mutex 整段持锁, 12s×N 源)。
+inline std::mutex& tableMutex()
+{
+    static std::mutex s_mx;
+    return s_mx;
+}
+
+inline std::vector<FeedCfg>& activeFeeds()
+{
+    static std::vector<FeedCfg> s_active = builtinFeeds();
+    return s_active;
+}
+
+inline void setFeeds(const std::vector<FeedCfg>& feeds)
+{
+    std::lock_guard<std::mutex> lk(tableMutex());
+    activeFeeds() = feeds;
+}
+
+inline std::vector<FeedCfg> snapshotFeeds()
+{
+    std::lock_guard<std::mutex> lk(tableMutex());
+    return activeFeeds();
+}
 
 // ── 文本清洗 ────────────────────────────────────────────────────────────────
 
@@ -484,75 +535,82 @@ inline std::string now_bj()
 }
 
 // 单源结果片段: '"<id>":{"ok":..,"name":"..","items":[..]}' (PsramString 常驻)
-inline std::string fetch_one_fragment(int idx)
+inline std::string fetch_one_fragment(const FeedCfg& f)
 {
-    std::string f;
-    f.reserve(4096);
-    f += "\"";
-    f += FEEDS[idx].id;
-    f += "\":{\"ok\":";
+    std::string fr;
+    fr.reserve(4096);
+    fr += "\"";
+    fr += f.id;
+    fr += "\":{\"ok\":";
     auto resp = GetHAL()->httpGet(
-        FEEDS[idx].url, {{"User-Agent", UA}, {"Accept", "application/rss+xml, application/xml, text/xml, */*"}});
+        f.url, {{"User-Agent", UA}, {"Accept", "application/rss+xml, application/xml, text/xml, */*"}});
     if (!resp.ok) {
-        f += "false,\"name\":\"";
-        json_escape(f, FEEDS[idx].name);
-        f += "\"}";
-        return f;
+        fr += "false,\"name\":\"";
+        json_escape(fr, f.name);
+        fr += "\"}";
+        return fr;
     }
     auto items = parse_feed(resp.body);
     if (items.empty()) {
-        f += "false,\"name\":\"";
-        json_escape(f, FEEDS[idx].name);
-        f += "\"}";
-        return f;
+        fr += "false,\"name\":\"";
+        json_escape(fr, f.name);
+        fr += "\"}";
+        return fr;
     }
-    f += "true,\"name\":\"";
-    json_escape(f, FEEDS[idx].name);
-    f += "\",\"items\":[";
+    fr += "true,\"name\":\"";
+    json_escape(fr, f.name);
+    fr += "\",\"items\":[";
     for (size_t i = 0; i < items.size(); i++) {
-        if (i) f += ",";
-        f += "{\"t\":\"";
-        json_escape(f, items[i].t);
-        f += "\",\"d\":\"";
-        json_escape(f, items[i].d);
-        f += "\",\"u\":\"";
-        json_escape(f, items[i].u);
-        f += "\",\"ts\":\"";
-        json_escape(f, items[i].ts);
-        f += "\"}";
+        if (i) fr += ",";
+        fr += "{\"t\":\"";
+        json_escape(fr, items[i].t);
+        fr += "\",\"d\":\"";
+        json_escape(fr, items[i].d);
+        fr += "\",\"u\":\"";
+        json_escape(fr, items[i].u);
+        fr += "\",\"ts\":\"";
+        json_escape(fr, items[i].ts);
+        fr += "\"}";
     }
-    f += "]}";
-    return f;
+    fr += "]}";
+    return fr;
 }
 
-// 聚合取数 (调用方已在自身 worker 线程; 内部 mutex 串行 + 每源 10min TTL):
-// 返回 hermes /news/feeds 同形状文本。失败源保留 ok:false 片段 (不缓存成功
-// 时间戳 → 下轮重试, oneapp 同款); 曾成功的源失败时保留旧片段 (陈旧优于空页)。
+// 聚合取数 (调用方已在自身 worker 线程; 取数 mutex 串行 + 每源 10min TTL):
+// 抓 setFeeds 生效表快照 (隐藏源不抓, oneapp 同款); 片段按源 id 键控 —
+// 源表重排/换址/增删后旧缓存不串位。失败源保留 ok:false 片段 (不缓存成功
+// 时间戳 → 下轮重试, oneapp 同款); 曾成功的源失败时保留旧片段 (陈旧优于
+// 空页)。
 inline std::string fetchAllJson()
 {
     static std::mutex s_mx;
-    static PsramString s_frag[FEED_COUNT];      // 每源最近片段 (PSRAM 常驻)
-    static int64_t s_feed_at[FEED_COUNT] = {};  // 每源最近成功 epoch (0=从没成功)
+    static std::map<std::string, PsramString> s_frag;      // id → 最近片段 (PSRAM 常驻)
+    static std::map<std::string, int64_t> s_feed_at;       // id → 最近成功 epoch
     std::lock_guard<std::mutex> lk(s_mx);
+    const auto feeds = snapshotFeeds();
     int64_t now = (int64_t)time(nullptr);
-    for (int i = 0; i < FEED_COUNT; i++) {
-        if (s_feed_at[i] != 0 && now - s_feed_at[i] < TTL_S) continue;
-        std::string frag = fetch_one_fragment(i);
-        if (frag.find("\"ok\":true") != std::string::npos) {
-            s_frag[i].assign(frag.data(), frag.size());
-            s_feed_at[i] = now;
-        } else if (s_feed_at[i] == 0) {
-            s_frag[i].assign(frag.data(), frag.size());   // ok:false 占位
-        }
+    for (const auto& f : feeds) {
+        auto at = s_feed_at.find(f.id);
+        if (at != s_feed_at.end() && at->second != 0 && now - at->second < TTL_S) continue;
+        std::string frag = fetch_one_fragment(f);
+        bool ok = frag.find("\"ok\":true") != std::string::npos;
+        if (ok) s_feed_at[f.id] = now;
+        else if (at == s_feed_at.end()) s_feed_at[f.id] = 0;
+        auto& slot = s_frag[f.id];
+        if (ok || at == s_feed_at.end()) slot.assign(frag.data(), frag.size());
     }
     std::string agg;
     agg.reserve(8192);
     agg += "{\"ok\":true,\"fetched\":\"";
     agg += now_bj();
     agg += "\",\"feeds\":{";
-    for (int i = 0; i < FEED_COUNT; i++) {
-        if (i) agg += ",";
-        if (!s_frag[i].empty()) agg.append(s_frag[i].data(), s_frag[i].size());
+    bool first = true;
+    for (const auto& f : feeds) {
+        auto it = s_frag.find(f.id);
+        if (it == s_frag.end() || it->second.empty()) continue;
+        if (!first) agg += ",";
+        first = false;
+        agg.append(it->second.data(), it->second.size());
     }
     agg += "}}";
     return agg;
