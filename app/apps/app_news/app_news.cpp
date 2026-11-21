@@ -648,22 +648,22 @@ void AppNews::_rebuildSrcRows()
             delete static_cast<IdCtx*>(lv_event_get_user_data(ev));
         }, LV_EVENT_DELETE, ctx);
 
-        // 名称 (显=hi / 隐=dim)
+        // 名称 (显=hi / 隐=dim; 自定义行收窄给 徽标+改/删/显 按钮让位)
         lv_obj_t* nl = lv_label_create(row);
         lv_label_set_text(nl, e.name.c_str());
         lv_obj_set_pos(nl, 24, 0);
-        lv_obj_set_width(nl, custom ? 560 : 700);
+        lv_obj_set_width(nl, custom ? 490 : 700);
         lv_obj_set_height(nl, ROW_H);
         lv_label_set_long_mode(nl, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(nl, zh24(), 0);
         lv_obj_set_style_text_color(nl, lv_color_hex(
             e.on ? theme::cur().text_hi : theme::cur().text_dim), 0);
 
-        // 「自」徽标 (自定义源; 名称区右侧, 不与改/删/显按钮重叠)
+        // 「自」徽标 (自定义源; 名称区右侧 x530..562, 删按钮 x592 起 — 不重叠)
         if (custom) {
             lv_obj_t* cb = lv_label_create(row);
             lv_label_set_text(cb, "自");
-            lv_obj_align(cb, LV_ALIGN_LEFT_MID, 600, 0);
+            lv_obj_align(cb, LV_ALIGN_LEFT_MID, 530, 0);
             lv_obj_set_style_text_font(cb, zh20(), 0);
             lv_obj_set_style_bg_color(cb, lv_color_hex(theme::cur().track), 0);
             lv_obj_set_style_bg_opa(cb, LV_OPA_COVER, 0);
@@ -1100,6 +1100,9 @@ void AppNews::_closeConfirm()
 }
 
 // ── toast (oneapp osd 同款反馈; onRunning 到期回收) ─────────────────────────
+// app_radio 同款模式: 不 remove_style_all (样式删光后 content-size 行为
+// 不可靠 → 文本被裁半, 2026-11-21 真机实锤), 显式 CONTENT 尺寸 + 显式
+// 白字; 位置放弹窗卡片 (y50..670) 下方的屏底空条, 不盖任何行/按钮。
 void AppNews::_showToast(const std::string& txt)
 {
     if (_toast_lbl) {
@@ -1107,15 +1110,19 @@ void AppNews::_showToast(const std::string& txt)
         _toast_lbl = nullptr;
     }
     _toast_lbl = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(_toast_lbl);
+    lv_obj_set_size(_toast_lbl, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(_toast_lbl, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(_toast_lbl, LV_OPA_70, 0);
+    lv_obj_set_style_bg_opa(_toast_lbl, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(_toast_lbl, 0, 0);
+    lv_obj_set_style_radius(_toast_lbl, 12, 0);
+    lv_obj_set_style_shadow_width(_toast_lbl, 0, 0);
     lv_obj_set_style_pad_left(_toast_lbl, 28, 0);
     lv_obj_set_style_pad_right(_toast_lbl, 28, 0);
-    lv_obj_set_style_pad_top(_toast_lbl, 14, 0);
-    lv_obj_set_style_pad_bottom(_toast_lbl, 14, 0);
-    lv_obj_set_style_radius(_toast_lbl, 12, 0);
-    lv_obj_align(_toast_lbl, LV_ALIGN_BOTTOM_MID, 0, -110);
+    lv_obj_set_style_pad_top(_toast_lbl, 12, 0);
+    lv_obj_set_style_pad_bottom(_toast_lbl, 12, 0);
+    lv_obj_clear_flag(_toast_lbl,
+                      (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    lv_obj_align(_toast_lbl, LV_ALIGN_BOTTOM_MID, 0, -6);
     lv_obj_t* l = lv_label_create(_toast_lbl);
     lv_label_set_text(l, txt.c_str());
     lv_obj_set_style_text_font(l, zh24(), 0);
