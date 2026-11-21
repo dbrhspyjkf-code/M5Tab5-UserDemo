@@ -2,8 +2,8 @@
 // 新股申购直连 (2026-11-15 去 OrangePi)
 // 数据源 = 东方财富 datacenter RPTA_APP_IPOAPPLY (与 oneapp / hermes
 // _stock_ipo.py 同源), 设备直连; 30 分钟内存缓存 (首页 60s 轮询不重复打).
-// 输出格式与 hermes /stocks/ipo 对齐: 首行「新股申购」, 之后每股一行
-// 「名称 MM-DD(今)」, 首页最多显示 3 条.
+// 输出格式: 首行「新股申购」+ 最近日期一股「名称 MM-DD(今)」
+// (2026-11-21 用户定稿: 只显示最近日期的一条, 多条会与每日一句重叠).
 
 #include <ctime>
 #include <cstdio>
@@ -98,18 +98,14 @@ inline bool fetchText(std::string& out)
     }
     std::stable_sort(rows.begin(), rows.end(),
                      [](const Row& a, const Row& b) { return a.date_iso < b.date_iso; });
-    if (rows.size() > 5) rows.resize(5);
 
     std::string text;
     if (!rows.empty()) {
-        text = "新股申购";
-        int shown = 0;
-        for (const auto& r : rows) {
-            if (shown >= 3) break;   // hero 空间限制 (2026-10-28 用户定稿)
-            text += "\n" + r.name + " " + r.mmdd;
-            if (r.today) text += "(今)";
-            shown++;
-        }
+        // 只显示最近日期的一只 (rows 已按日期升序, past 已滤); 多条会把
+        // hero 卡向上顶到每日一句 (2026-11-21 用户定稿).
+        const Row& r = rows.front();
+        text = "新股申购\n" + r.name + " " + r.mmdd;
+        if (r.today) text += "(今)";
     }
     {
         std::lock_guard<std::mutex> lk(c.mu);
