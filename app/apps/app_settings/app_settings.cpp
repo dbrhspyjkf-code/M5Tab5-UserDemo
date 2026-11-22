@@ -2881,8 +2881,9 @@ void AppSettings::_mailRenderDetail()
         body_txt = mailc_body;
         body_ok = mailc_body_ok.load();
     }
-    lv_label_set_text(_mail_title, cur.from.c_str());
-    _mailStatus(cur.date);
+    // 顶栏不再重复发件人/日期 (下方头部卡片已有一份, 2026-11-23 用户要求去重)
+    lv_label_set_text(_mail_title, "详情");
+    _mailStatus("");
 
     // 头部: 发件人 + 日期 / 主题 (≤2 行) / 分隔线
     lv_obj_t* head = mail_card(_mail_content, LV_PCT(100), 152, C_BG, nullptr, nullptr);
@@ -2908,7 +2909,7 @@ void AppSettings::_mailRenderDetail()
     lv_obj_set_style_pad_all(body, 12, 0);
     _mail_body_lbl = mail_label(body,
                                 body_ok ? body_txt.c_str() : "加载中…",
-                                C_SOFT, zh_font_md(), 0, 0, 1180, LV_LABEL_LONG_WRAP);
+                                C_SOFT, zh_font_30(), 0, 0, 1180, LV_LABEL_LONG_WRAP);
     if (!body_ok && !body_txt.empty())
         lv_label_set_text(_mail_body_lbl, ("获取失败: " + body_txt).c_str());
 
