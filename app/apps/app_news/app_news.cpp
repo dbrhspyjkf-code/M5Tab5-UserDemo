@@ -570,7 +570,8 @@ void AppNews::_openSrcSettings()
     lv_obj_set_style_border_width(_src_list, 0, 0);
     lv_obj_set_style_pad_all(_src_list, 0, 0);
     lv_obj_set_style_pad_row(_src_list, 10, 0);
-    lv_obj_set_flex_flow(_src_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_column(_src_list, 16, 0);
+    lv_obj_set_flex_flow(_src_list, LV_FLEX_FLOW_ROW_WRAP);   // 2 列 (2026-11-22 用户要求)
     lv_obj_set_flex_align(_src_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(_src_list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(_src_list, LV_SCROLLBAR_MODE_ACTIVE);
@@ -628,7 +629,7 @@ void AppNews::_rebuildSrcRows()
     }
     lv_obj_clean(_src_list);
 
-    constexpr int ROW_W = 936, ROW_H = 72;
+    constexpr int ROW_W = 460, ROW_H = 83;   // 双列 460 (944 容器 2×460+16), 高 72→83 (+15%)
     for (auto& e : table) {
         bool custom = e.id.rfind("c_", 0) == 0;
         lv_obj_t* row = lv_obj_create(_src_list);
@@ -651,19 +652,18 @@ void AppNews::_rebuildSrcRows()
         // 名称 (显=hi / 隐=dim; 自定义行收窄给 徽标+改/删/显 按钮让位)
         lv_obj_t* nl = lv_label_create(row);
         lv_label_set_text(nl, e.name.c_str());
-        lv_obj_set_pos(nl, 24, 0);
-        lv_obj_set_width(nl, custom ? 490 : 700);
-        lv_obj_set_height(nl, ROW_H);
+        lv_obj_set_width(nl, custom ? 176 : 316);
         lv_label_set_long_mode(nl, LV_LABEL_LONG_DOT);
+        lv_obj_align(nl, LV_ALIGN_LEFT_MID, 16, 0);   // 垂直居中 (2026-11-22 用户要求)
         lv_obj_set_style_text_font(nl, zh24(), 0);
         lv_obj_set_style_text_color(nl, lv_color_hex(
             e.on ? theme::cur().text_hi : theme::cur().text_dim), 0);
 
-        // 「自」徽标 (自定义源; 名称区右侧 x530..562, 删按钮 x592 起 — 不重叠)
+        // 「自」徽标 (自定义源; 名称 x16..192 → 徽标 x200, 删钮 x240 起 — 不重叠)
         if (custom) {
             lv_obj_t* cb = lv_label_create(row);
             lv_label_set_text(cb, "自");
-            lv_obj_align(cb, LV_ALIGN_LEFT_MID, 530, 0);
+            lv_obj_align(cb, LV_ALIGN_LEFT_MID, 200, 0);
             lv_obj_set_style_text_font(cb, zh20(), 0);
             lv_obj_set_style_bg_color(cb, lv_color_hex(theme::cur().track), 0);
             lv_obj_set_style_bg_opa(cb, LV_OPA_COVER, 0);
@@ -675,7 +675,7 @@ void AppNews::_rebuildSrcRows()
         // 显/隐 开关 (全部源同权, oneapp news_feed_toggle 同款)
         lv_obj_t* tog = lv_button_create(row);
         lv_obj_set_size(tog, 96, 48);
-        lv_obj_align(tog, LV_ALIGN_RIGHT_MID, -24, 0);
+        lv_obj_align(tog, LV_ALIGN_RIGHT_MID, -16, 0);
         lv_obj_set_style_bg_color(tog, lv_color_hex(
             e.on ? theme::cur().accent : theme::cur().track), 0);
         lv_obj_set_style_bg_color(tog, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
@@ -711,8 +711,8 @@ void AppNews::_rebuildSrcRows()
         // 自定义源: 改 / 删 (内置源只可隐不可删, oneapp 同款)
         if (custom) {
             lv_obj_t* eb = lv_button_create(row);
-            lv_obj_set_size(eb, 96, 48);
-            lv_obj_align(eb, LV_ALIGN_RIGHT_MID, -136, 0);
+            lv_obj_set_size(eb, 44, 48);
+            lv_obj_align(eb, LV_ALIGN_RIGHT_MID, -124, 0);
             lv_obj_set_style_bg_color(eb, lv_color_hex(theme::cur().track), 0);
             lv_obj_set_style_bg_color(eb, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
             lv_obj_set_style_radius(eb, 12, 0);
@@ -729,8 +729,8 @@ void AppNews::_rebuildSrcRows()
             lv_obj_center(el);
 
             lv_obj_t* db = lv_button_create(row);
-            lv_obj_set_size(db, 96, 48);
-            lv_obj_align(db, LV_ALIGN_RIGHT_MID, -248, 0);
+            lv_obj_set_size(db, 44, 48);
+            lv_obj_align(db, LV_ALIGN_RIGHT_MID, -176, 0);
             lv_obj_set_style_bg_color(db, lv_color_hex(theme::cur().track), 0);
             lv_obj_set_style_bg_color(db, lv_color_hex(theme::cur().press), LV_STATE_PRESSED);
             lv_obj_set_style_radius(db, 12, 0);
