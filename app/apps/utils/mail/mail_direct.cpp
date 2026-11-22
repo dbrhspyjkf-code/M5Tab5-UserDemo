@@ -468,6 +468,7 @@ Ret body(const std::string& email, const std::string& folder,
     }
     do {
         if (!m->examine(folder, &err)) {
+            ESP_LOGW(TAG, "body: examine %s fail: %s", folder.c_str(), err.c_str());
             r.err = err.empty() ? "文件夹打开失败" : err;
             break;
         }
@@ -476,13 +477,18 @@ Ret body(const std::string& email, const std::string& folder,
         err.clear();
         if (!m->fetch_raw(uid, "(BODY.PEEK[]<0.131072>)", &raw, &n, &err) ||
             !raw || n == 0) {
+            ESP_LOGW(TAG, "body: fetch_raw uid=%s fail: %s", uid.c_str(), err.c_str());
             r.err = err.empty() ? "取正文失败" : err;
             if (raw) heap_caps_free(raw);
             break;
         }
+        ESP_LOGI(TAG, "body: uid=%s raw=%uB head=%.60s", uid.c_str(),
+                 (unsigned)n, (const char*)raw);
         MimeNode node;
         if (mime_parse((const char*)raw, n, &node)) {
             *text = extract_body(node, 6000);
+            ESP_LOGI(TAG, "body: text_len=%u head=%.40s", (unsigned)text->size(),
+                     text->c_str());
             if (const std::string* v = node.hdr("message-id"))
                 meta->msg_id = *v;
             if (const std::string* v = node.hdr("references")) meta->refs = *v;
