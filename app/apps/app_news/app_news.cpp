@@ -298,7 +298,8 @@ void AppNews::_rebuildTabs()
         lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(l, zh30(), 0);
         lv_obj_set_style_text_color(l, lv_color_hex(theme::cur().text_dim), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(l, lv_color_hex(theme::ink_on(theme::cur().accent)),
+                                    LV_STATE_CHECKED);   // 亮 accent 底自动深字 (写死白色=松绿/晨白看不清)
         lv_obj_center(l);
         _tab_btns.push_back(btn);
     }
