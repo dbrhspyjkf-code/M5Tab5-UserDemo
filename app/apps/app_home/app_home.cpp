@@ -1728,6 +1728,16 @@ void AppHome::_openQuickSettings()
     _qs_ps_off_dd = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOff, "00:00").c_str(), "关", 310);
     _qs_ps_on_dd  = mk_time_dd(GetHAL()->getConfig(power_scheduler::kKeyOn, "06:30").c_str(), "开", 570);
 
+    // 电源按钮 (2026-11-22 用户需求): 电池显示移除后电源弹窗丢了入口,
+    // 现从设置·系统 Tab 进 — 关机/重启/取消 弹窗 (_openPowerDialog)。
+    // 先收设置弹窗再开电源弹窗 (_openModal 不清旧 modal, 叠开会孤儿化)。
+    mk_btn(sys, "电 源", T_WARN(), 170, 52,
+        [](lv_event_t* e) {
+            auto* s = static_cast<AppHome*>(lv_event_get_user_data(e));
+            s->_closeModal();
+            s->_openPowerDialog();
+        }, this);
+
     // 新闻源多选已拆到「新闻」Tab (2026-11-20)。
 
 #endif  // !PLATFORM_BUILD_WEB

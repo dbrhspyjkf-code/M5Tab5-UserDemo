@@ -2496,10 +2496,10 @@ void AppSettings::_openEmail()
     lv_obj_set_style_pad_all(_email_page, 0, 0);
     lv_obj_clear_flag(_email_page, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 顶栏: 返回钮 (逐层回退, 账号层=关页回工具页) + 标题 + 状态行 + 动作区
-    // (动作区每层重建: List=刷新+写邮件 / Login=登录 / Compose=发送)
-    mail_pill(_email_page, 20, 120, "返 回", C_CARD, C_TEXT, _mailBack_cb, this);
-    _mail_title = mail_label(_email_page, "邮件", C_TEXT, zh_font_30(), 156, 26, 350,
+    // 顶栏: 标题 + 状态行 + 动作区 (动作区每层重建: List=刷新+写邮件 /
+    // Login=登录 / Compose=发送)。返回钮已移除 (2026-11-22 用户要求):
+    // 上拨手势逐层回退已完整覆盖 (账号层上拨=关页回工具页)。
+    _mail_title = mail_label(_email_page, "邮件", C_TEXT, zh_font_30(), 40, 26, 350,
                              LV_LABEL_LONG_DOT);
     _mail_status = mail_label(_email_page, "", C_DIM, zh_font_md(), 520, 34, 330,
                               LV_LABEL_LONG_DOT);
