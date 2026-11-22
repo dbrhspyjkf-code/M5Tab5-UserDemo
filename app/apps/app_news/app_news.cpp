@@ -488,17 +488,9 @@ void AppNews::_openDetail(int idx)
     lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_ACTIVE);
-    // 左右拨 = 上一条/下一条 (body+card 双挂: 按压落点可能是卡片留白区)
-    auto gesture_cb = [](lv_event_t* e) {
-        auto* self = static_cast<AppNews*>(lv_event_get_user_data(e));
-        lv_indev_t* dev = lv_indev_get_act();
-        if (!dev) return;
-        lv_dir_t d = lv_indev_get_gesture_dir(dev);
-        if (d == LV_DIR_LEFT) self->_detailSwipe(1);         // 左拨 = 下一条
-        else if (d == LV_DIR_RIGHT) self->_detailSwipe(-1);  // 右拨 = 上一条
-    };
-    lv_obj_add_event_cb(body, gesture_cb, LV_EVENT_GESTURE, this);
-    lv_obj_add_event_cb(card, gesture_cb, LV_EVENT_GESTURE, this);
+    // 左右拨 = 上一条/下一条: 走 _installSwipeGesture 的 indev 级钩子
+    // (GESTURE 快滑 + RELEASED 位移慢滑双轨, gallery 同款; 对象级 GESTURE
+    //  会被滚动状态吞掉, 不可靠)。
 
     _detailFill();
 }
@@ -551,6 +543,11 @@ void AppNews::_detailFill()
 // 详情左右拨换条 (环绕: 首尾相接)
 void AppNews::_detailSwipe(int dir)
 {
+    // 双轨去重: 快滑 GESTURE 与慢滑 RELEASED 只认第一触发 (350ms 窗)
+    static uint32_t s_last_swipe_ms = 0;
+    uint32_t now_t = lv_tick_get();
+    if (s_last_swipe_ms && (int32_t)(now_t - s_last_swipe_ms) < 350) return;
+    s_last_swipe_ms = now_t;
     int n = 0;
     {
         std::lock_guard<std::mutex> lk(_mu);
@@ -1268,6 +1265,18 @@ void AppNews::_installSwipeGesture()
                 if (!alive || !*alive) return;
                 if (!ctx->app->_scr || lv_screen_active() != ctx->app->_scr) return;
                 lv_indev_t* dev = static_cast<lv_indev_t*>(lv_event_get_target(e));
+                // 详情横拨 (2026-11-22): 左=下一条 / 右=上一条 — 详情开着才认,
+                // 直调 _detailSwipe (只 clean body 子对象, 不删按压链, 免异步)
+                if (ctx->app->_detail_modal &&
+                    lv_indev_get_gesture_dir(dev) == LV_DIR_LEFT) {
+                    ctx->app->_detailSwipe(1);
+                    return;
+                }
+                if (ctx->app->_detail_modal &&
+                    lv_indev_get_gesture_dir(dev) == LV_DIR_RIGHT) {
+                    ctx->app->_detailSwipe(-1);
+                    return;
+                }
                 if (lv_indev_get_gesture_dir(dev) == LV_DIR_TOP) {
                     // 位置守卫: 只认屏幕最下缘 (y>650) 起手的上拨
                     if (ctx->press_y <= 650) return;
@@ -1310,6 +1319,13 @@ void AppNews::_installSwipeGesture()
                     lv_point_t p;
                     lv_indev_get_point(dev, &p);
                     const int dx = p.x - ctx->press_x, dy = p.y - ctx->press_y;
+                    // 详情横拨慢速兜底 (GESTURE 被滚动吞掉时的第二轨;
+                    // _detailSwipe 内 350ms 去重, 两轨不会双翻页)
+                    if (ctx->app->_detail_modal && abs(dx) > 60 &&
+                        abs(dx) > abs(dy) * 2) {
+                        ctx->app->_detailSwipe(dx < 0 ? 1 : -1);
+                        return;
+                    }
                     const bool from_bottom = ctx->press_y > 650;
                     if (from_bottom && dy < -120 && abs(dy) > abs(dx) * 2) {
                         auto* defer = new NwSwipeCtx{ctx->app, ctx->alive};
