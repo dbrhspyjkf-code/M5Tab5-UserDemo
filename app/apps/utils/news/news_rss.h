@@ -308,15 +308,17 @@ inline std::string extract_field(const std::string& block, const char* name)
     }
 }
 
-// 依次尝试多个候选字段名 (oneapp: description/summary/content 首个非空)
+// 候选字段名逐个提取取最长者 (2026-11-22 详情扩容: description 常是短摘要,
+// content:encoded 才是全文 — 首个非空会拿到少的; 清洗后比长度, 空全跳过)
 inline std::string extract_field_any(const std::string& block,
                                      const char* const* names, int n, size_t limit)
 {
+    std::string best;
     for (int i = 0; i < n; i++) {
         std::string c = clean_text(extract_field(block, names[i]), limit);
-        if (!c.empty()) return c;
+        if (c.size() > best.size()) best = std::move(c);
     }
-    return "";
+    return best;
 }
 
 inline std::string extract_link(const std::string& block)
@@ -463,7 +465,7 @@ inline std::string fmt_ts(const std::string& s)
 // ── RSS/Atom 解析 (命名空间无关; oneapp parse_feed 同口径) ───────────────────
 
 struct RssItem {
-    std::string t, d, u, ts;   // 标题(120)/摘要(200)/链接(300)/"MM-dd HH:MM"
+    std::string t, d, u, ts;   // 标题(120)/摘要(1600)/链接(300)/"MM-dd HH:MM"
 };
 
 inline std::vector<RssItem> parse_feed(const std::string& raw)
@@ -490,8 +492,11 @@ inline std::vector<RssItem> parse_feed(const std::string& raw)
         RssItem it;
         it.t = clean_text(extract_field(block, "title"), 120);
         if (it.t.empty()) continue;
-        static const char* const DESC_TAGS[] = {"description", "summary", "content"};
-        it.d  = extract_field_any(block, DESC_TAGS, 3, 200);
+        static const char* const DESC_TAGS[] = {"description", "summary",
+                                                "content", "encoded"};
+        // "encoded" = content:encoded (local 名匹配, RSS 全文摘要); 上限
+        // 200→1600: 详情弹窗滚动看全文, 列表行 64px 裁剪不受影响
+        it.d  = extract_field_any(block, DESC_TAGS, 4, 1600);
         it.u  = extract_link(block);
         utf8_sanitize(it.u);   // href 原文不经 clean_text, 单独防御
         static const char* const DATE_TAGS[] = {"pubdate", "published", "updated", "date"};

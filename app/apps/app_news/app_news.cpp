@@ -287,6 +287,12 @@ void AppNews::_rebuildTabs()
         lv_obj_set_style_shadow_width(btn, 0, 0);
         lv_obj_add_flag(btn, LV_OBJ_FLAG_CHECKABLE);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+        // 文字色挂按钮层 (状态随按钮); label 不设本地色才能继承 —
+        // 上轮把 CHECKED 色设在 label 上, 但 CHECKED 态只在按钮对象上,
+        // label 永远进不了选中态 → 选中后仍是未选色贴 accent 底 (看不清根因)
+        lv_obj_set_style_text_color(btn, lv_color_hex(theme::cur().text_dim), 0);
+        lv_obj_set_style_text_color(btn, lv_color_hex(theme::ink_on(theme::cur().accent)),
+                                    LV_STATE_CHECKED);   // 亮 accent 底自动深字
         lv_obj_set_user_data(btn, (void*)(intptr_t)i);
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
             auto* self = static_cast<AppNews*>(lv_event_get_user_data(e));
@@ -297,9 +303,6 @@ void AppNews::_rebuildTabs()
         lv_obj_set_width(l, 240 - 16);            // 自定义源名可到 20 字, 超出省略
         lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(l, zh30(), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(theme::cur().text_dim), 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(theme::ink_on(theme::cur().accent)),
-                                    LV_STATE_CHECKED);   // 亮 accent 底自动深字 (写死白色=松绿/晨白看不清)
         lv_obj_center(l);
         _tab_btns.push_back(btn);
     }
