@@ -100,7 +100,8 @@ void HalEsp32::setConfig(const std::string& key, const std::string& value)
     nvs_commit(h);
     nvs_close(h);
     bool is_secret = (key == "wifi_pass" || key == "ha_token" ||
-                      key == "em_apikey" || key == "notes_token");   // 妙想 KEY / 想法云 token 不落日志
+                      key == "em_apikey" || key == "notes_token" ||
+                      key == "mail_accts");   // 妙想 KEY / 想法云 token / 邮件账号(授权码) 不落日志
     ESP_LOGI(TAG, "setConfig: %s = %s", key.c_str(), is_secret ? "***" : value.c_str());
 }
 

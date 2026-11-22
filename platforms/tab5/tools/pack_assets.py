@@ -58,8 +58,15 @@ def main():
     pinyin_tbl = open(
         os.path.join(ROOT, "../../app/assets/fonts/pinyin_tbl.bin"), "rb").read()
 
+    # GBK→Unicode u16 表 (gen_gbk_tbl.py 生成; 邮件直连 GBK/GB2312 解码用,
+    # mail_mime.cpp gbk_index() 与其索引公式严格一致)
+    gbk_tbl = open(
+        os.path.join(ROOT, "../../app/assets/fonts/gbk_tbl.bin"), "rb").read()
+    if len(gbk_tbl) % 4 != 0:                  # 资产间 4 字节对齐铁律
+        gbk_tbl += b"\x00" * (4 - len(gbk_tbl) % 4)
+
     assets = [("home_bg", bg), ("font_zh_20", font20), ("font_zh_24", font24),
-              ("pinyin_tbl", pinyin_tbl)]
+              ("pinyin_tbl", pinyin_tbl), ("gbk_tbl", gbk_tbl)]
 
     header_size = 16 + ENTRY_SIZE * len(assets)
     off = (header_size + 3) & ~3  # 数据区 4 字节对齐
@@ -68,6 +75,12 @@ def main():
         entries.append((name.encode(), off, len(data)))
         blob += data
         off += len(data)
+        # 资产间 4 字节对齐 (2026-11-22 硬保障: mmap 后 u16 表按指针直读,
+        # 非对齐资产曾致自产点阵方案翻车; pad 进 off/blob 双侧)
+        pad = (-off) % 4
+        if pad:
+            blob += b"\x00" * pad
+            off += pad
 
     img = bytearray()
     img += struct.pack("<IIII", MAGIC, VERSION, len(assets), 0)

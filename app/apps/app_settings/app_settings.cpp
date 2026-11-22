@@ -3,6 +3,9 @@
 #include "../utils/psram_json.h"
 #include "../utils/theme/theme.h"
 #include "../utils/assets/assets_partition.h"
+#ifndef PLATFORM_BUILD_DESKTOP
+#include "../utils/mail/mail_direct.h"   // 设备端邮件直连 (IMAP/SMTP, 零 8768 依赖)
+#endif
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <chrono>
@@ -2129,9 +2132,10 @@ void AppSettings::_unitBack_cb(lv_event_t* e)
 //  账号(多账号+未读角标+二段确认删除) / 登录(邮箱+授权码) / 文件夹(聚合虚拟夹
 //  置顶+真实夹) / 列表(滑动行 红旗/已读 + 点面卡进详情) / 详情(正文滚动+
 //  标已读/旗标+回复) / 写信(收件人/主题/正文 + 回复引用块, SMTP 直发)。
-//  协议层 = Pi 8768 /api/mail/* (mail_client.py, oneapp mail.py 移植:
-//  授权码 IMAP 收 + SMTP 发, 会话复用, GBK/RFC2047/UTF-7 服务端全解)。
-//  主页信封角标仍走 fetchEmail() (/api/email/status) 不变。
+//  协议层: 设备端 = utils/mail (oneapp mail.py 移植, IMAP 993/SMTP 465
+//  直连, 2026-11-22 起不经 OrangePi); 桌面/web = Pi 8768 /api/mail/*
+//  (mail_client.py)。主页信封角标: 设备端直连 sweep, 桌面/web 走
+//  fetchEmail /api/email/status。
 //  层间导航: 返回钮/上拨逐层回退 (oneapp mail_esc 同款), 账号层回工具页;
 //  事件回调里不同步删事件目标祖先 — 层切换记 _mail_pending 下一帧执行。
 // ════════════════════════════════════════════════════════════════════════════
@@ -2346,6 +2350,8 @@ void AppSettings::fetchEmail()
     // email-status-server.py 跑在 8768 端口, 直接读 /tmp/email-status.json
     // 缓存, <10ms 返回, 不需要 IMAP 同步。用 svc_host 而不是 ha_host:
     // ha_host 指向 HA 主机, svc_host 才是 hermes + email-status-server 跑的机器.
+    // (2026-11-22: 设备端邮件直连后, 本页面的 mail 子页不再走 8768 —
+    //  这里仅剩主页信封角标, 设备端也改为直连 sweep, 见 worker 分支)
     std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");   // 默认与主页一致 (模拟器无 NVS 配置)
     // 申请端按自身内存决定拿多少: Tab5 小内存 → 每夹最多 30 封 + 预览截 100 字
     std::string url  = "http://" + host + ":8768/api/email/status?limit=30&preview=100";
@@ -2358,6 +2364,27 @@ void AppSettings::fetchEmail()
     if (!s_etag.empty()) req_headers.emplace_back("If-None-Match", s_etag);
 
     bool spawned = GetHAL()->tryRunDetached([url, req_headers]() {
+#ifndef PLATFORM_BUILD_DESKTOP
+        // 设备端: 直连 IMAP sweep 全部 NVS 账号的未读数 (60s TTL, 会话复用
+        // 防 163 限流)。信封图标只吃 unread 总数; flagged STATUS 拿不到,
+        // 保持原值不再刷新 (无 UI 消费方)。
+        int total = 0;
+        auto rd = mail_direct::home_badge(&total);
+        if (rd.ok) {
+            email_unread_total.store(total);
+            email_updated.store(true);
+            email_error.store(false);
+            mclog::tagInfo(_tag, "email badge (direct sweep): {} unread",
+                           total);
+        } else {
+            email_error.store(true);
+            email_error_msg = rd.err;
+            mclog::tagWarn(_tag, "email badge sweep failed: {}", rd.err);
+        }
+        s_last_done_tick = lv_tick_get();
+        email_fetching.store(false);
+        return;
+#else
         auto resp = GetHAL()->httpGet(url, req_headers);
         if (resp.status == 304) {
             // 304 早退也必须清闸, 否则 in-flight 旗标永久卡死 (2026-11-09 实锤).
@@ -2429,7 +2456,9 @@ void AppSettings::fetchEmail()
         }
         s_last_done_tick = lv_tick_get();
         email_fetching.store(false);
-    });
+        return;
+#endif   // PLATFORM_BUILD_DESKTOP (桌面/web 8768 路径)
+    }, 32 * 1024);
     if (!spawned) {
         mclog::tagWarn(_tag, "emailFetch: tryRunDetached failed (pthread_create?)");
         email_error.store(true);
@@ -3079,11 +3108,12 @@ void AppSettings::mailcFetchAccts()
     static std::atomic<bool> s_busy{false};
     if (s_busy.exchange(true)) return;
     bool spawned = GetHAL()->tryRunDetached([]() {
-        std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");
-        auto resp = GetHAL()->httpGet("http://" + host + ":8768/api/mail/accounts");
         bool ok = false;
         std::string err;
         std::vector<MailAcct> out;
+#ifdef PLATFORM_BUILD_DESKTOP
+        std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");
+        auto resp = GetHAL()->httpGet("http://" + host + ":8768/api/mail/accounts");
         if (resp.ok) {
             try {
                 auto j = PsramJson::parse(resp.body);
@@ -3107,6 +3137,14 @@ void AppSettings::mailcFetchAccts()
             err = resp.status == 0 ? "网络/timeout (检查 8768)"
                                    : ("HTTP " + std::to_string(resp.status));
         }
+#else
+        // 设备端直连: NVS 账号 + IMAP sweep (60s TTL)
+        std::vector<mail_direct::Acct> outd;
+        auto rd = mail_direct::accounts(&outd);
+        ok = rd.ok;
+        err = rd.err;
+        for (const auto& a : outd) out.push_back({a.email, a.unread});
+#endif
         {
             std::lock_guard<std::mutex> lk(mailc_mutex);
             mailc_accts = std::move(out);
@@ -3115,7 +3153,7 @@ void AppSettings::mailcFetchAccts()
         mailc_accts_ok.store(ok);
         mailc_accts_done.store(true);
         s_busy.store(false);
-    });
+    }, 32 * 1024);
     if (!spawned) {
         s_busy.store(false);
         std::lock_guard<std::mutex> lk(mailc_mutex);
@@ -3130,18 +3168,30 @@ void AppSettings::mailcLogin(const std::string& email, const std::string& auth)
     static std::atomic<bool> s_busy{false};
     if (s_busy.exchange(true)) return;
     bool spawned = GetHAL()->tryRunDetached([email, auth]() {
+        int unread = 0;
+        bool ok = false;
+        std::string err;
+#ifdef PLATFORM_BUILD_DESKTOP
         nlohmann::json body = {{"email", email}, {"auth", auth}};
         auto r = mc_post("/api/mail/accounts", body.dump());
+        ok = r.ok;
+        if (ok) unread = (int)r.j.value("unread", 0);
+        else err = r.err;
+#else
+        auto rd = mail_direct::login(email, auth, &unread);
+        ok = rd.ok;
+        err = rd.err;
+#endif
         {
             std::lock_guard<std::mutex> lk(mailc_mutex);
-            mailc_login_ok.store(r.ok);
+            mailc_login_ok.store(ok);
             mailc_login_email = email;
-            mailc_login_unread = r.ok ? (int)r.j.value("unread", 0) : 0;
-            mailc_err = r.ok ? "" : r.err;
+            mailc_login_unread = ok ? unread : 0;
+            mailc_err = ok ? "" : err;
         }
         mailc_login_done.store(true);
         s_busy.store(false);
-    });
+    }, 32 * 1024);
     if (!spawned) {
         s_busy.store(false);
         std::lock_guard<std::mutex> lk(mailc_mutex);
@@ -3156,16 +3206,26 @@ void AppSettings::mailcDelAcct(const std::string& email)
     static std::atomic<bool> s_busy{false};
     if (s_busy.exchange(true)) return;
     bool spawned = GetHAL()->tryRunDetached([email]() {
+        bool ok = false;
+        std::string err;
+#ifdef PLATFORM_BUILD_DESKTOP
         nlohmann::json body = {{"email", email}};
         auto r = mc_post("/api/mail/accounts/delete", body.dump());
+        ok = r.ok;
+        err = r.ok ? "" : r.err;
+#else
+        auto rd = mail_direct::del_acct(email);
+        ok = rd.ok;
+        err = rd.err;
+#endif
         {
             std::lock_guard<std::mutex> lk(mailc_mutex);
-            mailc_del_ok.store(r.ok);
-            mailc_err = r.ok ? "" : r.err;
+            mailc_del_ok.store(ok);
+            mailc_err = err;
         }
         mailc_del_done.store(true);
         s_busy.store(false);
-    });
+    }, 32 * 1024);
     if (!spawned) {
         s_busy.store(false);
         std::lock_guard<std::mutex> lk(mailc_mutex);
@@ -3180,10 +3240,14 @@ void AppSettings::mailcFetchFolders(const std::string& email)
     static std::atomic<bool> s_busy{false};
     if (s_busy.exchange(true)) return;
     bool spawned = GetHAL()->tryRunDetached([email]() {
+        bool ok = false;
+        std::string err;
+        std::vector<MailFolder> out;
+#ifdef PLATFORM_BUILD_DESKTOP
         nlohmann::json body = {{"email", email}};
         auto r = mc_post("/api/mail/folders", body.dump());
-        bool ok = r.ok;
-        std::vector<MailFolder> out;
+        ok = r.ok;
+        err = r.err;
         if (ok && r.j.contains("folders") && r.j["folders"].is_array()) {
             for (const auto& f : r.j["folders"]) {
                 if (!f.is_object()) continue;
@@ -3196,16 +3260,31 @@ void AppSettings::mailcFetchFolders(const std::string& email)
                 out.push_back(std::move(mf));
             }
         }
+#else
+        std::vector<mail_direct::Folder> outd;
+        auto rd = mail_direct::folders(email, &outd);
+        ok = rd.ok;
+        err = rd.err;
+        for (const auto& f : outd) {
+            MailFolder mf;
+            mf.raw    = f.raw;
+            mf.name   = f.name;
+            mf.unread = f.unread;
+            mf.total  = f.total;
+            mf.virt   = f.raw.rfind("@", 0) == 0;
+            out.push_back(std::move(mf));
+        }
+#endif
         {
             std::lock_guard<std::mutex> lk(mailc_mutex);
             mailc_folders = std::move(out);
             mailc_folders_email = email;   // 回执对号 (快速换账号弃旧结果)
-            mailc_err = ok ? "" : r.err;
+            mailc_err = ok ? "" : err;
         }
         mailc_folders_ok.store(ok);
         mailc_folders_done.store(true);
         s_busy.store(false);
-    });
+    }, 32 * 1024);
     if (!spawned) {
         s_busy.store(false);
         std::lock_guard<std::mutex> lk(mailc_mutex);
@@ -3220,11 +3299,15 @@ void AppSettings::mailcFetchList(const std::string& email, const std::string& fo
     static std::atomic<bool> s_busy{false};
     if (s_busy.exchange(true)) return;
     bool spawned = GetHAL()->tryRunDetached([email, folder]() {
-        nlohmann::json body = {{"email", email}, {"folder", folder}, {"limit", 30}};
-        auto r = mc_post("/api/mail/list", body.dump());
-        bool ok = r.ok;
+        bool ok = false;
+        std::string err;
         std::vector<MailMsg> out;
         int total = 0;
+#ifdef PLATFORM_BUILD_DESKTOP
+        nlohmann::json body = {{"email", email}, {"folder", folder}, {"limit", 30}};
+        auto r = mc_post("/api/mail/list", body.dump());
+        ok = r.ok;
+        err = r.err;
         if (ok && r.j.contains("msgs") && r.j["msgs"].is_array()) {
             total = (int)r.j.value("total", 0);
             for (const auto& m : r.j["msgs"]) {
@@ -3242,20 +3325,39 @@ void AppSettings::mailcFetchList(const std::string& email, const std::string& fo
                 out.push_back(std::move(mm));
             }
         }
+#else
+        std::vector<mail_direct::Msg> outd;
+        auto rd = mail_direct::list(email, folder, 30, &outd, &total);
+        ok = rd.ok;
+        err = rd.err;
+        for (const auto& m : outd) {
+            MailMsg mm;
+            mm.uid     = m.uid;
+            mm.fld     = m.fld.empty() ? folder : m.fld;
+            mm.fldn    = m.fldn;
+            mm.from    = m.from.empty() ? "?" : m.from;
+            mm.subject = m.subject.empty() ? "(无主题)" : m.subject;
+            mm.date    = m.date;
+            mm.preview = m.preview;
+            mm.seen    = m.seen;
+            mm.flagged = m.flagged;
+            out.push_back(std::move(mm));
+        }
+#endif
         size_t n = out.size();
         {
             std::lock_guard<std::mutex> lk(mailc_mutex);
             mailc_msgs = std::move(out);
             mailc_total = total;
             mailc_list_folder = folder;   // 回执对号 (快速换夹弃旧结果)
-            mailc_err = ok ? "" : r.err;
+            mailc_err = ok ? "" : err;
         }
         mailc_list_ok.store(ok);
         mailc_list_done.store(true);
         s_busy.store(false);
         mclog::tagInfo(_tag, "mailc list: folder={} ok={} msgs={} total={}",
                        folder, ok, (int)n, total);
-    });
+    }, 32 * 1024);
     if (!spawned) {
         s_busy.store(false);
         std::lock_guard<std::mutex> lk(mailc_mutex);
@@ -3281,27 +3383,51 @@ void AppSettings::mailcFetchBody(const std::string& email, const std::string& fo
         return;
     }
     bool spawned = GetHAL()->tryRunDetached([email, folder, uid]() {
+        bool ok = false;
+        std::string err, text;
+        MailMeta meta;
+#ifdef PLATFORM_BUILD_DESKTOP
         nlohmann::json body = {{"email", email}, {"folder", folder}, {"uid", uid}};
         auto r = mc_post("/api/mail/body", body.dump());
+        ok = r.ok;
+        if (ok) {
+            text = mc_s(r.j.value("text", PsramString("(空邮件)")));
+            meta.msg_id    = mc_s(r.j.value("msg_id", PsramString()));
+            meta.refs      = mc_s(r.j.value("refs", PsramString()));
+            meta.from_addr = mc_s(r.j.value("from_addr", PsramString()));
+            meta.date      = mc_s(r.j.value("date", PsramString()));
+            meta.subject   = mc_s(r.j.value("subject", PsramString()));
+        } else {
+            err = r.err;
+        }
+#else
+        mail_direct::Meta md;
+        auto rd = mail_direct::body(email, folder, uid, &text, &md);
+        ok = rd.ok;
+        err = rd.err;
+        if (ok) {
+            meta.msg_id = md.msg_id;
+            meta.refs = md.refs;
+            meta.from_addr = md.from_addr;
+            meta.date = md.date;
+            meta.subject = md.subject;
+        }
+#endif
         {
             std::lock_guard<std::mutex> lk(mailc_mutex);
             mailc_body_uid = uid;          // 回执对号 (快速换信弃旧结果)
             mailc_body_fld = folder;
-            mailc_body_ok.store(r.ok);
-            if (r.ok) {
-                mailc_body = mc_s(r.j.value("text", PsramString("(空邮件)")));
-                mailc_meta.msg_id    = mc_s(r.j.value("msg_id", PsramString()));
-                mailc_meta.refs      = mc_s(r.j.value("refs", PsramString()));
-                mailc_meta.from_addr = mc_s(r.j.value("from_addr", PsramString()));
-                mailc_meta.date      = mc_s(r.j.value("date", PsramString()));
-                mailc_meta.subject   = mc_s(r.j.value("subject", PsramString()));
+            mailc_body_ok.store(ok);
+            if (ok) {
+                mailc_body = text;
+                mailc_meta = meta;
             } else {
-                mailc_body = r.err;        // 失败文案走同一通道 (UI 判 ok 区分)
+                mailc_body = err;          // 失败文案走同一通道 (UI 判 ok 区分)
             }
         }
         mailc_body_done.store(true);
         s_busy.store(false);
-    });
+    }, 32 * 1024);
     if (!spawned) {
         s_busy.store(false);
         std::lock_guard<std::mutex> lk(mailc_mutex);
@@ -3321,25 +3447,32 @@ bool AppSettings::mailcAction(const std::string& email, const std::string& actio
     if (s_busy.exchange(true)) return false;
     std::string tipstr(tip);
     bool spawned = GetHAL()->tryRunDetached([email, actions_csv, folder, uid, tipstr]() {
-        // flagread = "mark_read,flag" 两连发 (服务端不组合, 顺序由 RLock 串行保证)
+        // flagread = "mark_read,flag" 两连发 (顺序执行, 设备端经全局会话锁串行)
         bool ok = true;
         std::string err;
         std::string act = actions_csv;
         size_t pos;
+        auto do_one = [&](const std::string& one) -> bool {
+#ifdef PLATFORM_BUILD_DESKTOP
+            nlohmann::json body = {{"email", email}, {"folder", folder},
+                                   {"uid", uid}, {"action", one}};
+            auto r = mc_post("/api/mail/action", body.dump());
+            if (!r.ok) { err = r.err; return false; }
+            return true;
+#else
+            auto rd = mail_direct::action(email, folder, uid, one);
+            if (!rd.ok) { err = rd.err; return false; }
+            return true;
+#endif
+        };
         while ((pos = act.find(',')) != std::string::npos) {
             std::string one = act.substr(0, pos);
             act = act.substr(pos + 1);
             if (one.empty()) continue;
-            nlohmann::json body = {{"email", email}, {"folder", folder},
-                                   {"uid", uid}, {"action", one}};
-            auto r = mc_post("/api/mail/action", body.dump());
-            if (!r.ok) { ok = false; err = r.err; break; }
+            if (!do_one(one)) { ok = false; break; }
         }
         if (ok && !act.empty()) {
-            nlohmann::json body = {{"email", email}, {"folder", folder},
-                                   {"uid", uid}, {"action", act}};
-            auto r = mc_post("/api/mail/action", body.dump());
-            if (!r.ok) { ok = false; err = r.err; }
+            if (!do_one(act)) ok = false;
         }
         {
             std::lock_guard<std::mutex> lk(mailc_mutex);
@@ -3352,7 +3485,7 @@ bool AppSettings::mailcAction(const std::string& email, const std::string& actio
         }
         mailc_act_done.store(true);
         s_busy.store(false);
-    });
+    }, 32 * 1024);
     if (!spawned) {
         s_busy.store(false);
         return false;   // 调用方立即回滚
@@ -3369,6 +3502,9 @@ void AppSettings::mailcSend(const std::string& email, const std::string& to,
     if (s_busy.exchange(true)) return;
     bool spawned = GetHAL()->tryRunDetached(
         [email, to, subject, body, in_reply_to, references]() {
+        bool ok = false;
+        std::string err;
+#ifdef PLATFORM_BUILD_DESKTOP
         nlohmann::json body_j = {{"email", email}, {"to", to},
                                  {"subject", subject}, {"body", body}};
         if (!in_reply_to.empty()) {           // 回复线程头 (oneapp send_mail 同款)
@@ -3376,14 +3512,22 @@ void AppSettings::mailcSend(const std::string& email, const std::string& to,
             body_j["references"] = references;
         }
         auto r = mc_post("/api/mail/send", body_j.dump());
+        ok = r.ok;
+        err = r.ok ? "" : r.err;
+#else
+        auto rd = mail_direct::send(email, to, subject, body, in_reply_to,
+                                    references);
+        ok = rd.ok;
+        err = rd.err;
+#endif
         {
             std::lock_guard<std::mutex> lk(mailc_mutex);
-            mailc_send_ok.store(r.ok);
-            mailc_send_err = r.ok ? "" : r.err;
+            mailc_send_ok.store(ok);
+            mailc_send_err = ok ? "" : err;
         }
         mailc_send_done.store(true);
         s_busy.store(false);
-    });
+    }, 32 * 1024);
     if (!spawned) {
         s_busy.store(false);
         std::lock_guard<std::mutex> lk(mailc_mutex);

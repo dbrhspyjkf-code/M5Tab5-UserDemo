@@ -1,0 +1,7 @@
+// mail_seed.h.example — 复制为 mail_seed.h (gitignored) 并填入真实授权码。
+// 首启 NVS 为空时作为账号种子导入 (用户零配置即用); 已有账号时忽略。
+#pragma once
+
+// {"accounts":[{"email":"you@example.com","auth":"授权码"}],"last":"you@example.com"}
+#define MAIL_SEED_ACCOUNTS_JSON \
+    "{\"accounts\":[{\"email\":\"you@example.com\",\"auth\":\"REPLACE_ME\"}],\"last\":\"you@example.com\"}"

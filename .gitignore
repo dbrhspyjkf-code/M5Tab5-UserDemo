@@ -22,3 +22,4 @@ memory/
 var/M5Unit-NFC/
 var/M5Utility/
 app/apps/app_ssh/secrets.h
+app/apps/utils/mail/mail_seed.h
