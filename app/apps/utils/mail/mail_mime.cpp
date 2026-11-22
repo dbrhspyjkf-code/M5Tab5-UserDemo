@@ -389,13 +389,20 @@ const std::string* MimeNode::hdr(const char* k) const
     return nullptr;
 }
 
-// 头区参数提取: "text/plain; charset=\"gbk\"; ..." → type 与参数
+// 头区参数提取: "text/plain; charset=\"gbk\"; ..." → type 与参数。
+// 类型段与参数名大小写不敏感; **参数值原样保留** — RFC2046 boundary 值
+// 大小写敏感 (阿里云/Coremail 边界 ----=_Part_... 带大写, 之前整值小写化
+// → 边界线匹配不上 → multipart 切不出子块 → 正文「(空邮件)」2026-11-23
+// 真码原生测试 87 封实锤)。
 static void parse_ctype(const std::string& v, std::string* type,
                         std::string* charset, std::string* boundary)
 {
     std::string low;
     low.reserve(v.size());
-    for (char c : v) low.push_back((char)tolower((unsigned char)c));
+    auto asc_lower = [](char c) {
+        return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+    };
+    for (char c : v) low.push_back(asc_lower(c));   // ASCII 小写, 长度不变
     size_t sc = low.find(';');
     *type = (sc == std::string::npos) ? low : low.substr(0, sc);
     // trim
@@ -403,20 +410,35 @@ static void parse_ctype(const std::string& v, std::string* type,
         type->pop_back();
     auto get_param = [&](const char* key) -> std::string {
         size_t p = low.find(key);
-        if (p == std::string::npos) return "";
-        p += strlen(key);
-        if (p >= low.size() || low[p] != '=') return "";
-        p++;
-        while (p < low.size() && (low[p] == ' ' || low[p] == '\t')) p++;
-        if (p < low.size() && low[p] == '"') {
-            size_t q = low.find('"', p + 1);
-            if (q == std::string::npos) return low.substr(p + 1);
-            return low.substr(p + 1, q - p - 1);
+        while (p != std::string::npos) {
+            // 词边界: 参数名前须是 ';' 或空白 (防 xcharset=/valboundary= 误配)
+            if (p > 0 && low[p - 1] != ';' && low[p - 1] != ' ' &&
+                low[p - 1] != '\t') {
+                p = low.find(key, p + 1);
+                continue;
+            }
+            p += strlen(key);
+            if (p >= low.size() || low[p] != '=') {
+                p = low.find(key, p);
+                continue;
+            }
+            p++;
+            while (p < low.size() && (low[p] == ' ' || low[p] == '\t')) p++;
+            // 值取自原始串 v (大小写保留; low 与 v 等长同位)
+            if (p < low.size() && low[p] == '"') {
+                size_t q = v.find('"', p + 1);
+                if (q == std::string::npos) return v.substr(p + 1);
+                return v.substr(p + 1, q - p - 1);
+            }
+            size_t q = low.find(';', p);
+            std::string r = (q == std::string::npos)
+                                ? v.substr(p)
+                                : v.substr(p, q - p);
+            while (!r.empty() && (r.back() == ' ' || r.back() == '\t'))
+                r.pop_back();
+            return r;
         }
-        size_t q = low.find(';', p);
-        std::string r = low.substr(p, q == std::string::npos ? std::string::npos : q - p);
-        while (!r.empty() && (r.back() == ' ' || r.back() == '\t')) r.pop_back();
-        return r;
+        return "";
     };
     *charset  = get_param("charset");
     *boundary = get_param("boundary");
