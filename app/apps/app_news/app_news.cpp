@@ -437,18 +437,12 @@ void AppNews::_renderList()
 void AppNews::_openDetail(int idx)
 {
     if (_detail_modal) return;   // 已开
-    std::string cat, title, desc, ts, fetched;
     {
         std::lock_guard<std::mutex> lk(_mu);
         if (_tab >= (int)_feeds.size()) return;
-        const FeedData& fd = _feeds[_tab];
-        if (idx < 0 || idx >= (int)fd.items.size()) return;
-        cat    = fd.name;
-        title  = fd.items[idx].t;
-        desc   = fd.items[idx].d;
-        ts     = fd.items[idx].ts;
-        fetched = _fetched;
+        if (idx < 0 || idx >= (int)_feeds[_tab].items.size()) return;
     }
+    _detail_idx = idx;
 
     // 全屏遮罩 (layer_top; 点外关) + 卡片 800x620 (2026-11-05 用户要求字号
     // 加大: 标题 30/正文 30/meta 24; 装不下 → body 竖向滚动查看)
@@ -479,8 +473,11 @@ void AppNews::_openDetail(int idx)
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
 
-    // 竖向滚动 body (meta/标题/简介; 长简介滚动查看, scrollbar 常显提示可滚)
+    // 竖向滚动 body (meta/标题/简介; 长简介滚动查看, scrollbar 常显提示可滚)。
+    // 滚动方向锁 VER: 横向拨动不让 body 吃掉 → GESTURE 可靠发出 (LVGL 滚动
+    // 优先于手势, 不锁方向则斜拨可能被滚动吞掉)。
     lv_obj_t* body = lv_obj_create(card);
+    _detail_body = body;
     lv_obj_set_pos(body, 24, 20);
     lv_obj_set_size(body, 800 - 48, 620 - 40);
     lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
@@ -489,18 +486,52 @@ void AppNews::_openDetail(int idx)
     lv_obj_set_style_pad_row(body, 14, 0);
     lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_ACTIVE);
+    // 左右拨 = 上一条/下一条 (body+card 双挂: 按压落点可能是卡片留白区)
+    auto gesture_cb = [](lv_event_t* e) {
+        auto* self = static_cast<AppNews*>(lv_event_get_user_data(e));
+        lv_indev_t* dev = lv_indev_get_act();
+        if (!dev) return;
+        lv_dir_t d = lv_indev_get_gesture_dir(dev);
+        if (d == LV_DIR_LEFT) self->_detailSwipe(1);         // 左拨 = 下一条
+        else if (d == LV_DIR_RIGHT) self->_detailSwipe(-1);  // 右拨 = 上一条
+    };
+    lv_obj_add_event_cb(body, gesture_cb, LV_EVENT_GESTURE, this);
+    lv_obj_add_event_cb(card, gesture_cb, LV_EVENT_GESTURE, this);
+
+    _detailFill();
+}
+
+// 详情正文填充 (左右拨换条时整块重建; 数据 mutex 快照)
+void AppNews::_detailFill()
+{
+    if (!_detail_body) return;
+    std::string cat, title, desc, ts, fetched;
+    {
+        std::lock_guard<std::mutex> lk(_mu);
+        if (_tab >= (int)_feeds.size()) return;
+        const FeedData& fd = _feeds[_tab];
+        if (_detail_idx < 0 || _detail_idx >= (int)fd.items.size()) return;
+        cat    = fd.name;
+        title  = fd.items[_detail_idx].t;
+        desc   = fd.items[_detail_idx].d;
+        ts     = fd.items[_detail_idx].ts;
+        fetched = _fetched;
+    }
+    lv_obj_clean(_detail_body);                         // 换条: 内容整块重建
+    lv_obj_scroll_to_y(_detail_body, 0, LV_ANIM_OFF);   // 回顶
 
     std::string meta = cat;
     if (!ts.empty()) meta += " · " + ts;
     if (!fetched.empty()) meta += " · 更新 " + fetched;
-    lv_obj_t* ml = lv_label_create(body);
+    lv_obj_t* ml = lv_label_create(_detail_body);
     lv_label_set_text(ml, meta.c_str());
     lv_obj_set_width(ml, LV_PCT(100));
     lv_obj_set_style_text_font(ml, zh24(), 0);
     lv_obj_set_style_text_color(ml, lv_color_hex(theme::cur().text_dim), 0);
 
-    lv_obj_t* tl = lv_label_create(body);
+    lv_obj_t* tl = lv_label_create(_detail_body);
     lv_label_set_text(tl, title.c_str());
     lv_obj_set_width(tl, LV_PCT(100));
     lv_label_set_long_mode(tl, LV_LABEL_LONG_WRAP);
@@ -508,7 +539,7 @@ void AppNews::_openDetail(int idx)
     lv_obj_set_style_text_color(tl, lv_color_hex(theme::cur().text_hi), 0);
     lv_obj_set_style_text_line_space(tl, 8, 0);
 
-    lv_obj_t* dl = lv_label_create(body);
+    lv_obj_t* dl = lv_label_create(_detail_body);
     lv_label_set_text(dl, desc.empty() ? "（这条新闻没有简介）" : desc.c_str());
     lv_obj_set_width(dl, LV_PCT(100));
     lv_label_set_long_mode(dl, LV_LABEL_LONG_WRAP);
@@ -517,11 +548,28 @@ void AppNews::_openDetail(int idx)
     lv_obj_set_style_text_line_space(dl, 8, 0);
 }
 
+// 详情左右拨换条 (环绕: 首尾相接)
+void AppNews::_detailSwipe(int dir)
+{
+    int n = 0;
+    {
+        std::lock_guard<std::mutex> lk(_mu);
+        if (_tab >= (int)_feeds.size()) return;
+        n = (int)_feeds[_tab].items.size();
+    }
+    if (n <= 0) return;
+    int nxt = (_detail_idx + dir + n) % n;
+    if (nxt == _detail_idx) return;
+    _detail_idx = nxt;
+    _detailFill();
+}
+
 void AppNews::_closeDetail()
 {
     if (_detail_modal) {
         lv_obj_delete(_detail_modal);   // layer_top 上的遮罩+卡片整树删
         _detail_modal = nullptr;
+        _detail_body = nullptr;
     }
 }
 

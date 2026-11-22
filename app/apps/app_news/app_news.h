@@ -69,6 +69,8 @@ private:
     void _renderList();                // 按当前页签重建列表 (UI 线程)
     void _openDetail(int idx);         // 点卡片 → 详情弹窗 (layer_top)
     void _closeDetail();               // 幂等
+    void _detailFill();                // 详情正文填充 (换条重建 body 内容)
+    void _detailSwipe(int dir);        // 详情左右拨: +1 下一条 / -1 上一条
     void _teardownUi();                // 删屏 + 清指针 (onClose/失焦共用)
 
     lv_obj_t* _scr = nullptr;
@@ -81,6 +83,8 @@ private:
 
     // 详情弹窗 (lv_layer_top 上, 随 _closeDetail 显式删除)
     lv_obj_t* _detail_modal = nullptr;
+    lv_obj_t* _detail_body = nullptr;  // 竖向滚动容器 (左右拨时 clean 重建内容)
+    int       _detail_idx = 0;         // 当前条目下标 (同源内上下条切换)
 
     // ── 源设置 (2026-11-21 oneapp 对齐) ──
     void _openSrcSettings();
