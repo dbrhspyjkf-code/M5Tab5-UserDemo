@@ -1497,10 +1497,20 @@ void AppRadio::onRunning()
         lv_label_set_text(_now_title, s_np_title);   // 任务 20s 才写一次, 拷贝窗口安全
     }
 
-    // ①外部音量查询结果落地(切输出/重进时拉取; 消费即清)
-    if (int ev = _ext_vol.exchange(-1); ev >= 0 && _output_sel > 0 && _vol_slider) {
+    // ①外部音量查询结果落地(切输出/重进拉取 + 在播期 5s 轮询; 消费即清)。
+    // 用户刚拖完音量 3s 内不回写: 在途查询结果是旧值, 落地会把滑条拽回去。
+    if (int ev = _ext_vol.exchange(-1); ev >= 0 && _output_sel > 0 && _vol_slider
+            && lv_tick_elaps(_vol_local_ms) >= 3000) {
         lv_slider_set_value(_vol_slider, ev, LV_ANIM_OFF);
         if (_vol_lbl) lv_label_set_text_fmt(_vol_lbl, "%d%%", ev);
+    }
+    // 外部设备在播: 周期拉外部音量跟显(M5DIAL/手机等外部改动, 2026-11-23)。
+    // 之前只在进页/切输出拉一次, 外部改音量后 Tab5 永远停在旧值。
+    if (_output_sel > 0 && _ext_on.load()
+            && GetHAL()->millis() - _ext_vol_poll_ms >= 5000
+            && lv_tick_elaps(_vol_local_ms) >= 3000) {
+        _ext_vol_poll_ms = GetHAL()->millis();
+        _extVolSync();
     }
 
     uint32_t now = GetHAL()->millis();
@@ -1739,6 +1749,7 @@ void AppRadio::_vol_cb(lv_event_t* e)
     auto* app = static_cast<AppRadio*>(lv_event_get_user_data(e));
     int v = lv_slider_get_value(app->_vol_slider);
     lv_label_set_text_fmt(app->_vol_lbl, "%d%%", v);
+    app->_vol_local_ms = GetHAL()->millis();   // 用户手拖窗口期: 外部回显暂缓
     if (app->_output_sel > 0 && app->_output_sel < kOutputCount) {
         int sel = app->_output_sel;
         GetHAL()->tryRunDetached([app, sel, v]() {   // 外部: 音量转发给 MA

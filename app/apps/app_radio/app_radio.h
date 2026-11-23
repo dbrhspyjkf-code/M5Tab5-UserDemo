@@ -140,6 +140,8 @@ private:
     std::atomic<int>  _ext_dev{-1};      // 正在播的外部设备下标
     std::atomic<int>  _ext_vol{-1};      // 外部音量查询结果(消费即清 -1)
     std::atomic<bool> _ext_vol_wait{false};
+    uint32_t _ext_vol_poll_ms = 0;       // 上次外部音量轮询发起 tick(在播期 5s 轮询)
+    uint32_t _vol_local_ms  = 0;         // 用户最近一次拖音量的 tick(3s 内不回写, 防跳回)
     std::atomic<bool> _np_kick{false};   // 请求流任务立即刷新歌名
     lv_obj_t* _out_chip = nullptr;       // 右面板输出 chip
     lv_obj_t* _out_modal = nullptr;      // 输出选择弹窗(layer_top, delete_async 关)
