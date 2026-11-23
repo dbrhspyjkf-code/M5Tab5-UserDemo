@@ -91,7 +91,6 @@ private:
     std::function<std::string()> _np_getter;  // 收音机播放状态 (installer 注入)
     std::function<std::string()> _yt_np_getter;   // 油管播放状态 (installer 注入)
     std::function<void()> _open_yt_cb;            // ♪YT 点击 → 油管播放页
-    uint32_t  _last_email_ms  = 0;        // throttle for the 60s email poll
 
     // Weather is fetched asynchronously (home has no HA client of its own), so a
     // worker thread only writes these strings; onRunning copies them to labels.

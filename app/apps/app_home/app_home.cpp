@@ -371,7 +371,8 @@ void AppHome::onOpen()
     make_tappable(_status_wifi, 2);
 
     // Mail icon — hidden by default. Only shown when
-    // AppSettings::email_unread_total > 0 (polled every 60s in onRunning).
+    // AppSettings::email_unread_total > 0 (synced when the mail page is
+    // opened; no background polling since 2026-11-23).
     _status_email = lv_label_create(irow);
     lv_obj_set_style_text_font(_status_email, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(_status_email, lv_color_hex(INK), 0);
@@ -708,14 +709,9 @@ void AppHome::onRunning()
         }
     }
 
-    // Email — poll the shared cache every 120s. AppSettings::fetchEmail() is
-    // in-flight safe (the second call while one is running is a no-op), so
-    // it's fine to call it from the UI loop. The actual httpGet runs on a
-    // detached worker thread.
-    if (_last_email_ms == 0 || now - _last_email_ms > 120 * 1000) {
-        _last_email_ms = now;
-        AppSettings::fetchEmail();
-    }
+    // Email — no polling since 2026-11-23 (原 120s fetchEmail 定时拉取已按
+    // 用户指示整体删除): 角标只在打开邮件页时按需刷新, 这里只读静态缓存值
+    // 决定信封图标显隐/闪烁, 不发起任何网络请求。
     // Reflect current unread count in the status-bar mail icon: hidden when 0,
     // visible (and turns red for high count) when there's mail to read.
     // 邮件图标闪烁相位: 每 500ms 翻转 (1 秒一次完整闪动)

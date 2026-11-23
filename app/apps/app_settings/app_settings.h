@@ -16,24 +16,6 @@
 #include <mutex>
 #include <vector>
 
-// Single shared email cache, populated by the worker in
-// AppSettings::fetchEmail() and read by both the email sub-page and the
-// AppHome status bar icon. Lives at file scope so the static keyword isn't
-// required on each declaration; definitions are in app_settings.cpp.
-struct EmailFolderInfo {
-    std::string name;
-    int unread  = 0;
-    int flagged = 0;
-};
-
-// 一封邮件 (8768 email-status-server 新 schema: 每文件夹最近 30 封带
-// uid/seen/flagged — 与 car-dash 邮件面板同源同能力, 支持旗标操作)
-struct EmailItem {
-    std::string uid, from, subject, date, preview, folder;
-    bool seen    = false;
-    bool flagged = false;
-};
-
 class AppSettings : public mooncake::AppAbility {
 public:
     AppSettings();
@@ -90,26 +72,11 @@ public:
     void setYtAppId(int id) { _yt_id = id; }
     void openYt();       // 工具页 tile → 打开油管 app
 
-    // ── Shared email cache (status-bar poll reads these; 旧状态页数据源) ──
-    // Worker in fetchEmail() writes; the AppHome status bar polls every 120s
-    // and reads email_unread_total to decide whether to show the icon.
-    // (2026-11-15 邮件子页改五层直连客户端后, email_list 仅剩兜底缓存价值,
-    //  fetchEmail 管线保留 — 主页信封角标 + 潜在回退路径仍依赖。)
-    static std::atomic<int>  email_unread_total;   // total, from j["count"]
-    static std::atomic<int>  email_flagged_total;  // 红旗总数, j["flagged_total"]
-    static std::atomic<bool> email_updated;        // list changed → UI rebuild
-    static std::atomic<bool> email_fetching;       // in-flight guard
-    static std::atomic<bool> email_error;          // last fetch failed
-    static std::string       email_error_msg;
-    static std::mutex        email_list_mutex;     // guards email_list/email_folders
-    static std::vector<EmailItem> email_list;      // parsed messages (全文件夹最近 30 封)
-    static std::vector<EmailFolderInfo> email_folders;  // 文件夹行 (与 email_list 同序)
-
-    // Kick off an async fetch from hermes :8768. In-flight safe (the second
-    // call while one is running is a no-op). Safe to call from anywhere —
-    // AppHome's status bar calls it on a 60s timer. Static (no instance state
-    // — the worker only touches the static cache above).
-    static void fetchEmail();
+    // ── 主页信封角标 ──
+    // 2026-11-23 起取消后台定时拉取 (原主页 120s fetchEmail 轮询已整体删除):
+    // 只在打开邮件页时由 mailcFetchAccts worker 按需 sweep 并写入此值, 主页
+    // onRunning 只读它决定信封图标显隐/变色。0 = 无未读或从未打开过邮件页。
+    static std::atomic<int> email_unread_total;
 
     // Public entry: jump straight to the email sub-page (used by the home
     // status-bar mail icon). No-op if the app hasn't been opened yet — caller
@@ -175,10 +142,10 @@ private:
     std::string _unit_entry   = "1";      // amount string
     int         _unit_cat_idx = 0;        // current category
 
-    // ── Email client (邮件, 2026-11-15 oneapp 同款五层直连客户端) ──────────────
-    // 协议层在 Pi email-status-server /api/mail/* (mail_client.py = oneapp
-    // mail.py 移植): 多账号授权码 IMAP 收 + SMTP 发。固件只做层间导航 +
-    // HTTP/JSON。主页信封角标仍走旧 fetchEmail() (/api/email/status) 不变。
+    // ── Email client (邮件, 2026-11-15 oneapp 同款五层客户端) ──────────────────
+    // 协议层: 设备端 = utils/mail 直连 IMAP/SMTP (2026-11-22 起不经 OrangePi);
+    // 桌面/web = Pi 8768 /api/mail/*。打开邮件页即按需拉取 (2026-11-23 起无
+    // 任何后台轮询); 账号层 sweep 顺手同步主页信封角标 email_unread_total。
     bool        _email_open_pending = false;  // app 未打开时点了主页邮件图标, onOpen 建屏后补开
     lv_obj_t*   _email_page   = nullptr;
     lv_obj_t*   _mail_title   = nullptr;    // 顶栏标题 (每层 set_text)
@@ -210,7 +177,7 @@ private:
     uint32_t    _mail_swipe_ts = 0;           // 滑开时刻 → 5s 无操作自动合拢
     lv_timer_t* _mail_swipe_timer = nullptr;  // 500ms 巡检自动合拢
 
-    // Worker 结果 (fetchEmail 同款管线: worker 只写静态+翻旗, onRunning 消费)
+    // Worker 结果 (worker 只写静态+翻旗, onRunning 消费)
     static std::mutex        mailc_mutex;
     static std::vector<MailAcct>   mailc_accts;      // 账号+角标
     static std::vector<MailFolder> mailc_folders;    // 虚拟夹置顶 + 真实夹

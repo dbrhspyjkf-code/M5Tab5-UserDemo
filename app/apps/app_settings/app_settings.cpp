@@ -207,27 +207,11 @@ std::atomic<bool> g_fx_updated{false};   // set by worker, consumed in onRunning
 std::atomic<bool> g_fx_fetching{false};
 std::string       g_fx_source = "static";
 
-// ── Email cache (worker thread fills, UI thread reads) ──────────────────────
-// Mirrors the g_fx_* pattern: detached fetch worker writes g_emails under
-// g_email_mutex and flips g_email_updated; the UI loop detects the flag in
-// onRunning() and rebuilds the lv_list via _emailRefresh().
 }  // namespace
 
-// Static-member definitions for the shared email cache (declared in
-// app_settings.h). Mirrors the g_fx_* pattern above: detached fetch worker
-// writes email_list under email_list_mutex and flips email_updated (badge
-// data only since 2026-11-15 — the email sub-page is now the direct
-// five-layer client on /api/mail/*). AppHome's status-bar icon polls
-// fetchEmail() every 120s and reads email_unread_total.
-std::atomic<int>        AppSettings::email_unread_total{0};  // total, from j["count"]
-std::atomic<int>        AppSettings::email_flagged_total{0}; // 红旗总数
-std::atomic<bool>       AppSettings::email_updated{false};
-std::atomic<bool>       AppSettings::email_fetching{false};
-std::atomic<bool>       AppSettings::email_error{false};
-std::string             AppSettings::email_error_msg;
-std::mutex              AppSettings::email_list_mutex;
-std::vector<EmailItem>  AppSettings::email_list;
-std::vector<EmailFolderInfo> AppSettings::email_folders;
+// 主页信封角标 (declared in app_settings.h): 2026-11-23 起无后台轮询, 仅由
+// mailcFetchAccts worker (打开邮件页时) 写入, AppHome onRunning 只读。
+std::atomic<int>        AppSettings::email_unread_total{0};
 
 // ── 邮件客户端 (五层直连, 2026-11-15) 静态 worker 结果 — worker 写, onRunning 读
 std::mutex        AppSettings::mailc_mutex;
@@ -444,8 +428,8 @@ void AppSettings::onRunning()
             }
         }
     }
-    // (旧状态页的 email_updated/email_act onRunning 块已随五层客户端移除;
-    //  fetchEmail 仍每 120s 由主页调用刷新信封角标 email_unread_total。)
+    // (旧状态页与主页 120s fetchEmail 轮询已于 2026-11-23 移除; 信封角标
+    //  email_unread_total 由 mailcFetchAccts 在打开邮件页时按需同步。)
 }
 
 void AppSettings::onClose()
@@ -483,13 +467,8 @@ void AppSettings::onClose()
     _mail_sending = false;
     _mail_quote.clear();
     _mail_del_arm.clear();
-    // 不清零 email_unread_total: 本 app 只展示邮件列表, 没有"标记已读"功能,
-    // 退出不代表邮件已读. 未读数是服务器真实状态 (由轮询刷新), 退出后状态栏
-    // 信封图标 / 灯阵 NEW EMAIL 应继续按真实未读显示.
-    email_updated.store(false);
-    email_error.store(false);
-    email_error_msg.clear();
-    email_fetching.store(false);  // 防止重入保护卡死
+    // 不清零 email_unread_total: 保留最后一次打开邮件页时的角标值供主页信封
+    // 图标显示 (无后台轮询, 下次打开邮件页时才会刷新)。
     if (_close_cb) _close_cb();
 }
 
@@ -2134,8 +2113,8 @@ void AppSettings::_unitBack_cb(lv_event_t* e)
 //  标已读/旗标+回复) / 写信(收件人/主题/正文 + 回复引用块, SMTP 直发)。
 //  协议层: 设备端 = utils/mail (oneapp mail.py 移植, IMAP 993/SMTP 465
 //  直连, 2026-11-22 起不经 OrangePi); 桌面/web = Pi 8768 /api/mail/*
-//  (mail_client.py)。主页信封角标: 设备端直连 sweep, 桌面/web 走
-//  fetchEmail /api/email/status。
+//  (mail_client.py)。主页信封角标: 无后台轮询, mailcFetchAccts (打开
+//  邮件页时) 按需 sweep 后同步 email_unread_total (2026-11-23)。
 //  层间导航: 返回钮/上拨逐层回退 (oneapp mail_esc 同款), 账号层回工具页;
 //  事件回调里不同步删事件目标祖先 — 层切换记 _mail_pending 下一帧执行。
 // ════════════════════════════════════════════════════════════════════════════
@@ -2325,148 +2304,9 @@ void AppSettings::mail_do_action(const std::string& action,
     _mail_pending_render = true;
 }
 
-// ── 旧状态页数据源 (主页信封角标 + 潜在回退路径): 保留 fetchEmail 管线不动 ──
-// 五层客户端本体走 /api/mail/*, 这套 /api/email/status 缓存只喂状态栏图标。
-void AppSettings::fetchEmail()
-{
-    // spawn 失败退避闸 (!spawned 分支设置): 退避期内静默跳过, 既能自愈又不
-    // 形成 16ms 一发的紧循环. (int32_t) 差值比较兼容 lv_tick 回绕.
-    static uint32_t s_retry_not_before = 0;
-    {
-        uint32_t now_tick = lv_tick_get();
-        if (s_retry_not_before != 0 && (int32_t)(now_tick - s_retry_not_before) < 0) return;
-    }
-    // 多轮询去重: 主页状态栏 120s 一轮, 45s 内完成过一次就复用上次结果。
-    static uint32_t s_last_done_tick = 0;
-    {
-        uint32_t now_tick = lv_tick_get();
-        if (s_last_done_tick != 0 && (int32_t)(now_tick - s_last_done_tick) < 45000) return;
-    }
-    if (email_fetching.exchange(true)) {
-        mclog::tagWarn(_tag, "fetchEmail: already in flight, skip");
-        return;
-    }
-
-    // email-status-server.py 跑在 8768 端口, 直接读 /tmp/email-status.json
-    // 缓存, <10ms 返回, 不需要 IMAP 同步。用 svc_host 而不是 ha_host:
-    // ha_host 指向 HA 主机, svc_host 才是 hermes + email-status-server 跑的机器.
-    // (2026-11-22: 设备端邮件直连后, 本页面的 mail 子页不再走 8768 —
-    //  这里仅剩主页信封角标, 设备端也改为直连 sweep, 见 worker 分支)
-    std::string host = GetHAL()->getConfig("svc_host", "192.168.1.200");   // 默认与主页一致 (模拟器无 NVS 配置)
-    // 申请端按自身内存决定拿多少: Tab5 小内存 → 每夹最多 30 封 + 预览截 100 字
-    std::string url  = "http://" + host + ":8768/api/email/status?limit=30&preview=100";
-
-    // ETag 协商: 内容没变服务端回 304 空 body, 下载+解析整个跳过
-    // (轮询 99% 走这条路, 内部堆 churn 归零)。仅 worker 线程读写,
-    // 由 email_fetching 闸串行化。
-    static std::string s_etag;
-    std::vector<std::pair<std::string, std::string>> req_headers;
-    if (!s_etag.empty()) req_headers.emplace_back("If-None-Match", s_etag);
-
-    bool spawned = GetHAL()->tryRunDetached([url, req_headers]() {
-#ifndef PLATFORM_BUILD_DESKTOP
-        // 设备端: 直连 IMAP sweep 全部 NVS 账号的未读数 (60s TTL, 会话复用
-        // 防 163 限流)。信封图标只吃 unread 总数; flagged STATUS 拿不到,
-        // 保持原值不再刷新 (无 UI 消费方)。
-        int total = 0;
-        auto rd = mail_direct::home_badge(&total);
-        if (rd.ok) {
-            email_unread_total.store(total);
-            email_updated.store(true);
-            email_error.store(false);
-            mclog::tagInfo(_tag, "email badge (direct sweep): {} unread",
-                           total);
-        } else {
-            email_error.store(true);
-            email_error_msg = rd.err;
-            mclog::tagWarn(_tag, "email badge sweep failed: {}", rd.err);
-        }
-        s_last_done_tick = lv_tick_get();
-        email_fetching.store(false);
-        return;
-#else
-        auto resp = GetHAL()->httpGet(url, req_headers);
-        if (resp.status == 304) {
-            // 304 早退也必须清闸, 否则 in-flight 旗标永久卡死 (2026-11-09 实锤).
-            s_last_done_tick = lv_tick_get();
-            email_fetching.store(false);
-            return;
-        }
-        if (resp.ok) {
-            for (auto& [k, v] : resp.resp_headers) {
-                std::string lk = k;
-                for (auto& c : lk) c = (char)std::tolower((unsigned char)c);
-                if (lk == "etag" && !v.empty()) { s_etag = v; break; }
-            }
-            try {
-                auto j = PsramJson::parse(resp.body);
-                auto to_std = [](const PsramString& s) {
-                    return std::string(s.data(), s.size());
-                };
-                std::lock_guard<std::mutex> lk(email_list_mutex);
-                email_list.clear();
-                email_folders.clear();
-                if (j.contains("folders") && j["folders"].is_array()) {
-                    int total = 0;
-                    for (const auto& f : j["folders"]) {
-                        if (!f.is_object()) continue;
-                        std::string name = to_std(f.value("name", PsramString("?")));
-                        EmailFolderInfo fi;
-                        fi.name    = name;
-                        fi.unread  = f.value("unread", 0);
-                        fi.flagged = f.value("flagged", 0);
-                        total += fi.unread;
-                        email_folders.push_back(fi);
-                        if (f.contains("messages") && f["messages"].is_array()) {
-                            for (const auto& m : f["messages"]) {
-                                if (!m.is_object()) continue;
-                                EmailItem it;
-                                it.uid     = to_std(m.value("uid", PsramString()));
-                                it.from    = to_std(m.value("from", PsramString("?")));
-                                it.subject = to_std(m.value("subject", PsramString("(无主题)")));
-                                it.date    = to_std(m.value("date", PsramString()));
-                                it.preview = to_std(m.value("preview", PsramString()));
-                                it.folder  = name;
-                                it.seen    = m.value("seen", false);
-                                it.flagged = m.value("flagged", false);
-                                email_list.push_back(std::move(it));
-                            }
-                        }
-                    }
-                    email_unread_total.store(total);
-                    email_flagged_total.store(j.value("flagged_total", 0));
-                    email_updated.store(true);
-                    mclog::tagInfo(_tag, "email badge list updated ({} folders, {} mails, {} unread)",
-                                   email_folders.size(), email_list.size(),
-                                   email_unread_total.load());
-                } else {
-                    email_error.store(true);
-                    email_error_msg = to_std(j.value("error", PsramString("未知错误")));
-                }
-            } catch (const std::exception& ex) {
-                mclog::tagWarn(_tag, "email parse failed: {}", ex.what());
-                email_error.store(true);
-                email_error_msg = std::string("JSON 解析失败: ") + ex.what();
-            }
-        } else {
-            mclog::tagWarn(_tag, "email fetch failed (status={})", resp.status);
-            email_error.store(true);
-            email_error_msg = resp.status == 0 ? "网络/timeout (status=0)"
-                                               : ("HTTP " + std::to_string(resp.status));
-        }
-        s_last_done_tick = lv_tick_get();
-        email_fetching.store(false);
-        return;
-#endif   // PLATFORM_BUILD_DESKTOP (桌面/web 8768 路径)
-    }, 32 * 1024);
-    if (!spawned) {
-        mclog::tagWarn(_tag, "emailFetch: tryRunDetached failed (pthread_create?)");
-        email_error.store(true);
-        email_error_msg = "本地线程创建失败 (内存不足?)";
-        email_fetching.store(false);
-        s_retry_not_before = lv_tick_get() + 60 * 1000;
-    }
-}
+// (fetchEmail /api/email/status 轮询管线已于 2026-11-23 整体删除: 主页
+//  120s 定时拉取按用户指示取消, 信封角标改由 mailcFetchAccts 在打开邮件页
+//  时按需同步 email_unread_total。)
 
 void AppSettings::openEmailPage()
 {
@@ -3146,6 +2986,18 @@ void AppSettings::mailcFetchAccts()
         err = rd.err;
         for (const auto& a : outd) out.push_back({a.email, a.unread});
 #endif
+        // 主页信封角标同步 (2026-11-23 起无后台轮询, 打开邮件页是唯一刷新点):
+        // 求和可读账号 (unread>=0) 的未读; 全部账号都失败 (-1) 则保持旧值。
+        {
+            int total = 0;
+            bool any = false;
+            for (const auto& a : out)
+                if (a.unread >= 0) { total += a.unread; any = true; }
+            if (any) {
+                email_unread_total.store(total);
+                mclog::tagInfo(_tag, "email badge synced: {} unread", total);
+            }
+        }
         {
             std::lock_guard<std::mutex> lk(mailc_mutex);
             mailc_accts = std::move(out);
